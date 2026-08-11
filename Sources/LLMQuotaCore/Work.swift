@@ -51,6 +51,12 @@ public struct WorkTask: Codable, Sendable {
     public var discardedAt: Date?
     public var discardReason: String?
 
+    /// 这条任务是从哪个**结构化事实**生成的（储备池用）。
+    ///
+    /// 人手写的任务这里是 nil。有值时它就是去重键 —— 见
+    /// `ReservePool.pending`：同一个事实不重复生成，但被你丢弃过的允许重来。
+    public var origin: String?
+
     /// 你在手机的办公室里点名让谁干。只影响排序，不绕过任何一道闸门。
     public var preferredPlatform: Platform?
 
@@ -102,6 +108,7 @@ public struct WorkTask: Codable, Sendable {
         note = try c.decodeIfPresent(String.self, forKey: .note)
         profile = try c.decodeIfPresent(TaskProfile.self, forKey: .profile)
         triedPlatforms = try c.decodeIfPresent([Platform].self, forKey: .triedPlatforms) ?? []
+        origin = try c.decodeIfPresent(String.self, forKey: .origin)
         landedAt = try c.decodeIfPresent(Date.self, forKey: .landedAt)
         discardedAt = try c.decodeIfPresent(Date.self, forKey: .discardedAt)
         discardReason = try c.decodeIfPresent(String.self, forKey: .discardReason)

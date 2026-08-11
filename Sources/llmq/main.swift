@@ -471,6 +471,57 @@ func cmdWork(_ args: [String]) throws {
     case "probe":
         try probePlatforms()
 
+    // llmq work reserve [--limit N] [--commit]
+    //
+    // 储备任务池：额度快作废时拿来填窗口的低危维护任务。
+    // 默认只看不写 —— 生成任务是会烧额度的动作，不该是敲错一个词的后果。
+    case "reserve":
+        let repoPath = RepoRegistry.resolve(nil) ?? FileManager.default.currentDirectoryPath
+        let limit = rest.firstIndex(of: "--limit").flatMap { i -> Int? in
+            let j = rest.index(after: i)
+            return j < rest.endIndex ? Int(rest[j]) : nil
+        } ?? 3
+        let commit = rest.contains("--commit")
+
+        let all = ReservePool.facts(repo: repoPath)
+        let tasks = TaskStore.all()
+        let todo = ReservePool.pending(all, tasks: tasks)
+
+        print(Ansi.dim("仓库 \(repoPath)"))
+        print(Ansi.dim("扫出 \(all.count) 条事实，其中 \(todo.count) 条还没人做"))
+        guard !todo.isEmpty else { return }
+
+        // **排队里还有活就不生成。**
+        //
+        // 储备池是用来填空窗的，不是用来加塞的。队列非空说明真实工作
+        // 还没做完，这时候再灌进去只会跟真活抢额度 —— 而真活的价值
+        // 永远高于「补个文档注释」。
+        let queued = tasks.filter { $0.state == .queued }.count
+        if queued > 0 {
+            print(Ansi.yellow("队列里还有 \(queued) 个任务在排，不生成。")
+                + Ansi.dim("储备池是填空窗的，不跟真活抢。"))
+            return
+        }
+
+        let picked = Array(todo.prefix(limit))
+        for f in picked {
+            print("\n" + Ansi.bold(f.rule.title) + Ansi.dim("  \(f.file):\(f.line)  \(f.symbol)"))
+            print(Ansi.dim("   " + ReservePool.prompt(for: f).prefix(72) + "…"))
+        }
+        guard commit else {
+            print("\n" + Ansi.dim("这是预演。真要生成加 --commit"))
+            return
+        }
+        var made = 0
+        for f in picked {
+            var t = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(),
+                             prompt: ReservePool.prompt(for: f), repo: repoPath)
+            t.origin = f.key
+            try TaskStore.append(t)
+            made += 1
+        }
+        print("\n" + Ansi.green("生成了 \(made) 个储备任务"))
+
     case "cooldowns":
         let active = CooldownLedger.active()
         if active.isEmpty { print(Ansi.dim("没有平台处于冷却中。")); return }
@@ -644,7 +695,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve]")
         exit(2)
     }
 }
