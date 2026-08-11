@@ -159,24 +159,50 @@ public enum ClusterNet {
         return kc
     }
 
-    /// 重设搜索列表：去掉所有属于本工具的一次性钥匙串，再按需加上一个。
+    /// 重设搜索列表：只剔掉**已经死掉**的一次性钥匙串，再按需加上一个。
+    ///
+    /// ## 为什么只能删死的
+    ///
+    /// 第一版写的是「删掉所有属于本工具的条目」，这在单进程下没问题，
+    /// 但这台机器上同时有好几个 llmq：常驻的 `cluster serve`，
+    /// 加上 launchd 每 15 分钟跑一次的 `collect`，还有人随手敲的命令。
+    /// 每个进程启动都会重写一次搜索列表 —— 于是 collect 一跑，
+    /// **正在服务的 serve 的条目就被它顺手踢掉了**，
+    /// serve 的私钥再也解析不到，握手开始报 -9858。
+    ///
+    /// 现象是「serve 好好跑着，过一会儿就不通了」，而且重启 serve 又好 ——
+    /// 因为重启时它把自己加回去了。周期恰好和采集间隔一致。
+    ///
+    /// 判断「死」的依据是文件还在不在：进程正常退出会删掉自己那个文件，
+    /// 崩溃留下的文件由 `sweepStaleScratchKeychains` 按 PID 清理。
+    /// 两条路都走不到的极端情况下，多留一条死条目也比踢掉活的强。
     private static func setSearchList(adding kc: SecKeychain?) {
         var list: CFArray?
         guard SecKeychainCopySearchList(&list) == errSecSuccess,
               let arr = list as? [SecKeychain] else { return }
         let mine = ClusterCA.dir.appendingPathComponent("scratch-").path
+        let fm = FileManager.default
         var kept: [SecKeychain] = []
         for k in arr {
             var buf = [CChar](repeating: 0, count: 4096)
             var len = UInt32(buf.count)
             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
                 let p = String(cString: buf)
-                if p.hasPrefix(mine) { continue }   // 本工具的，一律不留
+                // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+                // 别的进程还活着的那条**必须留下**。
+                if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+                if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+                _ = kc
             }
             kept.append(k)
         }
         if let kc { kept.insert(kc, at: 0) }
         _ = SecKeychainSetSearchList(kept as CFArray)
+    }
+
+    /// 本进程那个一次性钥匙串的路径。
+    private static var currentScratchPath: String {
+        ClusterCA.dir.appendingPathComponent("scratch-\(getpid()).keychain").path
     }
 
     /// 清掉遗留的一次性钥匙串。
@@ -200,9 +226,12 @@ public enum ClusterNet {
     /// 下一个进程就会读到一个指向不存在文件的条目。
     public static func releaseScratchKeychain() {
         guard let kc = scratch else { return }
-        setSearchList(adding: nil)
+        // 顺序要紧：**先删文件再重算列表**。
+        // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+        // 于是留下一条指向马上就要消失的文件的死条目。
         _ = SecKeychainDelete(kc)
         scratch = nil
+        setSearchList(adding: nil)
     }
 
     /// 口令存钥匙串，不存磁盘。
