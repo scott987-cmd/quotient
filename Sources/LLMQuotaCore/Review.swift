@@ -156,7 +156,7 @@ public enum Review {
                              deleteBranch: Bool = true,
                              verify: Bool = true) -> Result<String, NSError> {
         if verify, let reg = RepoRegistry.all().first(where: {
-            NSString(string: $0.path).expandingTildeInPath
+            NSString(string: $0.localPath).expandingTildeInPath
                 == NSString(string: repo).expandingTildeInPath
         }), let cmd = reg.verifyCommand, !cmd.isEmpty {
             if let why = verifyMerge(repo: repo, branch: branch, base: base,

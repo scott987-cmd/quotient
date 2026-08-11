@@ -567,7 +567,7 @@ func cmdWork(_ args: [String]) throws {
                 print(Ansi.dim("没有能干净合入的分支。")); return
             }
             let reg = RepoRegistry.all().first {
-                NSString(string: $0.path).expandingTildeInPath
+                NSString(string: $0.localPath).expandingTildeInPath
                     == NSString(string: repoPath).expandingTildeInPath
             }
             guard let cmd = reg?.verifyCommand, !cmd.isEmpty else {
@@ -1436,7 +1436,7 @@ func cmdRepo(_ args: [String]) throws {
         // 实际就这么踩过一次：跨机链路全部打通之后，任务派过去必失败。
         var broken = 0
         for r in list {
-            let p = NSString(string: r.path).expandingTildeInPath
+            let p = NSString(string: r.localPath).expandingTildeInPath
             var isDir: ObjCBool = false
             let exists = FileManager.default.fileExists(atPath: p, isDirectory: &isDir)
             let isGit = FileManager.default.fileExists(atPath: p + "/.git")
@@ -1445,7 +1445,7 @@ func cmdRepo(_ args: [String]) throws {
             else if !isGit { note = Ansi.yellow("  ⚠ 不是 git 仓库"); broken += 1 }
             else { note = "" }
             print(pad(r.alias, 16) + pad(r.isDefault ? Ansi.cyan("默认") : "", 8)
-                + Ansi.dim(r.path.replacingOccurrences(
+                + Ansi.dim(r.localPath.replacingOccurrences(
                     of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
                 + note)
         }

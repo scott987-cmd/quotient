@@ -27,6 +27,28 @@ public struct RepoAlias: Codable, Sendable {
     /// 验证的超时。构建可能比 agent 本身还慢。
     public var verifyTimeout: Int
 
+    /// 每台机器上这个仓库在哪。
+    ///
+    /// ## 为什么路径必须按机器存
+    ///
+    /// 这份注册表放在 iCloud 共享配置里 —— 手机要靠它列出可选仓库，
+    /// 别的机器要靠它把别名解析成本地路径。但**路径天生是每台机器不同的**：
+    /// 一台在 ~/Documents/X，另一台可能在 ~/Developer/X。
+    ///
+    /// 只存一个全局 `path` 的后果是实测出来的：在 B 机器上改了一次路径，
+    /// A 机器的 `work review` 立刻开始报「不是 git 仓库」——
+    /// 因为它拿到了 B 的路径。别名机制本来就是为了解决这个，
+    /// 却栽在注册表自己身上。
+    ///
+    /// `path` 保留作为兜底：没有本机条目时用它（老配置、或者别的机器
+    /// 刚登记还没轮到这台）。
+    public var pathByMachine: [String: String] = [:]
+
+    /// 本机上的实际路径。
+    public var localPath: String {
+        pathByMachine[Paths.machineName()] ?? path
+    }
+
     public init(alias: String, path: String, isDefault: Bool = false,
                 verifyCommand: String? = nil, verifyTimeout: Int = 600) {
         self.alias = alias
@@ -43,6 +65,8 @@ public struct RepoAlias: Codable, Sendable {
         isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
         verifyCommand = try c.decodeIfPresent(String.self, forKey: .verifyCommand)
         verifyTimeout = try c.decodeIfPresent(Int.self, forKey: .verifyTimeout) ?? 600
+        pathByMachine = try c.decodeIfPresent([String: String].self,
+                                              forKey: .pathByMachine) ?? [:]
     }
 }
 
@@ -60,7 +84,7 @@ public enum Verifier {
     public static func command(for repoPath: String) -> (cmd: String, timeout: Int)? {
         let want = URL(fileURLWithPath: repoPath).standardizedFileURL.path
         for r in RepoRegistry.all() {
-            let have = URL(fileURLWithPath: r.path).standardizedFileURL.path
+            let have = URL(fileURLWithPath: r.localPath).standardizedFileURL.path
             if have == want, let c = r.verifyCommand, !c.isEmpty {
                 return (c, r.verifyTimeout)
             }
@@ -121,10 +145,20 @@ public enum RepoRegistry {
             throw NSError(domain: "RepoRegistry", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "\(expanded) 不是 git 仓库"])
         }
+        let existing = all().first { $0.alias == alias }
         var list = all().filter { $0.alias != alias }
-        if makeDefault { list = list.map { RepoAlias(alias: $0.alias, path: $0.path, isDefault: false) } }
-        let entry = RepoAlias(alias: alias, path: expanded,
-                              isDefault: makeDefault || list.isEmpty)
+        if makeDefault {
+            // **只改 isDefault，别重建整条。** 原来这里用
+            // `RepoAlias(alias:path:isDefault:)` 重建，把 verifyCommand、
+            // verifyTimeout、pathByMachine 全丢了 —— 设一次默认仓库，
+            // 别的仓库的验证命令就没了，而这件事不会有任何提示。
+            list = list.map { var e = $0; e.isDefault = false; return e }
+        }
+        var entry = existing ?? RepoAlias(alias: alias, path: expanded)
+        entry.path = expanded
+        entry.isDefault = makeDefault || list.isEmpty
+        // 路径按机器记。全局那个 path 只作兜底。
+        entry.pathByMachine[Paths.machineName()] = expanded
         list.append(entry)
         try save(list)
         return entry
@@ -133,9 +167,11 @@ public enum RepoRegistry {
     public static func resolve(_ nameOrPath: String?) -> String? {
         let list = all()
         guard let n = nameOrPath, !n.isEmpty else {
-            return list.first(where: \.isDefault)?.path ?? list.first?.path
+            return list.first(where: \.isDefault)?.localPath ?? list.first?.localPath
         }
-        if let hit = list.first(where: { $0.alias == n }) { return hit.path }
+        // 别名解析成**本机**路径 —— 跨机派活时别名一样、路径各不相同，
+        // 这正是别名存在的理由。
+        if let hit = list.first(where: { $0.alias == n }) { return hit.localPath }
         // 也允许直接给路径 —— 从 Mac 上派任务时更顺手。
         let expanded = NSString(string: n).expandingTildeInPath
         return GitWorkspace.isRepo(expanded) ? expanded : nil
