@@ -147,14 +147,36 @@ public enum ClusterNet {
         // 搜索列表是**唯一的例外**，而且它是必需的：TLS 要用证书去找配对的
         // 私钥，不在搜索列表里就找不到，握手直接 -9858 失败。
         // 实测它不像 SetSettings 那样要授权。
-        var list: CFArray?
-        if SecKeychainCopySearchList(&list) == errSecSuccess,
-           var arr = list as? [SecKeychain] {
-            arr.insert(kc, at: 0)
-            _ = SecKeychainSetSearchList(arr as CFArray)
-        }
+        // **加之前先清掉自己留下的死条目。**
+        //
+        // 只加不删是个隐蔽的坑：每次进程重启都会新建一个一次性钥匙串并加进
+        // 搜索列表，而上一个的文件已经删了。攒到几条之后，搜索列表里指向
+        // 不存在文件的条目会把整个钥匙串解析搞坏 —— 表现是 TLS 握手报
+        // -9858，而且**时好时坏**：刚配好的时候是干净的，重启几次才发作。
+        // 实测在对端攒到 4 条（3 条已失效）时，握手 100% 失败。
+        setSearchList(adding: kc)
         scratch = kc
         return kc
+    }
+
+    /// 重设搜索列表：去掉所有属于本工具的一次性钥匙串，再按需加上一个。
+    private static func setSearchList(adding kc: SecKeychain?) {
+        var list: CFArray?
+        guard SecKeychainCopySearchList(&list) == errSecSuccess,
+              let arr = list as? [SecKeychain] else { return }
+        let mine = ClusterCA.dir.appendingPathComponent("scratch-").path
+        var kept: [SecKeychain] = []
+        for k in arr {
+            var buf = [CChar](repeating: 0, count: 4096)
+            var len = UInt32(buf.count)
+            if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+                let p = String(cString: buf)
+                if p.hasPrefix(mine) { continue }   // 本工具的，一律不留
+            }
+            kept.append(k)
+        }
+        if let kc { kept.insert(kc, at: 0) }
+        _ = SecKeychainSetSearchList(kept as CFArray)
     }
 
     /// 清掉遗留的一次性钥匙串。
@@ -172,9 +194,13 @@ public enum ClusterNet {
         }
     }
 
-    /// 删掉本进程那份。
+    /// 删掉本进程那份，并把它从搜索列表里摘掉。
+    ///
+    /// 摘搜索列表这一步不能省：钥匙串文件删了但条目还在，
+    /// 下一个进程就会读到一个指向不存在文件的条目。
     public static func releaseScratchKeychain() {
         guard let kc = scratch else { return }
+        setSearchList(adding: nil)
         _ = SecKeychainDelete(kc)
         scratch = nil
     }
