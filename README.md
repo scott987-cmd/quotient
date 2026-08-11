@@ -6,6 +6,9 @@
 
 覆盖平台：Claude、Codex、Gemini、Qwen、Kimi、GLM、MiniMax、DeepSeek、火山方舟。
 
+另有配套 iOS App：在手机上看各平台额度汇总，也能直接派活给电脑上的常驻工作循环。
+它走的还是 iCloud 那条通道（见「多机汇总靠 iCloud」和 inbox/outbox），不需要额外服务器。
+
 ---
 
 ## 它解决什么问题
@@ -113,6 +116,12 @@ llmq debug-parse kimi-code ~/.kimi-code/sessions/xxx/agents/agent-0/wire.jsonl
 
 它只解析单个文件并打印分项统计。活跃会话的日志一直在被追加，直接拿汇总数字跟外部脚本对不齐 —— 把文件复制一份冻结，让两边解析同一份数据，差异才有意义。
 
+```bash
+llmq work loop
+```
+
+常驻循环：每隔一段时间查一次任务队列，有排队任务就按当前额度挑一个还有余量的平台跑，跑完把结果推到飞书。循环带单实例锁，重复启动的那个会直接退出 —— 两个调度器管同一批任务只会打架。另外有每小时任务数上限，队列被灌满时不至于一口气把额度烧光。
+
 ## 配置 plans.json
 
 位置：`~/Library/Application Support/LLMQuotaBar/plans.json`
@@ -178,6 +187,14 @@ qianwen usage free-tier --format json
 4. `llmq install-agent`
 
 各台电脑的快照会自动汇总。`llmq report` 顶部会列出所有接入的电脑及其最后更新时间；超过 6 小时没更新的会标为"快照较旧"。
+
+## 从手机派任务
+
+不在电脑前也能加任务：往 iCloud Drive 的 `LLMQuotaBar/inbox/` 里丢一个纯文本文件，**文件内容就是任务描述**，不需要任何格式，文件名随便起。Mac 上的常驻循环下一轮扫队列时会把它捞起来执行，跑完把结果写回同级的 `outbox/`，文件名跟原任务对应。
+
+iOS 上「文件」App 就能直接在这个目录里新建文本；想更省事用「快捷指令」——「听写文本 → 存储文件」两步存到该目录，放个主屏幕图标，一句话就派出去。
+
+前提是 Mac 上的常驻循环在跑（`llmq work install-loop`）。没跑的时候文件就一直躺在 inbox 里等着，不会丢，也不会重复执行。
 
 ## 性能
 

@@ -18,6 +18,10 @@ public enum Format {
 
     public static func compact(_ v: Int) -> String { compact(Double(v)) }
 
+    /// 字节数按 1024 进制显示，不用 1000。
+    /// 这个函数只用来显示解析了多少字节的日志文件，而文件系统报的就是 1024 进制，
+    /// 跟着它走，显示出来的数字才能和 Finder、`ls -l` 对得上。
+    /// 上面的 compact 是给 token 计数用的，那边才该用 1000 进制，别混。
     public static func bytes(_ v: Int) -> String {
         let units = ["B", "KB", "MB", "GB", "TB"]
         var value = Double(v)
