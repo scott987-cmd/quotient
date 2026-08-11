@@ -2080,3 +2080,84 @@ final class OpenCodeAdapterTests: XCTestCase {
         XCTAssertEqual(e.platform, .volcark)
     }
 }
+
+
+final class FormatTests: XCTestCase {
+    // MARK: - duration
+
+    /// nil 表示未配置到期时间，显示占位符而不是崩溃或瞎猜。
+    func testDurationNil显示占位符() {
+        XCTAssertEqual(Format.duration(nil), "—")
+    }
+
+    /// 0 秒不算"有剩余"，跟 nil 和负数一样显示占位符。
+    func testDuration零显示占位符() {
+        XCTAssertEqual(Format.duration(0), "—")
+    }
+
+    func testDuration负数显示占位符() {
+        XCTAssertEqual(Format.duration(-100), "—")
+    }
+
+    /// 不足一分钟仍应显示"0分钟"，不能变成空或占位符。
+    func testDuration五十九秒显示零分钟() {
+        XCTAssertEqual(Format.duration(59), "0分钟")
+    }
+
+    /// 恰好 60 秒是分钟级的最小正整数边界。
+    func testDuration恰好六十秒显示一分钟() {
+        XCTAssertEqual(Format.duration(60), "1分钟")
+    }
+
+    /// 跨小时但不足一天：同时显示小时和分钟两个量级。
+    func testDuration跨小时显示小时和分钟() {
+        // 3661 秒 = 1 小时 1 分 1 秒，截断到分钟
+        XCTAssertEqual(Format.duration(3661), "1小时1分")
+    }
+
+    /// 整小时不带分钟尾巴，否则"2小时0分"在菜单栏里浪费空间。
+    func testDuration整小时只显示小时() {
+        XCTAssertEqual(Format.duration(7200), "2小时")
+    }
+
+    /// 跨天：天数 + 小时数。
+    func testDuration跨天显示天和小时() {
+        // 90000 秒 = 1 天 1 小时
+        XCTAssertEqual(Format.duration(90000), "1天1小时")
+    }
+
+    /// 整天不带小时尾巴。
+    func testDuration整天只显示天() {
+        XCTAssertEqual(Format.duration(86400), "1天")
+    }
+
+    // MARK: - compact
+
+    func testCompact零() {
+        XCTAssertEqual(Format.compact(0), "0")
+    }
+
+    /// 999 是三位数上界，不该进位成 "1.0K"。
+    func testCompact九百九十九() {
+        XCTAssertEqual(Format.compact(999), "999")
+    }
+
+    /// 1000 是 K 级下界，恰好触发缩写。
+    func testCompact一千() {
+        XCTAssertEqual(Format.compact(1000), "1.0K")
+    }
+
+    func testCompact百万() {
+        XCTAssertEqual(Format.compact(1_000_000), "1.0M")
+    }
+
+    func testCompact十亿() {
+        XCTAssertEqual(Format.compact(1_000_000_000), "1.0B")
+    }
+
+    /// Int 重载走同一条逻辑，token 计数是 Int 传入的。
+    func testCompactInt重载() {
+        XCTAssertEqual(Format.compact(500), "500")
+        XCTAssertEqual(Format.compact(2500), "2.5K")
+    }
+}
