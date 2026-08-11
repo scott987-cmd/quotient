@@ -102,8 +102,74 @@ public enum Review {
     ///
     /// 用 `--no-ff`，让每一次 agent 产出在历史上都是一个可识别、可整体回退的合并点。
     /// 快进合并会把它和手写提交混在一起，事后想只回退某个 agent 的改动就很难。
+    /// 合并前先验证**合并结果**。
+    ///
+    /// ## 为什么不能只验证分支本身
+    ///
+    /// 分支单独跑得过，合进 main 之后照样可能坏 —— 两边各自正确、
+    /// 放一起矛盾（一边改了函数签名、另一边新增了调用）。
+    /// 所以要验的是合并**之后**的那棵树，不是分支。
+    ///
+    /// ## 为什么在临时 worktree 里做
+    ///
+    /// 直接在主仓库里「合了再验、不过再回退」有两个问题：验证要几十秒到几分钟，
+    /// 这段时间主仓库处在一个半成品状态，人或别的进程凑巧看一眼就会困惑；
+    /// 而且回退本身也可能失败，那就留下一个更糟的现场。
+    /// 临时 worktree 是一次性的，验砸了直接删掉，主仓库全程没被碰过。
+    ///
+    /// 返回 nil 表示通过（或没配验证命令）；返回字符串是失败原因。
+    public static func verifyMerge(repo: String, branch: String, base: String,
+                                   command: String, timeout: Int = 900) -> String? {
+        let tmp = NSTemporaryDirectory() + "llmq-verify-\(UUID().uuidString.prefix(8))"
+        defer {
+            _ = GitWorkspace.git(["worktree", "remove", "--force", tmp], in: repo)
+            _ = GitWorkspace.git(["worktree", "prune"], in: repo)
+        }
+        let add = GitWorkspace.git(["worktree", "add", "--detach", tmp, base], in: repo)
+        guard add.exitCode == 0 else {
+            return "建临时工作区失败：\(add.stderr.prefix(160))"
+        }
+        let m = GitWorkspace.git(
+            ["merge", "--no-ff", "-m", "verify \(branch)", branch], in: tmp)
+        guard m.exitCode == 0 else {
+            return "合并结果有冲突：\(m.stdout.prefix(160))"
+        }
+        let r = Proc.run("/bin/sh", ["-c", command], cwd: tmp, env: [:],
+                         timeout: TimeInterval(timeout))
+        guard r.exitCode == 0 else {
+            let out = (r.stderr + "\n" + r.stdout)
+                .split(separator: "\n")
+                .filter { $0.lowercased().contains("error") || $0.contains("failed") }
+                .prefix(3).joined(separator: "；")
+            return "验证没过（退出码 \(r.exitCode)）"
+                + (out.isEmpty ? "" : "：\(out.prefix(240))")
+        }
+        return nil
+    }
+
+    /// 合并一个分支。
+    ///
+    /// - Parameter verify: 仓库配了验证命令时，先在临时工作区里验一遍合并结果。
+    ///   **默认开着**：一个不验证就落地的合并，等于把 agent 的产出直接
+    ///   推进主干，而这套系统的产出是无人值守生成的。
     public static func merge(repo: String, branch: String, base: String = "main",
-                             deleteBranch: Bool = true) -> Result<String, NSError> {
+                             deleteBranch: Bool = true,
+                             verify: Bool = true) -> Result<String, NSError> {
+        if verify, let reg = RepoRegistry.all().first(where: {
+            NSString(string: $0.path).expandingTildeInPath
+                == NSString(string: repo).expandingTildeInPath
+        }), let cmd = reg.verifyCommand, !cmd.isEmpty {
+            if let why = verifyMerge(repo: repo, branch: branch, base: base,
+                                     command: cmd, timeout: reg.verifyTimeout) {
+                return .failure(ClusterCA.err("没合：\(why)"))
+            }
+        }
+        return mergeUnverified(repo: repo, branch: branch, base: base,
+                               deleteBranch: deleteBranch)
+    }
+
+    static func mergeUnverified(repo: String, branch: String, base: String = "main",
+                                deleteBranch: Bool = true) -> Result<String, NSError> {
         let head = GitWorkspace.git(["rev-parse", "--abbrev-ref", "HEAD"], in: repo)
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard head == base else {

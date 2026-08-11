@@ -551,6 +551,48 @@ func cmdWork(_ args: [String]) throws {
         let landed = done.filter { $0.landedAt != nil }
         let dropped = all.filter { $0.discardedAt != nil }
 
+        // llmq work review --auto —— 能干净合、验证也过的，直接落地
+        //
+        // 这个开关存在的理由：这套系统的产出是**无人值守**生成的，
+        // 而消化端只要还需要人手工敲命令，积压就是必然的 ——
+        // 实测跑了 8 个任务、产出 8 份、落地 0 份，不是产出不行，
+        // 是根本没人走评审那一步。
+        //
+        // 但「自动」不等于「不看」：只有仓库配了验证命令、而且合并结果
+        // 真的通过了验证，才会落地。没配验证命令的仓库一律不自动合 ——
+        // 不验证就自动落地，等于把无人值守的产出直接推进主干。
+        if rest.contains("--auto") {
+            let cands = Review.list(repo: repoPath).filter(\.mergesCleanly)
+            guard !cands.isEmpty else {
+                print(Ansi.dim("没有能干净合入的分支。")); return
+            }
+            let reg = RepoRegistry.all().first {
+                NSString(string: $0.path).expandingTildeInPath
+                    == NSString(string: repoPath).expandingTildeInPath
+            }
+            guard let cmd = reg?.verifyCommand, !cmd.isEmpty else {
+                print(Ansi.red("这个仓库没配验证命令，不自动合。"))
+                print(Ansi.dim("先配上：llmq repo verify <别名> \"swift build && swift test\""))
+                exit(1)
+            }
+            print(Ansi.dim("验证命令：\(cmd)"))
+            var ok = 0, bad = 0
+            for it in cands {
+                print("\n" + Ansi.bold(it.branch) + Ansi.dim("  验证中…"))
+                switch Review.merge(repo: repoPath, branch: it.branch) {
+                case .success:
+                    // 不用手动记：Review.merge 内部已经把 landedAt 写回任务记录了。
+                    ok += 1
+                    print(Ansi.green("  ✓ 已落地"))
+                case .failure(let e):
+                    bad += 1
+                    print(Ansi.red("  ✗ " + e.localizedDescription))
+                }
+            }
+            print("\n" + Ansi.bold("落地 \(ok) 份") + (bad > 0 ? Ansi.dim("，\(bad) 份没过，留着待查") : ""))
+            return
+        }
+
         let items = Review.list(repo: repoPath)
         if !done.isEmpty {
             let rate = done.isEmpty ? 0 : Double(landed.count) / Double(done.count)
