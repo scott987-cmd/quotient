@@ -20,6 +20,8 @@ public enum ClusterNet {
 
     /// 本进程的一次性钥匙串。老系统上用，进程退出就删。
     private static var scratch: SecKeychain?
+    /// 它的口令。留着是为了能**反复解锁** —— 见 ensureScratchUnlocked。
+    private static var scratchPassword: String?
 
     /// 从 .p12 里取出本机身份。
     ///
@@ -126,6 +128,7 @@ public enum ClusterNet {
         // 授权流程 —— 后台进程拿不到授权，直接 -60008
         // （Unable to obtain authorization for this operation）。
         // 这里口令是我们自己生成的，解锁不需要任何交互。
+        scratchPassword = pw
         _ = pw.withCString { p in
             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
         }
@@ -220,6 +223,31 @@ public enum ClusterNet {
         }
     }
 
+    /// 确保一次性钥匙串是解锁的。**常驻进程必须周期性调它。**
+    ///
+    /// ## 为什么必须反复解锁
+    ///
+    /// 钥匙串会自动上锁（睡眠、闲置）。本来该用 `SecKeychainSetSettings`
+    /// 关掉自动上锁，但那个调用**要授权**，后台进程拿不到，会把整个进程
+    /// 卡死在那一行（实测栈停在 CSSM_DL_PassThrough，serve 因此重启了 50 次）。
+    ///
+    /// 所以换个方向：不去改设置，而是拿着口令反复解锁。口令是本进程自己
+    /// 生成的、只在内存里，解锁全程无交互。
+    ///
+    /// 不做这件事的表现是：serve 重启后好一阵子，过后握手开始报 -9858，
+    /// 而 lsof、防火墙、搜索列表全都正常 —— 因为私钥还在，只是签不了名。
+    @discardableResult
+    public static func ensureScratchUnlocked() -> Bool {
+        guard let kc = scratch, let pw = scratchPassword else { return false }
+        var st = SecKeychainStatus(0)
+        guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+        if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+        let r = pw.withCString { p in
+            SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+        }
+        return r == errSecSuccess
+    }
+
     /// 删掉本进程那份，并把它从搜索列表里摘掉。
     ///
     /// 摘搜索列表这一步不能省：钥匙串文件删了但条目还在，
@@ -231,6 +259,7 @@ public enum ClusterNet {
         // 于是留下一条指向马上就要消失的文件的死条目。
         _ = SecKeychainDelete(kc)
         scratch = nil
+        scratchPassword = nil
         setSearchList(adding: nil)
     }
 

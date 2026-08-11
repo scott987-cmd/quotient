@@ -2101,6 +2101,10 @@ func cmdCluster(_ rest: [String]) throws {
         let watchdog = DispatchQueue(label: "llmq.cluster.rebind")
         func armWatchdog() {
             watchdog.asyncAfter(deadline: .now() + 60) {
+                // 钥匙串会自动上锁，锁上之后私钥签不了名、握手报 -9858，
+                // 而外部看一切正常。带口令解锁不需要任何交互，顺手做掉。
+                ClusterNet.ensureScratchUnlocked()
+
                 switch ClusterPresenceStore.serveHealth(port: cfg.port) {
                 case .ok:
                     break
