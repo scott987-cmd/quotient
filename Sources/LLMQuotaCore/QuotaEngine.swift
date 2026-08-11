@@ -1,0 +1,408 @@
+import Foundation
+
+/// 把多台机器的原始快照 + 用户填的套餐配置，算成可以直接显示的仪表盘。
+public struct QuotaEngine: Sendable {
+    public var config: PlansConfig
+    /// 机器快照超过这个时长没更新，就认为那台机器没在跑采集。
+    public var machineStaleAfter: TimeInterval = 6 * 3600
+
+    public init(config: PlansConfig) {
+        self.config = config
+    }
+
+    // MARK: - Entry point
+
+    public func buildDashboard(snapshots: [MachineSnapshot], now: Date = Date()) -> Dashboard {
+        let machines = snapshots.map {
+            MachineInfo(
+                machineID: $0.machineID,
+                machineName: $0.machineName,
+                lastSeen: $0.generatedAt,
+                isStale: now.timeIntervalSince($0.generatedAt) > machineStaleAfter
+            )
+        }.sorted { $0.machineName < $1.machineName }
+
+        var reports: [PlatformReport] = []
+        for platform in Platform.allCases {
+            guard let plan = config.plan(for: platform), plan.enabled else { continue }
+            reports.append(buildReport(plan: plan, snapshots: snapshots, now: now))
+        }
+
+        return Dashboard(generatedAt: now, machines: machines, reports: reports)
+    }
+
+    // MARK: - Per platform
+
+    private func buildReport(
+        plan: PlatformPlan,
+        snapshots: [MachineSnapshot],
+        now: Date
+    ) -> PlatformReport {
+        var byMachineBuckets: [String: [UsageBucket]] = [:]
+        var allBuckets: [UsageBucket] = []
+        var officials: [OfficialQuota] = []
+        var detected = false
+        var installed = false
+        var lastActivity: Date?
+        var machineNames: [String] = []
+
+        for snap in snapshots {
+            guard let ps = snap.platforms.first(where: { $0.platform == plan.platform }) else { continue }
+            if ps.installed { installed = true }
+            guard ps.detected else { continue }
+            detected = true
+            machineNames.append(snap.machineName)
+            byMachineBuckets[snap.machineName, default: []].append(contentsOf: ps.buckets)
+            allBuckets.append(contentsOf: ps.buckets)
+            officials.append(contentsOf: ps.officialQuotas)
+            if let la = ps.lastActivity, lastActivity == nil || la > lastActivity! {
+                lastActivity = la
+            }
+        }
+
+        // 官方额度是账号级的，不分机器 —— 同一条只留观测时间最新的那次。
+        var latestOfficial: [String: OfficialQuota] = [:]
+        for q in officials {
+            if let cur = latestOfficial[q.id], cur.observedAt >= q.observedAt { continue }
+            latestOfficial[q.id] = q
+        }
+        let liveOfficial = latestOfficial.values
+            .filter { !$0.isStale(now: now) }
+            .sorted { $0.windowMinutes < $1.windowMinutes }
+
+        var statuses: [QuotaStatus] = []
+        var coveredWindows: Set<Int> = []
+
+        if plan.preferOfficialQuota {
+            for q in liveOfficial {
+                statuses.append(officialStatus(q, plan: plan, now: now))
+                coveredWindows.insert(q.windowMinutes)
+            }
+        }
+
+        for limit in plan.limits {
+            // 官方已经给了同长度窗口的真实数字，就不再用本地推算的那份覆盖它。
+            if coveredWindows.contains(limit.windowMinutes) { continue }
+            statuses.append(localStatus(
+                limit: limit, plan: plan,
+                buckets: allBuckets, byMachine: byMachineBuckets, now: now
+            ))
+        }
+
+        statuses.sort { $0.windowStart > $1.windowStart }
+
+        let d30 = now.addingTimeInterval(-30 * 86400)
+        let d7 = now.addingTimeInterval(-7 * 86400)
+        let b30 = allBuckets.filter { $0.start >= d30 }
+        let b7 = allBuckets.filter { $0.start >= d7 }
+
+        // 这几个先算出来再传。多加一个参数之后整块表达式就把类型检查器
+        // 拖到超时了（"unable to type-check in reasonable time"）——
+        // reduce 的闭包每个都要独立推导，堆在一个初始化器里成本是乘起来的。
+        // 人最后一次亲手用它。只看 interactive，调度器自己跑的不算。
+        let humanLast = allBuckets
+            .filter { $0.lane != .headless && ($0.requests > 0 || $0.prompts > 0) }
+            .map(\.start).max()
+
+        let req30 = b30.reduce(0) { $0 + $1.requests }
+        let tok30 = b30.reduce(0) { $0 + $1.billableTokens }
+        let req7 = b7.reduce(0) { $0 + $1.requests }
+        let models = topModels(b30)
+
+        return PlatformReport(
+            platform: plan.platform,
+            planName: plan.planName,
+            monthlyCost: plan.monthlyCost,
+            currency: plan.currency,
+            detected: detected,
+            installed: installed,
+            enabled: plan.enabled,
+            lastHumanActivity: humanLast,
+            machines: Array(Set(machineNames)).sorted(),
+            lastActivity: lastActivity,
+            statuses: statuses,
+            last30dRequests: req30,
+            last30dBillableTokens: tok30,
+            last7dRequests: req7,
+            topModels: models
+        )
+    }
+
+    // MARK: - Status from platform-reported quota
+
+    private func officialStatus(_ q: OfficialQuota, plan: PlatformPlan, now: Date) -> QuotaStatus {
+        let windowSeconds = TimeInterval(q.windowMinutes) * 60
+        let resets = q.resetsAt
+        let start = resets.map { $0.addingTimeInterval(-windowSeconds) }
+            ?? q.observedAt.addingTimeInterval(-windowSeconds)
+
+        let elapsed = clamp01(now.timeIntervalSince(start) / max(windowSeconds, 1))
+        let usedFraction = q.usedPercent / 100
+        let projected = project(usedFraction: usedFraction, elapsed: elapsed)
+        let health = judge(
+            usedFraction: usedFraction, projectedFraction: projected,
+            elapsed: elapsed, kind: .periodic, hasLimit: true
+        )
+
+        let observedText = Format.relative(q.observedAt, now: now)
+        var note = "平台回报，截至 \(observedText)"
+        if let p = q.planType { note = "\(p) 档 · " + note }
+
+        return QuotaStatus(
+            platform: plan.platform,
+            planName: plan.planName,
+            limitID: "official-\(q.id)",
+            label: q.label,
+            metric: .percent,
+            kind: .periodic,
+            used: q.usedPercent,
+            limit: 100,
+            usedFraction: usedFraction,
+            windowStart: start,
+            resetsAt: resets,
+            windowElapsedFraction: elapsed,
+            projectedUsedFraction: projected,
+            projectedWaste: projected.map { max(0, 100 - $0 * 100) },
+            health: health,
+            isOfficial: true,
+            sourceNote: note
+        )
+    }
+
+    // MARK: - Status computed from local logs
+
+    private func localStatus(
+        limit: QuotaLimit,
+        plan: PlatformPlan,
+        buckets: [UsageBucket],
+        byMachine: [String: [UsageBucket]],
+        now: Date
+    ) -> QuotaStatus {
+        // lane 为 nil 表示这条上限不区分额度池；指定了就只算那个池子的用量。
+        // 少了这层过滤，Claude 的订阅额度会把 claude -p 的消耗也算进去，
+        // 而那部分其实走的是另一个池子。
+        // 必须先过滤再算窗口：会话窗口的起点取决于「这个池子」第一次被用的时刻，
+        // 拿全部用量去找起点会把别的池子的调用误当成本轮开端。
+        let laneMatched = limit.lane == nil
+            ? buckets
+            : buckets.filter { $0.lane == limit.lane }
+
+        // 会话窗口的起点由用量本身决定，所以不能只看时钟，得先找出这一轮是什么时候开的。
+        let start: Date
+        let end: Date
+        let windowActive: Bool
+        if limit.kind == .session {
+            if let ws = Self.sessionWindowStart(
+                buckets: laneMatched, length: limit.windowSeconds, now: now
+            ) {
+                start = ws
+                end = ws.addingTimeInterval(limit.windowSeconds)
+                windowActive = true
+            } else {
+                // 上一轮已经结束、这一轮还没开始 —— 额度是满的，也没有任何东西在倒计时。
+                start = now
+                end = now.addingTimeInterval(limit.windowSeconds)
+                windowActive = false
+            }
+        } else {
+            (start, end) = window(for: limit, now: now)
+            windowActive = true
+        }
+
+        let inWindow = laneMatched.filter { $0.start >= start && $0.start < end }
+        let used = limit.metric.value(from: inWindow, pricing: plan.pricing)
+
+        var machineSplit: [String: Double] = [:]
+        for (name, mb) in byMachine {
+            let v = limit.metric.value(
+                from: mb.filter {
+                    (limit.lane == nil || $0.lane == limit.lane)
+                        && $0.start >= start && $0.start < end
+                },
+                pricing: plan.pricing
+            )
+            if v > 0 { machineSplit[name] = v }
+        }
+
+        let elapsed: Double
+        let resets: Date?
+        switch limit.kind {
+        case .rolling:
+            // 滚动窗口在时间上永远是"满"的，当前用量就是稳态用量，不需要外推。
+            elapsed = 1.0
+            // 窗口里最早那次调用滚出去的时刻，就是额度开始回血的时刻。
+            resets = inWindow.map(\.start).min()?.addingTimeInterval(limit.windowSeconds)
+        case .periodic:
+            // 自然月长度是 28~31 天不等，必须用实际窗口长度，不能用配置里的固定秒数。
+            let windowLength = max(1, end.timeIntervalSince(start))
+            elapsed = clamp01(now.timeIntervalSince(start) / windowLength)
+            resets = end
+
+        case .session:
+            // 没开窗就没有倒计时可言，也不该显示成"刚开始用了 0%"。
+            elapsed = windowActive
+                ? clamp01(now.timeIntervalSince(start) / limit.windowSeconds)
+                : 0
+            resets = windowActive ? end : nil
+        }
+
+        let usedFraction = limit.limit.map { $0 > 0 ? used / $0 : 0 }
+        let projected = usedFraction.flatMap { project(usedFraction: $0, elapsed: elapsed) }
+        let health = judge(
+            usedFraction: usedFraction ?? 0, projectedFraction: projected,
+            elapsed: elapsed, kind: limit.kind, hasLimit: limit.limit != nil
+        )
+
+        var waste: Double?
+        if limit.kind.canExpire, let cap = limit.limit, let p = projected {
+            waste = max(0, cap - p * cap)
+        }
+
+        return QuotaStatus(
+            platform: plan.platform,
+            planName: plan.planName,
+            limitID: limit.id,
+            label: limit.label,
+            metric: limit.metric,
+            kind: limit.kind,
+            used: used,
+            limit: limit.limit,
+            usedFraction: usedFraction,
+            windowStart: start,
+            resetsAt: resets,
+            windowElapsedFraction: elapsed,
+            projectedUsedFraction: projected,
+            projectedWaste: waste,
+            health: health,
+            isOfficial: false,
+            sourceNote: limit.limit == nil
+                ? (limit.hint ?? "未配置上限，仅统计用量")
+                : "由本地日志推算",
+            byMachine: machineSplit
+        )
+    }
+
+    // MARK: - Window math
+
+    func window(for limit: QuotaLimit, now: Date, calendar: Calendar = .current)
+        -> (start: Date, end: Date) {
+        switch limit.kind {
+        case .rolling:
+            return (now.addingTimeInterval(-limit.windowSeconds), now.addingTimeInterval(1))
+
+        case .session:
+            // 会话窗口要看用量才知道起点，localStatus 会直接处理，不走这里。
+            // 真被调到（比如外部直接调用）时退化成滚动窗口，至少不会算出荒谬的区间。
+            return (now.addingTimeInterval(-limit.windowSeconds), now.addingTimeInterval(1))
+
+        case .periodic:
+            // 用户显式给了账单日就按它推，周期长度固定。
+            if let anchor = limit.anchor {
+                let elapsed = now.timeIntervalSince(anchor)
+                let n = (elapsed / limit.windowSeconds).rounded(.down)
+                let start = anchor.addingTimeInterval(n * limit.windowSeconds)
+                return (start, start.addingTimeInterval(limit.windowSeconds))
+            }
+
+            // 没给锚点时，按**本地时区**的自然日/周/月对齐。
+            // 从 Unix 纪元按固定秒数推是错的：那样"每日"额度会在北京时间早上 8 点
+            // （UTC 午夜）重置，而各家平台实际都是按本地自然日算的。
+            // 自然月还必须用日历，因为 28~31 天不是固定长度。
+            if let natural = naturalWindow(minutes: limit.windowMinutes, now: now, cal: calendar) {
+                return natural
+            }
+
+            // 非自然周期（比如 3 天）退回纪元对齐。
+            let anchor = Date(timeIntervalSince1970: 0)
+            let n = (now.timeIntervalSince(anchor) / limit.windowSeconds).rounded(.down)
+            let start = anchor.addingTimeInterval(n * limit.windowSeconds)
+            return (start, start.addingTimeInterval(limit.windowSeconds))
+        }
+    }
+
+    /// 找出当前这一轮会话窗口是什么时候开的。
+    ///
+    /// 规则：第一次调用开一轮窗，窗口长度固定；这一轮结束后，
+    /// 下一次调用才开新的一轮。所以要顺着用量往前走，一轮一轮地链下去。
+    ///
+    /// - Returns: 当前活跃窗口的起点；如果上一轮已经结束、这一轮还没开始（额度是满的），返回 nil。
+    static func sessionWindowStart(
+        buckets: [UsageBucket], length: TimeInterval, now: Date
+    ) -> Date? {
+        let used = buckets.filter { $0.requests > 0 }.map(\.start).sorted()
+        guard !used.isEmpty else { return nil }
+
+        var windowStart = used[0]
+        for t in used where t >= windowStart.addingTimeInterval(length) {
+            windowStart = t
+        }
+        // 最后一轮已经走完了，现在处于两轮之间。
+        guard now < windowStart.addingTimeInterval(length) else { return nil }
+        return windowStart
+    }
+
+    private func naturalWindow(minutes: Int, now: Date, cal: Calendar)
+        -> (start: Date, end: Date)? {
+        let unit: Calendar.Component
+        switch minutes {
+        case 1440: unit = .day
+        case 10080: unit = .weekOfYear
+        case 43200: unit = .month
+        default: return nil
+        }
+        guard let interval = cal.dateInterval(of: unit, for: now) else { return nil }
+        return (interval.start, interval.end)
+    }
+
+    /// 按当前速度线性外推到窗口结束时的用量占比。
+    private func project(usedFraction: Double, elapsed: Double) -> Double? {
+        guard elapsed > 0.001 else { return nil }
+        return usedFraction / elapsed
+    }
+
+    private func judge(
+        usedFraction: Double,
+        projectedFraction: Double?,
+        elapsed: Double,
+        kind: WindowKind,
+        hasLimit: Bool
+    ) -> QuotaHealth {
+        guard hasLimit else { return .unconfigured }
+        if usedFraction >= 1.0 { return .exhausted }
+
+        switch kind {
+        case .rolling:
+            if usedFraction <= 0 { return .idle }
+            if usedFraction > config.riskThreshold { return .atRisk }
+            return .healthy
+
+        case .session, .periodic:
+            // 窗口刚开头，样本太少，外推没有意义，先不下结论。
+            guard elapsed > 0.15 else { return .healthy }
+            if usedFraction <= 0 { return .idle }
+            guard let p = projectedFraction else { return .healthy }
+            if p > config.riskThreshold { return .atRisk }
+            if p < config.wasteThreshold { return .wasting }
+            return .healthy
+        }
+    }
+
+    private func clamp01(_ v: Double) -> Double { min(1, max(0, v)) }
+
+    private func topModels(_ buckets: [UsageBucket], limit: Int = 5) -> [ModelUsage] {
+        var agg: [String: (Int, Int)] = [:]
+        for b in buckets {
+            var cur = agg[b.model] ?? (0, 0)
+            cur.0 += b.requests
+            cur.1 += b.billableTokens
+            agg[b.model] = cur
+        }
+        return agg
+            .map { ModelUsage(model: $0.key, requests: $0.value.0, billableTokens: $0.value.1) }
+            .sorted { $0.billableTokens == $1.billableTokens
+                ? $0.requests > $1.requests
+                : $0.billableTokens > $1.billableTokens }
+            .prefix(limit)
+            .map { $0 }
+    }
+}

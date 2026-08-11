@@ -1,0 +1,738 @@
+import Foundation
+import Network
+import Security
+
+/// 局域网 mTLS 传输层。
+///
+/// 这个文件里有四处「写错了不会报错，只会静默失去保护」的地方，
+/// 每一处都在下面标了原因，也都各有一条「必须被拒」的测试：
+///
+/// 1. 服务端不强制客户端证书 → 任何人都能连（`peerAuthenticationRequired`）
+/// 2. 验证回调无条件 `complete(true)` → 证书形同虚设
+/// 3. 不限定锚点 → 系统根 CA 也算数（在 `TrustEvaluator` 里）
+/// 4. 绑 0.0.0.0 而不是内网地址 → 暴露面超出预期
+public enum ClusterNet {
+
+    /// 线上协议版本。两端不一致时 ping 能一眼看出来。
+    public static let protocolVersion = "1"
+
+    // MARK: - 身份
+
+    /// 本进程的一次性钥匙串。老系统上用，进程退出就删。
+    private static var scratch: SecKeychain?
+
+    /// 从 .p12 里取出本机身份。
+    ///
+    /// ## 新系统：只在内存里解
+    ///
+    /// `kSecImportToMemoryOnly` 让私钥只存在于进程内存，退出就没了，
+    /// 磁盘上永远只有那个用口令加密过的 .p12。
+    ///
+    /// ## 老系统（macOS < 15）：给它一个一次性钥匙串
+    ///
+    /// 那个键 macOS 15 才有。更早的系统上 `SecPKCS12Import` 会把身份
+    /// **导进登录钥匙串**，而导进去的私钥，访问控制是按**当时那个可执行
+    /// 文件**建的。于是 `llmq update` 换掉二进制之后，每次用到私钥系统
+    /// 都会弹窗要密码。
+    ///
+    /// 后果比「烦」严重得多：客户端会**卡在那个没人点的弹窗上**直到超时。
+    /// 表现是握手 30 秒无响应、服务端日志一个字都没有 —— 看起来完全像
+    /// 网络不通。它一路伪装成防火墙、AP 隔离、端口被拦，
+    /// 最后是在那台机器上看见 SecurityAgent 进程挂着才认出来的。
+    ///
+    /// 所以老系统上现建一个一次性钥匙串：口令是本进程当场随机生成的，
+    /// 用完即删。登录钥匙串一点不碰，也就没有 ACL、没有弹窗。
+    /// 落盘的文件里私钥是用那个随机口令加密的，而口令只在内存 ——
+    /// 进程一没它就是一堆无用字节，下次启动还会先清掉。
+    public static func loadIdentity(node: String, password: String) throws -> SecIdentity {
+        let p12 = ClusterCA.dir.appendingPathComponent("\(node).p12")
+        guard let data = try? Data(contentsOf: p12) else {
+            throw ClusterCA.err("找不到 \(node).p12，先跑 llmq cluster enroll \(node)")
+        }
+        var opts: [String: Any] = [kSecImportExportPassphrase as String: password]
+        var memoryOnly = false
+        if #available(macOS 15.0, *) {
+            opts[kSecImportToMemoryOnly as String] = true
+            memoryOnly = true
+        }
+        // 一次性钥匙串这条路可以关掉。
+        //
+        // 它解决的是「更新之后每次用私钥都弹窗」，但**导进去的私钥能不能
+        // 真的用来签名**是另一回事 —— TLS 1.3 里客户端要用它签
+        // CertificateVerify，签不了就等于没出证书，服务端的验证回调
+        // 根本不会被调用，握手停在那儿谁也不报错。
+        // 留个开关，出问题时不用重新发版就能二分。
+        let noScratch = ProcessInfo.processInfo.environment["LLMQ_NO_SCRATCH_KEYCHAIN"] == "1"
+        if !memoryOnly, !noScratch, let kc = scratchKeychain() {
+            opts[kSecImportExportKeychain as String] = kc
+        }
+        var items: CFArray?
+        var status = SecPKCS12Import(data as CFData, opts as CFDictionary, &items)
+        // 一次性钥匙串这条路走不通就退回默认行为。
+        //
+        // 退回去会重新带来「更新之后弹窗」的老毛病，但**有服务总比没服务强**：
+        // 硬失败等于这台机器彻底不参与集群，而弹窗至少还能点一下继续。
+        // 新路径是优化，不该变成新的单点故障。
+        if status != errSecSuccess, opts[kSecImportExportKeychain as String] != nil {
+            opts.removeValue(forKey: kSecImportExportKeychain as String)
+            releaseScratchKeychain()
+            items = nil
+            status = SecPKCS12Import(data as CFData, opts as CFDictionary, &items)
+        }
+        guard status == errSecSuccess else {
+            // 这几个码值得单独翻译。裸着一个 -25264 完全看不出发生了什么，
+            // 而它和"口令打错了"是两回事 —— 排查方向差得很远。
+            let why: String
+            switch status {
+            case errSecAuthFailed:
+                why = "口令不对"
+            case errSecPkcs12VerifyFailure:
+                why = "完整性校验没过 —— 口令不对，"
+                    + "或者这台 macOS 不支持这个 p12 的 MAC 算法"
+                    + "（老系统对 SHA-256 的 MAC 就会这样）"
+            case errSecDecode:
+                why = "这台 macOS 解不了这个 p12 的加密算法（比如 AES）"
+            default:
+                // 裸数字没有信息量。系统自带的描述总比「错误码 -26276」强 ——
+                // 今天在这条链路上被无意义的错误信息坑了不止一次。
+                let sys = SecCopyErrorMessageString(status, nil) as String?
+                why = "错误码 \(status)" + (sys.map { "（\($0)）" } ?? "")
+            }
+            throw ClusterCA.err("导入 p12 失败：\(why)")
+        }
+        guard let arr = items as? [[String: Any]], let first = arr.first,
+              let raw = first[kSecImportItemIdentity as String] else {
+            throw ClusterCA.err("p12 里没有身份")
+        }
+        return raw as! SecIdentity
+    }
+
+    /// 建（或复用）本进程的一次性钥匙串。
+    ///
+    /// `promptUser: false` 加一个显式口令 = 全程无交互，这正是重点。
+    public static func scratchKeychain() -> SecKeychain? {
+        if let scratch { return scratch }
+        sweepStaleScratchKeychains()
+        let path = ClusterCA.dir.appendingPathComponent("scratch-\(getpid()).keychain").path
+        let pw = randomPassword()
+        var kc: SecKeychain?
+        let st = pw.withCString { p in
+            SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+        }
+        guard st == errSecSuccess, let kc else { return nil }
+        // **必须显式解锁。**
+        //
+        // 新建的钥匙串不保证是解锁状态，而往锁着的钥匙串里加东西会走
+        // 授权流程 —— 后台进程拿不到授权，直接 -60008
+        // （Unable to obtain authorization for this operation）。
+        // 这里口令是我们自己生成的，解锁不需要任何交互。
+        _ = pw.withCString { p in
+            SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+        }
+        // **到此为止，别再碰这个钥匙串的任何设置。**
+        //
+        // 只有 create 和 unlock 是安全的 —— 它们都吃我们自己生成的口令，
+        // 不需要向系统要授权。而 `SecKeychainSetSettings`（关自动上锁）
+        // 和 `SecKeychainSetSearchList`（加进搜索列表）都要走授权，
+        // 后台进程要不到，于是**整个进程卡死在那一行**。
+        //
+        // 这是实测出来的，不是推测。进程采样的栈长这样：
+        //   ClusterNet.loadIdentity
+        //     → ClusterNet.scratchKeychain()
+        //       → SecKeychainSetSettings          ← 停在这儿
+        //         → CSSM_DL_PassThrough
+        // 后果是 serve 起不来、被 launchd 拉起、再卡住，重复了 50 次，
+        // 而日志里连一行「启动」都没有 —— 因为它卡在打印那行之前。
+        //
+        // 搜索列表是**唯一的例外**，而且它是必需的：TLS 要用证书去找配对的
+        // 私钥，不在搜索列表里就找不到，握手直接 -9858 失败。
+        // 实测它不像 SetSettings 那样要授权。
+        var list: CFArray?
+        if SecKeychainCopySearchList(&list) == errSecSuccess,
+           var arr = list as? [SecKeychain] {
+            arr.insert(kc, at: 0)
+            _ = SecKeychainSetSearchList(arr as CFArray)
+        }
+        scratch = kc
+        return kc
+    }
+
+    /// 清掉遗留的一次性钥匙串。
+    ///
+    /// 正常退出会删，崩溃不会。里面的私钥是用一个已经消失的随机口令加密的，
+    /// 留着也解不开，但没必要攒。活着的进程那份别动 —— 同一台机器上
+    /// 可能有另一个 llmq 正在跑。
+    public static func sweepStaleScratchKeychains() {
+        let fm = FileManager.default
+        guard let all = try? fm.contentsOfDirectory(atPath: ClusterCA.dir.path) else { return }
+        for f in all where f.hasPrefix("scratch-") && f.hasSuffix(".keychain") {
+            let pid = Int32(f.dropFirst("scratch-".count).dropLast(".keychain".count)) ?? -1
+            if pid > 0 && kill(pid, 0) == 0 { continue }
+            try? fm.removeItem(atPath: ClusterCA.dir.appendingPathComponent(f).path)
+        }
+    }
+
+    /// 删掉本进程那份。
+    public static func releaseScratchKeychain() {
+        guard let kc = scratch else { return }
+        _ = SecKeychainDelete(kc)
+        scratch = nil
+    }
+
+    /// 口令存钥匙串，不存磁盘。
+    ///
+    /// 把口令跟它保护的文件放在同一个目录，等于没加密。放钥匙串的实际收益是：
+    /// 一份不含钥匙串的 Application Support 备份泄露了，也用不出来。
+    public enum Passphrase {
+        static let service = "com.llmquotabar.cluster"
+
+        /// 存口令。
+        ///
+        /// ## 为什么要把访问控制放宽到「本机所有程序」
+        ///
+        /// 钥匙串条目默认的 ACL 绑在**创建它的那个可执行文件**上。
+        /// `llmq update` 换掉二进制之后签名对不上，系统就要弹窗让人确认 ——
+        /// 而 `cluster serve` 是 launchd 下的后台进程，**没有界面可以弹**，
+        /// 于是直接失败退出，被拉起、再失败，如此循环。
+        ///
+        /// 实际后果：每更新一次，跨机服务就静默死一次，而且外部表现是
+        /// 「端口不通」，看起来完全像网络问题。查这个花了大半天，
+        /// 而真正的线索一直躺在那个**因为块缓冲而始终是 0 字节**的日志里。
+        ///
+        /// 放宽之后的安全边界是「登录用户」：任何以你身份运行的程序都能读到它。
+        /// 这比原来弱不了多少 —— 那些程序本来就能直接调用 llmq 本身，
+        /// 拿这个口令能干的事它们本来也干得到。
+        public static func save(_ password: String, node: String) throws {
+            let q: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: node,
+            ]
+            SecItemDelete(q as CFDictionary)
+            var add = q
+            add[kSecValueData as String] = Data(password.utf8)
+            if let access = anyAppAccess() {
+                add[kSecAttrAccess as String] = access
+            }
+            let s = SecItemAdd(add as CFDictionary, nil)
+            guard s == errSecSuccess else { throw ClusterCA.err("存钥匙串失败：\(s)") }
+        }
+
+        /// 构造一个「不限程序」的 SecAccess。
+        ///
+        /// 注意这里有两个 nil，意思正好相反：`SecAccessCreate` 的
+        /// trustedlist 传 nil 表示**只信任调用方**（正是要避开的行为），
+        /// 而 `SecACLSetContents` 的应用列表传 nil 才表示**不限程序**。
+        private static func anyAppAccess() -> SecAccess? {
+            var access: SecAccess?
+            guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+                  let access else { return nil }
+            var list: CFArray?
+            guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+                  let acls = list as? [SecACL] else { return access }
+            for acl in acls {
+                var apps: CFArray?
+                var desc: CFString?
+                var prompt = SecKeychainPromptSelector()
+                guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+                else { continue }
+                _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+            }
+            return access
+        }
+
+        public static func load(node: String) throws -> String {
+            let q: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: node,
+                kSecReturnData as String: true,
+            ]
+            var out: CFTypeRef?
+            let s = SecItemCopyMatching(q as CFDictionary, &out)
+            if s == errSecSuccess, let d = out as? Data {
+                return String(decoding: d, as: UTF8.self)
+            }
+            // **区分「没有」和「不让读」。**
+            //
+            // 原来这里把所有 OSStatus 都写成「钥匙串里没有口令」。
+            // 而 launchd 下的后台进程拿到的其实是 errSecInteractionNotAllowed
+            // （-25308：要弹窗，但没界面可弹）—— 条目明明就在。
+            // 那条错误信息把排查引向「是不是没导入」，而真相是「没权限」。
+            // 一条把 A 说成 B 的错误信息，比没有错误信息更耽误事。
+            switch s {
+            case errSecItemNotFound:
+                throw ClusterCA.err("钥匙串里没有 \(node) 的口令，先跑 llmq cluster import")
+            case errSecInteractionNotAllowed:
+                throw ClusterCA.err(
+                    "钥匙串不让后台进程读 \(node) 的口令（-25308）—— "
+                    + "多半是 llmq update 换了二进制、签名对不上了。"
+                    + "在终端里跑一次 llmq cluster fix-keychain 就好，以后不再需要")
+            default:
+                throw ClusterCA.err("读钥匙串失败（OSStatus \(s)），节点 \(node)")
+            }
+        }
+
+        /// 删掉一条。测试用来清理一次性条目。
+        public static func delete(node: String) throws {
+            let q: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: node,
+            ]
+            let s = SecItemDelete(q as CFDictionary)
+            guard s == errSecSuccess || s == errSecItemNotFound else {
+                throw ClusterCA.err("删钥匙串条目失败：\(s)")
+            }
+        }
+
+        /// 把已有的口令按放宽后的 ACL 重存一遍。
+        ///
+        /// 必须在**终端里交互运行**：读那一步可能弹一次窗，点「允许」即可。
+        /// 之后 launchd 下的 serve 就能直接读，以后再更新也不会断。
+        public static func relax(node: String) throws {
+            let pw = try load(node: node)   // 可能弹一次窗，仅此一次
+            try save(pw, node: node)
+        }
+    }
+
+    // MARK: - TLS 参数
+
+    /// - Parameter allowed: 允许的对端节点名。
+    ///   服务端传授权名单；客户端**只传它想连的那一个** ——
+    ///   否则任何一个合法节点都能冒充另一个节点接管这条连接。
+    /// - Parameter log: 握手过程的旁路日志。
+    ///
+    ///   排查跨机连不通时最缺的就是它：握手失败时两端都只能看到一个
+    ///   「连接被对方关了」，谁都不说是为什么。而**验证回调有没有被调用**
+    ///   这一个事实就能把范围劈成两半 —— 没被调用说明是 Network.framework
+    ///   在更底层拒的，被调用了说明是我们自己的信任判定拒的。
+    static func parameters(
+        identity: SecIdentity, ca: SecCertificate, allowed: Set<String>,
+        requirePeerCert: Bool, onVerified: ((String) -> Void)? = nil,
+        log: ((String) -> Void)? = nil
+    ) throws -> NWParameters {
+        guard let secID = sec_identity_create(identity) else {
+            throw ClusterCA.err("无法构造 TLS 身份")
+        }
+        let tls = NWProtocolTLS.Options()
+        let sec = tls.securityProtocolOptions
+        sec_protocol_options_set_local_identity(sec, secID)
+
+        // 两端都是我们自己的代码，没有兼容老客户端的包袱。
+        // 直接钉死 1.3，把降级协商这一整类问题从桌面上拿掉。
+        sec_protocol_options_set_min_tls_protocol_version(sec, .TLSv13)
+
+        // 服务端必须要求客户端出证书。默认是 false ——
+        // 漏了这一行，服务端照常握手、照常收请求，只是谁都能连。
+        if requirePeerCert {
+            sec_protocol_options_set_peer_authentication_required(sec, true)
+        }
+
+        let queue = DispatchQueue(label: "llmq.cluster.verify")
+        sec_protocol_options_set_verify_block(sec, { _, secTrust, complete in
+            let trust = sec_trust_copy_ref(secTrust).takeRetainedValue()
+            guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate] else {
+                log?("验证回调：拿不到证书链，拒绝")
+                complete(false); return
+            }
+            let verdict = TrustEvaluator.evaluate(
+                peerCertificates: chain, caCertificate: ca, allowedNodes: allowed)
+            switch verdict {
+            case .trusted(let node):
+                log?("验证回调：放行 \(node)（链 \(chain.count) 张）")
+                onVerified?(node)
+            case .rejected(let why):
+                log?("验证回调：拒绝 —— \(why)（链 \(chain.count) 张，"
+                    + "允许名单 \(allowed.sorted().joined(separator: "、"))）")
+            }
+            // 唯一决定放行与否的地方。这里如果写成无条件 complete(true)，
+            // 上面所有东西都白搭，而且不会有任何报错。
+            complete(verdict.isTrusted)
+        }, queue)
+
+        let tcp = NWProtocolTCP.Options()
+        tcp.connectionTimeout = 10
+        tcp.noDelay = true
+        return NWParameters(tls: tls, tcp: tcp)
+    }
+
+    // MARK: - 服务端
+
+    public final class Server {
+        let config: ClusterConfig
+        let params: NWParameters
+        let log: (String) -> Void
+        var listener: NWListener?
+        /// **只给监听器用。** 不能用 .main —— 调用方经常也在主线程上
+        /// 阻塞等待（CLI 的 dispatchMain、测试里的同步 send），
+        /// 共用主队列会直接死锁：连接建好了但没人处理。
+        ///
+        /// 更要紧的是：连接**不能**跟着用这条队列。它是串行的，
+        /// 一个慢的处理函数会把监听器一起堵死，于是内核 accept 队列填满、
+        /// 之后的 SYN 被**静默丢弃**（不回 RST）。从外面看就是
+        /// 「端口明明开着，连过去却超时」，而本机 lsof 一切正常 ——
+        /// 这个组合排查起来极其费劲，实际上花了大半天。
+        ///
+        /// 触发它的是 `.status`：它要读 iCloud 上的快照，
+        /// 而读一个还没落地的占位文件会阻塞到下载完成。
+        let queue = DispatchQueue(label: "llmq.cluster.server")
+
+        /// `.waiting` 容忍多久。开机时网卡还没就绪、上一个进程还没放开端口，
+        /// 都会短暂进 waiting，立刻退出会变成重启风暴。
+        static let waitingGrace: TimeInterval = 30
+        private var waitingTimerArmed = false
+
+        /// 请求处理函数。做成可注入的，好写「慢处理不堵别人」的回归测试 ——
+        /// 不然这个 bug 只能靠人肉复现。
+        public var handler: (ClusterRequest, String) -> ClusterResponse = ClusterService.handle
+
+        public init(config: ClusterConfig, password: String,
+                    log: @escaping (String) -> Void = { print($0) }) throws {
+            guard let ca = ClusterCA.loadCACertificate() else {
+                throw ClusterCA.err("读不到 CA 证书，先跑 llmq cluster init")
+            }
+            guard !config.allowedNodes.isEmpty else {
+                // 空名单意味着"谁都不许进"。与其起一个永远拒绝的服务，
+                // 不如直接拦住 —— 空名单几乎总是配置忘了填，而不是本意。
+                throw ClusterCA.err("允许名单是空的，先跑 llmq cluster trust <节点名>")
+            }
+            let id = try ClusterNet.loadIdentity(node: config.nodeName, password: password)
+            self.config = config
+            self.log = log
+            self.params = try ClusterNet.parameters(
+                identity: id, ca: ca, allowed: config.allowedSet, requirePeerCert: true,
+                log: log)
+        }
+
+        /// - Parameter bindHost: 只有测试会传（127.0.0.1）。
+        ///   产品里一律走下面的内网地址探测。
+        public func start(bindHost: String? = nil) throws {
+            // 绑到内网地址而不是 0.0.0.0。没有公网 IP 的情况下两者实际暴露面
+            // 一样，但显式绑定意味着**多插一张网卡、开一次热点**都不会
+            // 意外把它带到别的网段上去。
+            guard let ip = bindHost ?? config.bindAddress ?? ClusterNet.lanAddress() else {
+                throw ClusterCA.err("找不到局域网地址，没连 Wi-Fi 或网线？")
+            }
+            // 绑全部地址时**不能**设 requiredLocalEndpoint —— 那个字段要的是
+            // 一个具体端点，塞 0.0.0.0 进去语义不对。不设它，NWListener
+            // 本来就是所有接口都听。
+            if ip != "0.0.0.0" && ip != "*" {
+                params.requiredLocalEndpoint = .hostPort(
+                    host: .init(ip), port: .init(rawValue: config.port)!)
+            } else {
+                params.requiredLocalEndpoint = nil
+            }
+            params.allowLocalEndpointReuse = true
+
+            let l = (ip == "0.0.0.0" || ip == "*")
+                ? try NWListener(using: params, on: .init(rawValue: config.port)!)
+                : try NWListener(using: params)
+            listener = l
+            l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
+            l.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+                switch state {
+                case .ready:
+                    self.waitingTimerArmed = false
+                    self.log("在 \(ip):\(self.config.port) 上等活 " + "（只认 CA 签发的客户端证书）")
+                    self.log("允许的节点：" + self.config.allowedNodes.joined(separator: "、"))
+                case .waiting(let e):
+                    // **NWListener 绑不上时进的是 .waiting，不是 .failed。**
+                    // 端口被占、要求的本地地址还没就绪，都走这条路。
+                    //
+                    // 这里原来是 default: break，后果是进程活着、
+                    // 永远不监听，而且外面完全看不出来 —— ps 里有它、
+                    // launchd 觉得一切正常、lsof 却是空的。对端连过来
+                    // 只有 RST，于是被当成网络问题查了大半天。
+                    //
+                    // 同一个坑在客户端侧已经踩过一次（握手被拒也是走 .waiting
+                    // 而不是 .failed），当时只修了客户端，没推到这边。
+                    self.log("暂时起不来：\(e)")
+                    guard !self.waitingTimerArmed else { break }
+                    self.waitingTimerArmed = true
+                    self.queue.asyncAfter(deadline: .now() + Self.waitingGrace) { [weak self] in
+                        guard let self, let l = self.listener else { return }
+                        if case .ready = l.state { self.waitingTimerArmed = false; return }
+                        self.log("等了 \(Int(Self.waitingGrace)) 秒还没起来，退出让 launchd 重来")
+                        exit(1)
+                    }
+                case .failed(let e):
+                    // 端口被占是最常见的一种，而且十有八九是自己已经起过一个 ——
+                    // 裸报 POSIXErrorCode(48) 完全看不出该怎么办。
+                    if case .posix(let code) = e, code == .EADDRINUSE {
+                        self.log("端口 \(self.config.port) 已经被占了 —— "
+                                 + "是不是已经有一个 llmq cluster serve 在跑？"
+                                 + "查一下：lsof -nP -iTCP:\(self.config.port) -sTCP:LISTEN")
+                    } else {
+                        self.log("监听失败：\(e)")
+                    }
+                    exit(1)
+                default: break
+                }
+            }
+            l.start(queue: queue)
+        }
+
+        public func stop() {
+            listener?.cancel()
+            listener = nil
+        }
+
+        func accept(_ conn: NWConnection) {
+            // 一进来就记一笔。
+            //
+            // 原来只在 .ready 和 .failed 记日志，于是卡在 .preparing
+            // （TLS 握手没走完）的连接**什么都不留**，服务端日志一片空白 ——
+            // 而这正是最需要日志的那种故障。
+            self.log("← 有连接进来（还没握手）")
+            conn.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+                switch state {
+                case .ready:
+                    let node = ClusterNet.peerNode(of: conn) ?? "?"
+                    self.log("← \(node) 连上了")
+                    self.readRequest(conn, from: node)
+                case .failed(let e):
+                    // 握手被拒也走这里。这是**正常**的拒绝路径，不是故障。
+                    self.log("连接结束：\(e.debugDescription.prefix(80))")
+                    conn.cancel()
+                case .cancelled:
+                    break
+                default: break
+                }
+            }
+            // 每个连接一条自己的队列，彼此隔离，也和监听器隔离。
+            conn.start(queue: DispatchQueue(label: "llmq.cluster.conn"))
+        }
+
+        func readRequest(_ conn: NWConnection, from node: String) {
+            ClusterNet.readFrame(conn) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .failure(let e):
+                    self.log("读取失败：\(e.localizedDescription)")
+                    conn.cancel()
+                case .success(let body):
+                    let req: ClusterRequest
+                    do {
+                        req = try Frame.decode(ClusterRequest.self, from: body)
+                    } catch {
+                        let r = ClusterResponse.failed(
+                            reason: "请求解析失败：\(error.localizedDescription)")
+                        if let out = try? Frame.encode(r) {
+                            conn.send(content: out, completion: .contentProcessed { _ in
+                                conn.cancel()
+                            })
+                        } else { conn.cancel() }
+                        return
+                    }
+                    self.log("  \(node) → \(ClusterNet.describe(req))")
+                    // 处理函数挪到全局队列：它可能很慢（.status 要读 iCloud），
+                    // 而这条连接自己的队列还得负责后续的 send 回调。
+                    let h = self.handler
+                    DispatchQueue.global().async {
+                        let resp = h(req, node)
+                        guard let out = try? Frame.encode(resp) else { conn.cancel(); return }
+                        conn.send(content: out, completion: .contentProcessed { _ in
+                            conn.cancel()
+                        })
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 客户端
+
+    /// 同步发一个请求并等回应。CLI 是同步的，这里用信号量把异步 API 摊平。
+    public static func send(
+        _ req: ClusterRequest, to peer: String, config: ClusterConfig,
+        password: String, timeout: TimeInterval = 30
+    ) throws -> ClusterResponse {
+        // 优先用对方**自报**的地址，手填的只当兜底。
+        //
+        // 手填的地址会因为 DHCP 换 IP 而失效，而失效的表现是 connect 超时 ——
+        // 和「对方没起服务」长得一模一样，从这一头根本分不出来。
+        // 自报地址每 5 分钟跟着采集刷新一次。
+        let announced = ClusterPresenceStore.address(forNode: peer)
+        guard let addr = announced ?? config.peers[peer] else {
+            throw ClusterCA.err("不认识节点 \(peer)，先跑 llmq cluster peer \(peer) <host:port>")
+        }
+        if let announced, announced != config.peers[peer] {
+            FileHandle.standardError.write(Data(
+                "（用它自报的地址 \(announced)，配置里记的是 \(config.peers[peer] ?? "无")）\n".utf8))
+        }
+        let parts = addr.split(separator: ":")
+        guard parts.count == 2, let port = UInt16(parts[1]) else {
+            throw ClusterCA.err("对端地址要写成 host:port，现在是 \(addr)")
+        }
+        guard let ca = ClusterCA.loadCACertificate() else {
+            throw ClusterCA.err("读不到 CA 证书")
+        }
+        let id = try loadIdentity(node: config.nodeName, password: password)
+
+        // 只允许对端是我们要连的那一个节点。
+        // 传整个名单的话，任何一台合法机器都能在中间冒充另一台。
+        let params = try parameters(
+            identity: id, ca: ca, allowed: [peer], requirePeerCert: false,
+            // 客户端把握手细节打到 stderr：正常输出不受影响，
+            // 而握手一旦失败，人第一眼就能看到是哪一层拒的。
+            log: { FileHandle.standardError.write(Data(("  " + $0 + "\n").utf8)) })
+
+        let conn = NWConnection(
+            host: .init(String(parts[0])), port: .init(rawValue: port)!, using: params)
+
+        var outcome: Result<ClusterResponse, Error>?
+        let done = DispatchSemaphore(value: 0)
+        var finished = false
+        let lock = NSLock()
+        func finish(_ r: Result<ClusterResponse, Error>) {
+            lock.lock(); defer { lock.unlock() }
+            guard !finished else { return }
+            finished = true
+            outcome = r
+            done.signal()
+        }
+
+        conn.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                guard let payload = try? Frame.encode(req) else {
+                    finish(.failure(ClusterCA.err("请求编码失败"))); return
+                }
+                conn.send(content: payload, completion: .contentProcessed { err in
+                    if let err { finish(.failure(err)); return }
+                    readFrame(conn) { r in
+                        switch r {
+                        case .failure(let e): finish(.failure(e))
+                        case .success(let body):
+                            finish(Result { try Frame.decode(ClusterResponse.self, from: body) })
+                        }
+                    }
+                })
+            case .failed(let e):
+                finish(.failure(ClusterCA.err(explain(e, peer: peer))))
+            case .waiting(let e):
+                // 握手被拒**大多走这条路**而不是 .failed —— Network.framework
+                // 把它当成"暂时连不上，等会儿重试"。对一次性的 RPC 来说
+                // 没有"等会儿"：不在这里收口，调用方就会白等满整个超时，
+                // 还看不到真正的原因。
+                finish(.failure(ClusterCA.err(explain(e, peer: peer))))
+            case .cancelled:
+                finish(.failure(ClusterCA.err("连接被取消")))
+            default: break
+            }
+        }
+        conn.start(queue: .global())
+
+        if done.wait(timeout: .now() + timeout) == .timedOut {
+            conn.cancel()
+            throw ClusterCA.err("\(Int(timeout)) 秒没等到 \(peer) 的回应")
+        }
+        conn.cancel()
+        return try outcome!.get()
+    }
+
+    /// 把 Network.framework 那些没法看的错误翻成人话。
+    /// 握手失败最常见的两个原因是证书不对和不在名单里，都值得直说。
+    static func explain(_ e: NWError, peer: String) -> String {
+        let raw = e.debugDescription
+        if raw.contains("-9807") || raw.contains("badCert") || raw.contains("-9808") {
+            return "\(peer) 的证书不被信任 —— 两台机器用的是同一个 CA 吗？"
+        }
+        if raw.contains("-9824") || raw.contains("peerCertUnknown") || raw.contains("-9825") {
+            return "被 \(peer) 拒了 —— 本机可能不在它的允许名单里，"
+                 + "让它跑 llmq cluster trust \(ClusterConfigStore.load()?.nodeName ?? "<本机名>")"
+        }
+        if raw.contains("Connection refused") || raw.contains("61") {
+            return "\(peer) 没在听 —— 那台机器上跑起 llmq cluster serve 了吗？"
+        }
+        return "连不上 \(peer)：\(raw.prefix(120))"
+    }
+
+    // MARK: - 读一帧
+
+    static func readFrame(_ conn: NWConnection,
+                          then: @escaping (Result<Data, Error>) -> Void) {
+        conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { data, _, _, err in
+            if let err { then(.failure(err)); return }
+            guard let data, let n = Frame.length(of: data) else {
+                then(.failure(ClusterCA.err("对端提前断开"))); return
+            }
+            guard n > 0, n <= Frame.maxSize else {
+                // 握手过了不代表可以无条件相信对端说的长度。
+                then(.failure(ClusterCA.err("消息长度不合法：\(n)"))); return
+            }
+            conn.receive(minimumIncompleteLength: n, maximumLength: n) { body, _, _, e2 in
+                if let e2 { then(.failure(e2)); return }
+                guard let body, body.count == n else {
+                    then(.failure(ClusterCA.err("消息不完整"))); return
+                }
+                then(.success(body))
+            }
+        }
+    }
+
+    // MARK: - 杂项
+
+    /// 握手完成后从 TLS 元数据里读对端节点名，用来记日志。
+    /// 放行与否已经在 verify block 里定了，这里只是贴个标签。
+    static func peerNode(of conn: NWConnection) -> String? {
+        guard let md = conn.metadata(definition: NWProtocolTLS.definition)
+                as? NWProtocolTLS.Metadata else { return nil }
+        var name: String?
+        _ = sec_protocol_metadata_access_peer_certificate_chain(
+            md.securityProtocolMetadata
+        ) { cert in
+            guard name == nil else { return }
+            let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+            name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+        }
+        return name
+    }
+
+    /// 本机的局域网 IPv4 地址。
+    public static func lanAddress() -> String? {
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0, let head else { return nil }
+        defer { freeifaddrs(head) }
+
+        var candidates: [(name: String, ip: String)] = []
+        for p in sequence(first: head, next: { $0.pointee.ifa_next }) {
+            let f = p.pointee
+            guard f.ifa_addr.pointee.sa_family == UInt8(AF_INET),
+                  (Int32(f.ifa_flags) & IFF_LOOPBACK) == 0,
+                  (Int32(f.ifa_flags) & IFF_UP) != 0 else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(f.ifa_addr, socklen_t(f.ifa_addr.pointee.sa_len),
+                              &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0
+            else { continue }
+            candidates.append((String(cString: f.ifa_name), String(cString: host)))
+        }
+        // en0 优先：Mac 上那是内建网卡，比一堆虚拟接口（utun、bridge）靠谱。
+        return candidates.first(where: { $0.name == "en0" })?.ip
+            ?? candidates.first(where: { $0.name.hasPrefix("en") })?.ip
+            ?? candidates.first?.ip
+    }
+
+    static func describe(_ r: ClusterRequest) -> String {
+        switch r {
+        case .ping: return "探活"
+        case .status: return "拉看板"
+        case .task(let id): return "查任务 \(id)"
+        case .submit(let p, let repo, _):
+            return "投任务（\(repo ?? "默认仓库")）：\(p.prefix(40))"
+        }
+    }
+
+    /// 生成 p12 口令。
+    public static func randomPassword(bytes: Int = 24) -> String {
+        var b = [UInt8](repeating: 0, count: bytes)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes, &b)
+        return Data(b).base64EncodedString()
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "=", with: "")
+    }
+}

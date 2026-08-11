@@ -1,0 +1,352 @@
+import Foundation
+
+/// 自动更新通道。
+///
+/// 这是整套系统里**最危险的一个功能**：它让一台机器上的文件决定另一台机器
+/// 执行什么代码。所以信任模型必须比装机那套「哈希写在命令里」严格 ——
+/// 那时候人在终端前面盯着，现在没有人。
+///
+/// 链条是这样的，每一环都能独立验证：
+///
+///   集群 CA（私钥只在主机上）
+///     └─ 签发 release-signer 证书
+///          └─ 用它的私钥签 manifest（manifest 里有 tar 包的 SHA-256）
+///               └─ tar 包本身用 SHA-256 校验
+///
+/// 从机验三件事，缺一不可：
+///   1. release-signer 证书确实由本集群的 CA 签发（它手上有 ca.crt）
+///   2. 这张证书的 CN 就是 "release-signer" —— **不能是任意节点证书**。
+///      否则一张被偷的从机证书就能给全集群推代码，
+///      那比它原本能干的（投一个任务）严重得多。
+///   3. manifest 的签名对得上，且 tar 包的哈希和 manifest 里写的一致
+///
+/// release-signer 的私钥**从不分发**，只待在主机上。
+public enum ReleaseChannel {
+
+    /// 测试用，产品代码里永远是 nil。
+    public static var dirOverride: URL?
+    public static var markerOverride: URL?
+
+    public static var dir: URL? {
+        if let dirOverride { return dirOverride }
+        return Paths.iCloudConfigDir?
+            .deletingLastPathComponent()
+            .appendingPathComponent("releases", isDirectory: true)
+    }
+
+    /// 签名者的 CN。从机会严格比对这个值。
+    public static let signerName = "release-signer"
+
+    static var signerKey: URL { ClusterCA.dir.appendingPathComponent("\(signerName).key") }
+    static var signerCert: URL { ClusterCA.dir.appendingPathComponent("\(signerName).crt") }
+
+    // MARK: - 清单
+
+    public struct Manifest: Codable, Sendable {
+        /// tar 包的 SHA-256。**同时也是这个版本的身份** ——
+        /// 不另外维护版本号：版本号要靠人记得改，哈希不会忘。
+        public var sha256: String
+        public var file: String
+        public var publishedAt: Date
+        public var publishedBy: String
+        public var notes: String
+
+        public init(sha256: String, file: String, publishedAt: Date,
+                    publishedBy: String, notes: String) {
+            self.sha256 = sha256
+            self.file = file
+            self.publishedAt = publishedAt
+            self.publishedBy = publishedBy
+            self.notes = notes
+        }
+    }
+
+    /// 本机当前装的是哪个版本。存的就是那串哈希。
+    static var installedMarker: URL {
+        markerOverride ?? Paths.appSupport.appendingPathComponent("installed-release")
+    }
+
+    public static var installedSHA: String? {
+        try? String(contentsOf: installedMarker, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func markInstalled(_ sha: String) {
+        if markerOverride == nil { try? Paths.ensureDirectories() }
+        try? sha.write(to: installedMarker, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - 签名者
+
+    /// 建一张专用的发布签名证书。只在主机上做一次。
+    ///
+    /// 为什么不直接拿 CA 私钥来签：密钥分离。CA 私钥只干一件事 —— 签证书。
+    /// 发布签名是另一件事，出问题时可以只换发布证书，不用重建整个集群。
+    @discardableResult
+    public static func ensureSigner() throws -> Bool {
+        guard ClusterCA.exists else {
+            throw ClusterCA.err("还没建 CA，先跑 llmq cluster init")
+        }
+        if FileManager.default.fileExists(atPath: signerCert.path) { return false }
+
+        let tmp = ClusterCA.dir.appendingPathComponent("issue-signer", isDirectory: true)
+        try? FileManager.default.removeItem(at: tmp)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let csr = tmp.appendingPathComponent("s.csr")
+        guard Proc.run("/usr/bin/openssl",
+            ["ecparam", "-genkey", "-name", "prime256v1", "-out", signerKey.path],
+            cwd: tmp.path, env: [:], timeout: 30).exitCode == 0
+        else { throw ClusterCA.err("生成发布签名私钥失败") }
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: signerKey.path)
+
+        guard Proc.run("/usr/bin/openssl",
+            ["req", "-new", "-key", signerKey.path, "-out", csr.path,
+             "-subj", "/CN=\(signerName)"],
+            cwd: tmp.path, env: [:], timeout: 30).exitCode == 0
+        else { throw ClusterCA.err("生成发布签名 CSR 失败") }
+
+        // 只给 codeSigning 用途。这张证书不能拿去当节点证书连服务端 ——
+        // 用途分开，一张证书就只能干一件事。
+        let ext = tmp.appendingPathComponent("ext.cnf")
+        try """
+        basicConstraints=critical,CA:FALSE
+        keyUsage=critical,digitalSignature
+        extendedKeyUsage=codeSigning
+        """.write(to: ext, atomically: true, encoding: .utf8)
+
+        let sign = Proc.run("/usr/bin/openssl", [
+            "x509", "-req", "-in", csr.path,
+            "-CA", ClusterCA.caCert.path, "-CAkey", ClusterCA.dir
+                .appendingPathComponent("ca.key").path,
+            "-CAcreateserial", "-out", signerCert.path,
+            "-days", "3650", "-sha256", "-extfile", ext.path,
+        ], cwd: tmp.path, env: [:], timeout: 30)
+        guard sign.exitCode == 0 else {
+            throw ClusterCA.err("签发发布证书失败：\(sign.stderr)")
+        }
+        return true
+    }
+
+    // MARK: - 发布
+
+    public static func publish(tarball: URL, notes: String, by node: String) throws -> Manifest {
+        guard let dir else { throw ClusterCA.err("找不到 iCloud 目录") }
+        try ensureSigner()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let sha = try sha256(of: tarball)
+        let name = "llmq-\(sha.prefix(12)).tar.gz"
+        let dest = dir.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.copyItem(at: tarball, to: dest)
+
+        let manifest = Manifest(sha256: sha, file: name, publishedAt: Date(),
+                                publishedBy: node, notes: notes)
+        let mURL = dir.appendingPathComponent("current.json")
+        try SnapshotCoding.prettyEncoder().encode(manifest).write(to: mURL, options: .atomic)
+
+        // 签的是 manifest 而不是 tar 包本身：manifest 里已经有包的哈希，
+        // 一个签名就覆盖了全部内容，而且 manifest 只有几百字节，验起来快。
+        let sigURL = dir.appendingPathComponent("current.sig")
+        try? FileManager.default.removeItem(at: sigURL)
+        let s = Proc.run("/usr/bin/openssl", [
+            "dgst", "-sha256", "-sign", signerKey.path,
+            "-out", sigURL.path, mURL.path,
+        ], cwd: dir.path, env: [:], timeout: 30)
+        guard s.exitCode == 0 else { throw ClusterCA.err("签名失败：\(s.stderr)") }
+
+        // 签名证书跟着一起发。从机用它手上的 ca.crt 验这张证书，
+        // 所以放在 iCloud 里被人替换掉也没用 —— 换成别的 CA 签的就验不过。
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(signerName).crt"))
+        try FileManager.default.copyItem(
+            at: signerCert, to: dir.appendingPathComponent("\(signerName).crt"))
+
+        cleanupOldReleases(keeping: name, in: dir)
+        return manifest
+    }
+
+    /// 旧包留一个就够回滚，再多只是占 iCloud。
+    static func cleanupOldReleases(keeping current: String, in dir: URL) {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let old = files
+            .filter { $0.lastPathComponent.hasPrefix("llmq-")
+                   && $0.lastPathComponent != current }
+            .sorted { a, b in
+                let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                return da > db
+            }
+        for f in old.dropFirst(1) { try? FileManager.default.removeItem(at: f) }
+    }
+
+    // MARK: - 检查与验证
+
+    public enum Status {
+        case upToDate(String)
+        case available(Manifest, payload: URL)
+        case noChannel
+        case rejected(String)
+    }
+
+    public static func check() -> Status {
+        guard let dir, FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("current.json").path) else {
+            return .noChannel
+        }
+        let mURL = dir.appendingPathComponent("current.json")
+        let sigURL = dir.appendingPathComponent("current.sig")
+        let certURL = dir.appendingPathComponent("\(signerName).crt")
+
+        guard let data = try? Data(contentsOf: mURL),
+              let manifest = try? SnapshotCoding.decoder().decode(Manifest.self, from: data)
+        else { return .rejected("清单读不出来") }
+
+        if let installed = installedSHA, installed == manifest.sha256 {
+            return .upToDate(manifest.sha256)
+        }
+
+        // ① 证书必须由本集群的 CA 签发
+        let chain = Proc.run("/usr/bin/openssl",
+            ["verify", "-CAfile", ClusterCA.caCert.path, certURL.path],
+            cwd: dir.path, env: [:], timeout: 20)
+        guard chain.exitCode == 0 else {
+            return .rejected("发布证书不是本集群 CA 签的 —— 有人换了 iCloud 里的东西")
+        }
+
+        // ② CN 必须正好是 release-signer。
+        //    不检查这一条，任何一张节点证书都能签发布 ——
+        //    等于一张被偷的从机证书可以给全集群推代码。
+        let subj = Proc.run("/usr/bin/openssl",
+            ["x509", "-in", certURL.path, "-noout", "-subject"],
+            cwd: dir.path, env: [:], timeout: 20)
+        guard subj.stdout.contains("CN=\(signerName)") else {
+            return .rejected("签名者不是 \(signerName)，是 \(subj.stdout.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+
+        // ③ 签名要对
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("llmq-relverify-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        // `-pubkey` 把公钥打到 **stdout**，`-out` 在这里是无效的 ——
+        // 加了 -out 反而什么文件都不会生成，而 openssl 退出码仍然是 0。
+        // 那样验签会永远失败，而且失败信息长得像"被篡改了"，
+        // 排查方向完全错。所以这里自己接 stdout 写文件。
+        let pub = tmp.appendingPathComponent("pub.pem")
+        let extract = Proc.run("/usr/bin/openssl",
+            ["x509", "-in", certURL.path, "-pubkey", "-noout"],
+            cwd: tmp.path, env: [:], timeout: 20)
+        guard extract.exitCode == 0,
+              extract.stdout.contains("BEGIN PUBLIC KEY"),
+              (try? extract.stdout.write(to: pub, atomically: true, encoding: .utf8)) != nil
+        else {
+            // 这条和「被篡改」要分开说。工具用错了和有人动了文件是两回事，
+            // 混在一起会让人往完全错误的方向查。
+            return .rejected("取不出发布证书的公钥（本机 openssl 出问题了，不是篡改）")
+        }
+
+        let v = Proc.run("/usr/bin/openssl", [
+            "dgst", "-sha256", "-verify", pub.path,
+            "-signature", sigURL.path, mURL.path,
+        ], cwd: tmp.path, env: [:], timeout: 20)
+        guard v.exitCode == 0 else {
+            return .rejected("清单签名验不过 —— 清单被改过")
+        }
+
+        // ④ 包的哈希要和清单里写的一致
+        let payload = dir.appendingPathComponent(manifest.file)
+        guard FileManager.default.fileExists(atPath: payload.path) else {
+            return .rejected("清单指向的包还没同步过来：\(manifest.file)")
+        }
+        guard let actual = try? sha256(of: payload) else {
+            return .rejected("算不出包的哈希")
+        }
+        guard actual == manifest.sha256 else {
+            return .rejected("包的哈希和清单对不上 —— 包被换过")
+        }
+        return .available(manifest, payload: payload)
+    }
+
+    // MARK: - 安装
+
+    /// 就地更新本机的 llmq 和菜单栏 App。
+    ///
+    /// 只有 `check()` 返回 `.available` 才会走到这里 —— 也就是说
+    /// 签名链已经验过了。这个函数不重复验，但它也**不接受**外部传进来的路径，
+    /// 只接受 check 的产物，避免有人绕过验证直接调它。
+    public static func install(_ manifest: Manifest, payload: URL) throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("llmq-update-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let untar = Proc.run("/usr/bin/tar", ["xzf", payload.path, "-C", tmp.path],
+                             cwd: tmp.path, env: [:], timeout: 120)
+        guard untar.exitCode == 0 else { throw ClusterCA.err("解包失败：\(untar.stderr)") }
+
+        let root = tmp.appendingPathComponent("llmq-dist")
+        let newBin = root.appendingPathComponent("llmq")
+        let newApp = root.appendingPathComponent("LLMQuotaBar.app")
+        guard FileManager.default.fileExists(atPath: newBin.path) else {
+            throw ClusterCA.err("包里没有 llmq")
+        }
+
+        // 换二进制前先确认它跑得起来。装上一个跑不了的 llmq，
+        // 这台机器就再也收不到下一次更新了 —— 自动更新的死法就是这个。
+        let probe = Proc.run(newBin.path, ["--help"], cwd: tmp.path, env: [:], timeout: 30)
+        guard probe.exitCode == 0 else {
+            throw ClusterCA.err("新二进制跑不起来（退出码 \(probe.exitCode)），拒绝安装")
+        }
+
+        let bin = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin", isDirectory: true)
+        try? FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+
+        // 原子替换。直接覆盖会让正在运行的进程映像失效，macOS 会 SIGKILL 它。
+        let staged = bin.appendingPathComponent(".llmq.new")
+        try? FileManager.default.removeItem(at: staged)
+        try FileManager.default.copyItem(at: newBin, to: staged)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: staged.path)
+        _ = try FileManager.default.replaceItemAt(
+            bin.appendingPathComponent("llmq"), withItemAt: staged)
+
+        // App 和 CLI 必须一起换。只换一个的话，旧的那个会用它那套过时的
+        // 采集器把快照覆盖回去，新接的平台数据就静默消失了。踩过。
+        if FileManager.default.fileExists(atPath: newApp.path) {
+            _ = Proc.run("/usr/bin/pkill", ["-f", "LLMQuotaBar.app/Contents/MacOS"],
+                         cwd: "/", env: [:], timeout: 10)
+            let dst = URL(fileURLWithPath: "/Applications/LLMQuotaBar.app")
+            try? FileManager.default.removeItem(at: dst)
+            try? FileManager.default.copyItem(at: newApp, to: dst)
+            _ = Proc.run("/usr/bin/codesign",
+                         ["--force", "--deep", "--sign", "-", dst.path],
+                         cwd: "/", env: [:], timeout: 60)
+            _ = Proc.run("/usr/bin/open", [dst.path], cwd: "/", env: [:], timeout: 20)
+        }
+
+        markInstalled(manifest.sha256)
+
+        // 常驻循环还在跑旧二进制，踢一下让它换过来。
+        _ = Proc.run("/bin/launchctl",
+                     ["kickstart", "-k", "gui/\(getuid())/com.llmquotabar.worker"],
+                     cwd: "/", env: [:], timeout: 20)
+    }
+
+    // MARK: - 工具
+
+    static func sha256(of url: URL) throws -> String {
+        let r = Proc.run("/usr/bin/shasum", ["-a", "256", url.path],
+                         cwd: "/tmp", env: [:], timeout: 120)
+        guard r.exitCode == 0, let first = r.stdout.split(separator: " ").first else {
+            throw ClusterCA.err("算哈希失败")
+        }
+        return String(first)
+    }
+}
