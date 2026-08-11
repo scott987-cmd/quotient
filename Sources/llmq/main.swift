@@ -2298,19 +2298,23 @@ func cmdCluster(_ rest: [String]) throws {
                         let badP = ab ? a : b
                         print(Ansi.yellow("\n⚠︎ 只有一个方向通 —— 连不进去的是 \(bad)"))
                         print(Ansi.dim("   它连得出去，但别人连不进它。"))
+                        // 用 `case .some(false)` 而不是 `case false`：
+                        // 新编译器认后者是穷尽的，Swift 6.0.3 不认
+                        // （error: switch must be exhaustive, add missing case '.some(_)'）。
+                        // 集群里最旧那台机器编不过，等于整台机器上所有验证都失败。
                         switch badP.selfConnectOK {
-                        case false:
+                        case .some(false):
                             print(Ansi.red("   它自连本机地址也不通 → 服务卡在没 accept 上。"))
                             print(Ansi.dim("   监听队列满了内核就静默丢 SYN、不回 RST，"))
                             print(Ansi.dim("   从外面看就是「端口开着却超时」。重启服务即可："))
                             print(Ansi.dim("   llmq cluster restart"))
-                        case true:
+                        case .some(true):
                             print(Ansi.dim("   它自己连自己是通的 → 服务本身没问题，是网络层在拦。"))
                             print(Ansi.dim("   防火墙原文：\(badP.firewallRaw ?? "没上报")"))
                             print(Ansi.dim("   应用防火墙会对没签名的程序静默丢包（不回 RST），放行："))
                             print(Ansi.dim("   sudo /usr/libexec/ApplicationFirewall/socketfilterfw \\"))
                             print(Ansi.dim("        --add $(which llmq) --unblockapp $(which llmq)"))
-                        case nil:
+                        case .none:
                             print(Ansi.dim("   它那版还没上报回环自检，升级后再看一次。"))
                         }
                     }
