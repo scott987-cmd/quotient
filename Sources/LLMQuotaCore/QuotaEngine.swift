@@ -103,6 +103,11 @@ public struct QuotaEngine: Sendable {
         let humanLast = allBuckets
             .filter { $0.lane != .headless && ($0.requests > 0 || $0.prompts > 0) }
             .map(\.start).max()
+        // 同一件事，但只看**本机**。调度器的「让开」判据要用这个 ——
+        // 人在另一台上敲代码，不该让这台的 agent 跟着闲置。
+        let humanLastHere = (byMachineBuckets[Paths.machineName()] ?? [])
+            .filter { $0.lane != .headless && ($0.requests > 0 || $0.prompts > 0) }
+            .map(\.start).max()
 
         let req30 = b30.reduce(0) { $0 + $1.requests }
         let tok30 = b30.reduce(0) { $0 + $1.billableTokens }
@@ -118,6 +123,7 @@ public struct QuotaEngine: Sendable {
             installed: installed,
             enabled: plan.enabled,
             lastHumanActivity: humanLast,
+            lastHumanActivityHere: humanLastHere,
             machines: Array(Set(machineNames)).sorted(),
             lastActivity: lastActivity,
             statuses: statuses,

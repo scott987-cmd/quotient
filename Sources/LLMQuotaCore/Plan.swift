@@ -423,6 +423,23 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
     /// 判「额度将作废」开始派活，就是直接跟人抢同一个 5 小时窗口。
     public var lastHumanActivity: Date?
 
+    /// 人最后一次在**本机**用它。
+    ///
+    /// ## 为什么必须和上面那个分开
+    ///
+    /// `lastHumanActivity` 是跨机聚合的 —— 看板要的就是这个。
+    /// 但调度器拿它当「让开」的判据就错了：人在 A 机器上敲代码，
+    /// B 机器的调度器也跟着让开，于是 B 上那个完全空闲的 agent 永远派不出活。
+    ///
+    /// 实测就是这样：用户明确要求「本机的 Claude 不调度、另一台的要调度」，
+    /// 结果另一台的调度器因为看到本机的人工活动，把它自己的 Claude 也让开了，
+    /// 那台机器上唯一可用的 agent 就此闲置。
+    ///
+    /// 「让开」要挡的是**打扰正在敲键盘的人**（抢延迟、先撞限流），
+    /// 这件事天然是本机的。而「共用一个额度池」是另一回事，
+    /// 由 exhausted / atRisk 那两道闸门管，不该混进来。
+    public var lastHumanActivityHere: Date?
+
     /// 这个 agent 的岗位。跟着看板一起发给手机 ——
     /// 规则只写在 Mac 的配置文件里的话，手机上就看不见调度为什么这么派。
     public var role: AgentRole?
@@ -469,6 +486,7 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         installed: Bool = false,
         enabled: Bool = true,
         lastHumanActivity: Date? = nil,
+        lastHumanActivityHere: Date? = nil,
         agentName: String = "",
         agentBinary: String = "",
         machines: [String],
@@ -487,6 +505,7 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         self.installed = installed
         self.enabled = enabled
         self.lastHumanActivity = lastHumanActivity
+        self.lastHumanActivityHere = lastHumanActivityHere
         self.role = AgentRoles.role(for: platform)
         self.agentName = agentName.isEmpty ? AgentIdentity.name(for: platform) : agentName
         self.agentBinary = agentBinary.isEmpty

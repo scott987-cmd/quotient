@@ -314,7 +314,10 @@ public struct WorkScheduler: Sendable {
             // 判据是「最近还有交互式用量」。20 分钟没动静就认为他停了 ——
             // 短了会在人思考的间隙插进来（改一行想两分钟很正常），
             // 长了则整个工作日都不敢派活。
-            if let last = report.lastHumanActivity,
+            // **只看本机**。跨机聚合的那个用在这里会让另一台机器上
+            // 完全空闲的 agent 跟着一起闲置 —— 实测就是这么把用户
+            // 唯一可用的那台机器给锁死的。
+            if let last = report.lastHumanActivityHere,
                now.timeIntervalSince(last) < humanIdleGrace {
                 rejected.append(Rejection(
                     platform: p,
