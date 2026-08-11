@@ -112,10 +112,29 @@ public enum ClusterNet {
     /// 建（或复用）本进程的一次性钥匙串。
     ///
     /// `promptUser: false` 加一个显式口令 = 全程无交互，这正是重点。
+    /// 一次性钥匙串放哪。
+    ///
+    /// **不能放 ClusterCA.dir。** 那个目录测试会 override 到临时目录、
+    /// 用完删掉，而 `scratch` 是进程级静态缓存 —— 于是第二个测试复用的是
+    /// 第一个测试那个已经被删掉的钥匙串，导入直接失败。
+    /// 表现是「单独跑每个测试都过，整套跑就挂三个」，
+    /// 而且只在 macOS 14 发作（新系统走内存导入，压根不建这个东西）。
+    static var scratchDir: URL {
+        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("llmq-scratch", isDirectory: true)
+    }
+
     public static func scratchKeychain() -> SecKeychain? {
-        if let scratch { return scratch }
+        // 缓存的句柄要验一下文件还在不在：文件没了（被清理、被删目录）
+        // 句柄就是废的，继续用只会得到一个含糊的导入失败。
+        if let kc = scratch {
+            if FileManager.default.fileExists(atPath: currentScratchPath) { return kc }
+            scratch = nil
+            scratchPassword = nil
+        }
+        try? FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
         sweepStaleScratchKeychains()
-        let path = ClusterCA.dir.appendingPathComponent("scratch-\(getpid()).keychain").path
+        let path = currentScratchPath
         let pw = randomPassword()
         var kc: SecKeychain?
         let st = pw.withCString { p in
@@ -183,7 +202,7 @@ public enum ClusterNet {
         var list: CFArray?
         guard SecKeychainCopySearchList(&list) == errSecSuccess,
               let arr = list as? [SecKeychain] else { return }
-        let mine = ClusterCA.dir.appendingPathComponent("scratch-").path
+        let mine = scratchDir.appendingPathComponent("scratch-").path
         let fm = FileManager.default
         var kept: [SecKeychain] = []
         for k in arr {
@@ -205,7 +224,7 @@ public enum ClusterNet {
 
     /// 本进程那个一次性钥匙串的路径。
     private static var currentScratchPath: String {
-        ClusterCA.dir.appendingPathComponent("scratch-\(getpid()).keychain").path
+        scratchDir.appendingPathComponent("scratch-\(getpid()).keychain").path
     }
 
     /// 清掉遗留的一次性钥匙串。
@@ -215,11 +234,11 @@ public enum ClusterNet {
     /// 可能有另一个 llmq 正在跑。
     public static func sweepStaleScratchKeychains() {
         let fm = FileManager.default
-        guard let all = try? fm.contentsOfDirectory(atPath: ClusterCA.dir.path) else { return }
+        guard let all = try? fm.contentsOfDirectory(atPath: scratchDir.path) else { return }
         for f in all where f.hasPrefix("scratch-") && f.hasSuffix(".keychain") {
             let pid = Int32(f.dropFirst("scratch-".count).dropLast(".keychain".count)) ?? -1
             if pid > 0 && kill(pid, 0) == 0 { continue }
-            try? fm.removeItem(atPath: ClusterCA.dir.appendingPathComponent(f).path)
+            try? fm.removeItem(atPath: scratchDir.appendingPathComponent(f).path)
         }
     }
 

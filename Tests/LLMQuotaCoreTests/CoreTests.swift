@@ -1117,7 +1117,8 @@ final class ClusterNetTests: XCTestCase {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["LLMQ_KEYCHAIN_TESTS"] == "1",
                           "会碰登录钥匙串、可能弹窗；设 LLMQ_KEYCHAIN_TESTS=1 才跑")
         try ClusterCA.initialize()
-        let path = ClusterCA.dir.appendingPathComponent("scratch-\(getpid()).keychain").path
+        let path = ClusterNet.scratchDir
+            .appendingPathComponent("scratch-\(getpid()).keychain").path
         defer { ClusterNet.releaseScratchKeychain() }
 
         let kc = ClusterNet.scratchKeychain()
