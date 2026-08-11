@@ -755,8 +755,26 @@ public enum GitWorkspace {
 
         let r = git(["worktree", "add", "-b", branch, path, "HEAD"], in: repo)
         guard r.exitCode == 0 else {
+            // 把**能定位问题的东西**都带上，不只是 git 的输出。
+            //
+            // 实际遇到过：git 退出码非零，而 stderr 和 stdout 全是空的。
+            // 只报输出的话这条错误就是「建 worktree 失败：」后面什么都没有，
+            // 完全没法往下查 —— 而「进程根本没跑起来」恰恰是最需要上下文的
+            // 情况：仓库在不在、是不是 git 仓库、退出码是几、分支名是不是被占了。
+            var detail = "退出码 \(r.exitCode)"
+            let out = (r.stderr.isEmpty ? r.stdout : r.stderr)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !out.isEmpty {
+                detail += "：" + out.prefix(200)
+            } else {
+                detail += "（git 无任何输出，多半是进程没起来或超时）"
+                let exists = FileManager.default.fileExists(atPath: repo)
+                detail += "；仓库 \(repo) " + (exists ? "存在" : "**不存在**")
+                if exists && !isRepo(repo) { detail += "，但不是 git 仓库" }
+                detail += "；分支 \(branch)"
+            }
             throw NSError(domain: "GitWorkspace", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "建 worktree 失败：\(r.stderr.isEmpty ? r.stdout : r.stderr)"
+                NSLocalizedDescriptionKey: "建 worktree 失败：\(detail)"
             ])
         }
         return Workspace(path: path, branch: branch)

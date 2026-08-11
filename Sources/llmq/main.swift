@@ -810,7 +810,15 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 ws = try GitWorkspace.prepare(
                     repo: task.repo, taskID: task.id, platform: pick.platform)
             } catch {
-                attempts.append("\(pick.platform.displayName)：工作区创建失败")
+                // **把真实原因带上。**
+                //
+                // 原来只写「工作区创建失败」，而这一步能失败的原因差得很远：
+                // 仓库路径不存在、不是 git 仓库、分支名已被占、
+                // worktrees 目录建不出来、磁盘满……每一种的修法都不一样。
+                // 实际排查时手动 `git worktree add` 一次就成功了，
+                // 于是完全看不出 worker 为什么不行 —— 信息被这条消息吞掉了。
+                attempts.append("\(pick.platform.displayName)：工作区创建失败 —— "
+                    + error.localizedDescription)
                 continue
             }
             print(Ansi.dim("  分支 " + ws.branch))
