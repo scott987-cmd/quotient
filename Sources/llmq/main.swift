@@ -1419,10 +1419,31 @@ func cmdRepo(_ args: [String]) throws {
             print(Ansi.dim("从手机派任务时只需要写别名，不用写完整路径。"))
             return
         }
+        // 顺手校验路径。
+        //
+        // 别名是**跨机**用的：手机或另一台机器派活时只写别名，
+        // 路径解析在接活那台本地做。于是很容易出现「别名登记了、
+        // 那台机器上却没有这个目录」—— 而这个错误直到任务真的派过去、
+        // 建工作区失败才暴露，报的还是含糊的「工作区创建失败」。
+        // 实际就这么踩过一次：跨机链路全部打通之后，任务派过去必失败。
+        var broken = 0
         for r in list {
+            let p = NSString(string: r.path).expandingTildeInPath
+            var isDir: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: p, isDirectory: &isDir)
+            let isGit = FileManager.default.fileExists(atPath: p + "/.git")
+            let note: String
+            if !exists || !isDir.boolValue { note = Ansi.red("  ✗ 目录不存在"); broken += 1 }
+            else if !isGit { note = Ansi.yellow("  ⚠ 不是 git 仓库"); broken += 1 }
+            else { note = "" }
             print(pad(r.alias, 16) + pad(r.isDefault ? Ansi.cyan("默认") : "", 8)
                 + Ansi.dim(r.path.replacingOccurrences(
-                    of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")))
+                    of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
+                + note)
+        }
+        if broken > 0 {
+            print(Ansi.dim("\n有问题的别名派活时会失败（报「工作区创建失败」）。"
+                + "改路径：llmq repo add <别名> <新路径>"))
         }
     default:
         print("用法：llmq repo [add|list]")
