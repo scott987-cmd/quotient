@@ -4050,3 +4050,150 @@ final class GraphSessionTests: XCTestCase {
         }
     }
 }
+
+// MARK: - 空窗（不需要上限的浪费口径）
+
+final class WasteMeterTests: XCTestCase {
+
+    private let hour: TimeInterval = 3600
+
+    /// 造一个在指定时刻有调用的桶。
+    private func bucket(at d: Date, requests: Int = 1) -> UsageBucket {
+        UsageBucket(start: UsageBucket.alignedStart(for: d),
+                    model: "m", requests: requests)
+    }
+
+    /// **一个桶都没有 ≠ 一次都没用 —— 这条是拿真实数据撞出来的。**
+    ///
+    /// MiniMax 一开始被报成「153 个窗口全空、连续空 153 个」，
+    /// 而它其实一直在被用：mmx quota show 显示 5 小时窗已用 1%、周窗 5%。
+    /// 它只是不产生本地用量日志（没有会话文件），所以桶数是 0。
+    ///
+    /// 零个桶意味着「这条路子测不了这个平台」，不是「这个平台闲着」。
+    /// 猜错的代价是给一个正在花钱的服务扣上「完全没用」的帽子，
+    /// 而那会让人去退订它。
+    func testNoBucketsMeansUnmeasurableNotIdle() {
+        let now = Date(timeIntervalSince1970: 100 * hour)
+        let r = WasteMeter.measure(buckets: [], windowMinutes: 300,
+                                   since: Date(timeIntervalSince1970: 0), now: now)
+        XCTAssertEqual(r.total, 0, "没有桶就是测不了，不能报成 100% 空窗")
+        XCTAssertEqual(r.idle, 0)
+        XCTAssertEqual(r.currentStreak, 0)
+        XCTAssertTrue(WasteMeter.sentence(r).contains("算不出来"))
+    }
+
+    /// 有桶、但那些桶都在很早的窗口里 → 后面的窗口确实是空的。
+    /// 这才是「真的闲着」，和上面那条要分清。
+    func testWindowsAfterLastUsageAreGenuinelyIdle() {
+        let start = Date(timeIntervalSince1970: 0)
+        let now = Date(timeIntervalSince1970: 100 * hour)
+        let r = WasteMeter.measure(
+            buckets: [bucket(at: Date(timeIntervalSince1970: hour))],
+            windowMinutes: 300, since: start, now: now)
+        XCTAssertEqual(r.total, 20)
+        XCTAssertEqual(r.idle, 19)
+        XCTAssertEqual(r.currentStreak, 19)
+    }
+
+    /// **当前那个窗口不能算进去。**
+    ///
+    /// 它还没结束，现在为空不代表最终为空。算进去的话每个窗口刚开始的几分钟
+    /// 空窗率都会跳一下 —— 而一个自己会抖的指标没人会信。
+    func testCurrentWindowIsExcluded() {
+        let start = Date(timeIntervalSince1970: 0)
+        // 恰好走过两个完整的 5 小时窗，第三个刚开始 1 秒。
+        let now = Date(timeIntervalSince1970: 10 * hour + 1)
+        let r = WasteMeter.measure(buckets: [bucket(at: start)],
+                                   windowMinutes: 300, since: start, now: now)
+        XCTAssertEqual(r.total, 2, "只算完整过去的那两个")
+    }
+
+    /// 有调用的窗口不算空。
+    func testUsedWindowIsNotIdle() {
+        let start = Date(timeIntervalSince1970: 0)
+        let now = Date(timeIntervalSince1970: 15 * hour)
+        // 在第二个窗口（5~10h）里打一次。
+        let r = WasteMeter.measure(
+            buckets: [bucket(at: Date(timeIntervalSince1970: 6 * hour))],
+            windowMinutes: 300, since: start, now: now)
+        XCTAssertEqual(r.total, 3)
+        XCTAssertEqual(r.idle, 2)
+    }
+
+    /// **requests > 0 才算用过，不看 token。**
+    /// 一次调用哪怕只花几十个 token，那个窗口也被用过了。
+    func testZeroRequestBucketStillCountsAsIdle() {
+        let start = Date(timeIntervalSince1970: 0)
+        let now = Date(timeIntervalSince1970: 10 * hour)
+        let r = WasteMeter.measure(
+            buckets: [bucket(at: Date(timeIntervalSince1970: hour), requests: 0)],
+            windowMinutes: 300, since: start, now: now)
+        XCTAssertEqual(r.idle, 2, "桶存在但没有调用，那个窗口还是空的")
+    }
+
+    /// 连续空窗从当前窗口往回数 —— 它回答的是「**现在**是不是正闲着」，
+    /// 而总体空窗率回答的是「长期用得够不够」。两个问题不一样。
+    func testCurrentStreakCountsBackFromNow() {
+        let start = Date(timeIntervalSince1970: 0)
+        let now = Date(timeIntervalSince1970: 25 * hour)   // 5 个完整窗
+        // 只在第一个窗（0~5h）里用过。
+        let r = WasteMeter.measure(
+            buckets: [bucket(at: Date(timeIntervalSince1970: hour))],
+            windowMinutes: 300, since: start, now: now)
+        XCTAssertEqual(r.total, 5)
+        XCTAssertEqual(r.currentStreak, 4, "最近 4 个窗都空着")
+    }
+
+    /// 最近用过 → 连续空窗归零。
+    func testRecentUsageResetsStreak() {
+        let start = Date(timeIntervalSince1970: 0)
+        let now = Date(timeIntervalSince1970: 25 * hour)
+        let r = WasteMeter.measure(
+            buckets: [bucket(at: Date(timeIntervalSince1970: 21 * hour))],
+            windowMinutes: 300, since: start, now: now)
+        XCTAssertEqual(r.currentStreak, 0)
+    }
+
+    /// **不能往 retention 之前算。**
+    /// 采集只留 30 天，更早的窗口在数据里一律是空的，
+    /// 算进去会把空窗率虚高到接近 100% —— 而那个数字看起来像
+    /// 「这个订阅完全没在用」。
+    func testDoesNotCountBeforeRetention() {
+        let now = Date(timeIntervalSince1970: 1000 * hour)
+        let recent = WasteMeter.measure(
+            buckets: [bucket(at: Date(timeIntervalSince1970: 991 * hour))],
+            windowMinutes: 300, since: Date(timeIntervalSince1970: 990 * hour), now: now)
+        XCTAssertEqual(recent.total, 2, "只算 retention 之后的")
+    }
+
+    /// 区间还不够一个完整窗口时，别给出一个假的 0%。
+    func testTooShortRangeReportsNothing() {
+        let now = Date(timeIntervalSince1970: hour)
+        let r = WasteMeter.measure(buckets: [bucket(at: Date(timeIntervalSince1970: 0))],
+                                   windowMinutes: 300,
+                                   since: Date(timeIntervalSince1970: 0), now: now)
+        XCTAssertEqual(r.total, 0)
+        XCTAssertEqual(r.idleFraction, 0)
+        XCTAssertTrue(WasteMeter.sentence(r).contains("数据还不够"), "要说清楚是算不出来")
+    }
+
+    /// 只报配置里真实存在的窗口 —— 一个只有周额度的平台，
+    /// 算它的「5 小时空窗率」只是把一个不存在的窗口摆出来充数。
+    func testOnlyMeasuresConfiguredWindows() {
+        let rs = WasteMeter.measureAll(
+            buckets: [bucket(at: Date(timeIntervalSince1970: 0))], windows: [10080],
+            since: Date(timeIntervalSince1970: 0),
+            now: Date(timeIntervalSince1970: 400 * hour))
+        XCTAssertEqual(rs.count, 1)
+        XCTAssertEqual(rs.first?.windowMinutes, 10080)
+    }
+
+    /// 那句人话**不能说「浪费了多少 token」** —— 那个数算不出来，说了就是编。
+    func testSentenceNeverClaimsATokenAmount() {
+        let r = WasteMeter.Report(windowMinutes: 300, total: 10, idle: 7, currentStreak: 3)
+        let s = WasteMeter.sentence(r)
+        XCTAssertTrue(s.contains("7 个一次都没用"))
+        XCTAssertTrue(s.contains("连续空了 3 个"))
+        XCTAssertFalse(s.contains("token"), "上限未知时不许把浪费说成一个 token 数")
+    }
+}
