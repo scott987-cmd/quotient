@@ -228,6 +228,16 @@ public struct WorkScheduler: Sendable {
         /// 而其他平台明明是好的。这直接违背「充分利用所有平台」。
         public var candidates: [Pick]
         public var rejected: [Rejection]
+        /// 本机的指挥（控制面）。**它不参与竞选，也不算被拒绝。**
+        ///
+        /// 单独记一条而不是塞进 rejected，有两个理由：
+        ///
+        /// - 死锁判定看的是「所有候选都被永久性拒绝」。指挥混进去会让判定
+        ///   看起来像「连 Claude 都接不了」，而真相是「Claude 压根没被问」。
+        /// - 但也不能就这么藏了：一个高危任务转人工时，
+        ///   「这台机器上唯一够得着它的角色被指定去做别的事了」
+        ///   恰恰是最该让人看见的那条信息。
+        public var dispatcher: Platform?
         public var pick: Pick? { candidates.first }
     }
 
@@ -241,6 +251,7 @@ public struct WorkScheduler: Sendable {
         requiresEditing: Bool = true
     ) -> Decision {
         var rejected: [Rejection] = []
+        var dispatcherPlatform: Platform?
         var candidates: [(Pick, Double)] = []
         let cooling = CooldownLedger.active(now: now)
 
@@ -306,6 +317,13 @@ public struct WorkScheduler: Sendable {
             // 比这个更细的自动判断（「人最近在不在用」）也有，见下面一条。
             // 但静音是**常驻策略**，不是猜：比如这台 Mac 的 Claude 是控制面，
             // 派活给它等于饿死那个决定「该干什么」的环节。
+            // **指挥不进候选枚举。** 它不是「接不了」，它是发活的那个。
+            // 记在 Decision.dispatcher 上，诊断里单独一行。
+            if AgentRoles.isDispatcher(p) {
+                dispatcherPlatform = p
+                continue
+            }
+
             if AgentRoles.isMuted(p) {
                 rejected.append(Rejection(
                     platform: p,
@@ -387,7 +405,8 @@ public struct WorkScheduler: Sendable {
         }
 
         let ordered = candidates.sorted { $0.1 > $1.1 }.map(\.0)
-        return Decision(candidates: ordered, rejected: rejected)
+        return Decision(candidates: ordered, rejected: rejected,
+                        dispatcher: dispatcherPlatform)
     }
 
     /// 上次干过这个仓库的人优先。

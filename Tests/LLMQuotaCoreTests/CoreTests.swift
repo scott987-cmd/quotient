@@ -3014,3 +3014,67 @@ final class RejectionKindTests: XCTestCase {
                        "所以判死锁必须先排除空列表")
     }
 }
+
+// MARK: - 指挥角色
+
+final class DispatcherRoleTests: XCTestCase {
+
+    private func withRoles(_ json: String, _ body: () -> Void) {
+        let f = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("roles-\(UUID().uuidString).json")
+        try? json.write(to: f, atomically: true, encoding: .utf8)
+        AgentRoles.fileOverride = f
+        defer { AgentRoles.fileOverride = nil; try? FileManager.default.removeItem(at: f) }
+        body()
+    }
+
+    /// **老配置自动迁移。**
+    ///
+    /// 控制面原来是用 mutedOn + muteReason:"…控制面…" 表达的。
+    /// 解码时就地转成 dispatcherOn 并摘掉那条 mute ——
+    /// 否则会出现「既是指挥又被静音」的重影，两条路径都会命中它。
+    func testLegacyMuteAsControlPlaneMigratesToDispatcher() throws {
+        let json = """
+        {"roles":[{"platform":"claude","title":"架构师","maxRisk":"sensitive",
+        "mutedOn":["甲机"],"muteReason":"这台的 Claude 是控制面，派活给它等于饿死决策环节"}]}
+        """
+        let r = try SnapshotCoding.decoder()
+            .decode(AgentRole.self, from: Data("""
+            {"platform":"claude","title":"架构师","maxRisk":"sensitive",
+            "mutedOn":["甲机"],"muteReason":"这台的 Claude 是控制面"}
+            """.utf8))
+        XCTAssertEqual(r.dispatcherOn, ["甲机"], "控制面该迁到 dispatcherOn")
+        XCTAssertTrue(r.mutedOn.isEmpty, "迁移之后不能还留着 mute，否则一个角色两种身份")
+        _ = json
+    }
+
+    /// 普通的静音**不能**被误认成指挥 —— 那会让一个真被关掉的平台
+    /// 摇身一变成为控制面。
+    func testOrdinaryMuteIsNotMigrated() throws {
+        let r = try SnapshotCoding.decoder().decode(AgentRole.self, from: Data("""
+        {"platform":"qwen","title":"开发","maxRisk":"normal",
+        "mutedOn":["甲机"],"muteReason":"这台上它老是超时"}
+        """.utf8))
+        XCTAssertTrue(r.dispatcherOn.isEmpty)
+        XCTAssertEqual(r.mutedOn, ["甲机"])
+    }
+
+    /// 指挥是**按机器**的：这台是控制面，另一台上同一个平台照常干活。
+    func testDispatcherIsPerMachine() {
+        let r = AgentRole(platform: .claude, title: "架构师", maxRisk: .sensitive,
+                          dispatcherOn: ["甲机"])
+        XCTAssertTrue(r.dispatcherOn.contains("甲机"))
+        XCTAssertFalse(r.dispatcherOn.contains("乙机"))
+    }
+
+    /// 没配指挥的机器要能照常派活 ——
+    /// **不能因为找不到指挥就不干活。**
+    func testMachineWithoutDispatcherStillWorks() {
+        withRoles("""
+        {"roles":[{"platform":"glm","title":"主力","maxRisk":"normal"}]}
+        """) {
+            XCTAssertNil(AgentRoles.dispatcher(machine: "没配过的机器"))
+            XCTAssertFalse(AgentRoles.isDispatcher(.glm, machine: "没配过的机器"))
+        }
+    }
+}

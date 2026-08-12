@@ -49,10 +49,29 @@ public struct AgentRole: Codable, Sendable {
     public var mutedOn: [String]
     public var muteReason: String?
 
+    /// 在这些机器上，这个平台是**指挥**（控制面），不是干活的。
+    ///
+    /// ## 为什么不能继续用 mutedOn 表达
+    ///
+    /// 「不接活」和「负责发活」是两回事，混在一起有三个后果：
+    ///
+    /// 1. 界面上是个空白角色 —— 办公室里那个「调度」是个匿名吉祥物，
+    ///    跟任何真实平台都没绑定，同时 Claude 又作为闲着的员工坐在工位上。
+    ///    同一个东西画了两遍，一遍没身份，一遍没意义。
+    /// 2. 污染死锁判定 —— 判「所有平台都接不了」时，指挥是以「被拒绝的候选」
+    ///    身份混在里面的。可它没有「接不了」，它是发活的那个。
+    /// 3. 把配置说成故障 ——「被静音了」听起来像出了什么事，
+    ///    而这是有意的架构选择。
+    ///
+    /// 和 mutedOn 一样按机器名存：Mac mini 上的 Claude 是指挥，
+    /// MacBook 上同一个 Claude 可以干活。全局开关会把后者一起误伤。
+    public var dispatcherOn: [String] = []
+
     public init(platform: Platform, title: String, maxRisk: TaskProfile.Risk,
                 maxTier: TaskProfile.Tier? = nil,
                 prefers: [TaskProfile.Tier] = [], note: String = "",
-                mutedOn: [String] = [], muteReason: String? = nil) {
+                mutedOn: [String] = [], muteReason: String? = nil,
+                dispatcherOn: [String] = []) {
         self.platform = platform
         self.title = title
         self.maxRisk = maxRisk
@@ -61,6 +80,7 @@ public struct AgentRole: Codable, Sendable {
         self.note = note
         self.mutedOn = mutedOn
         self.muteReason = muteReason
+        self.dispatcherOn = dispatcherOn
     }
 
     /// 和另一个角色是不是等价。用来判断「这条要不要存」。
@@ -68,6 +88,7 @@ public struct AgentRole: Codable, Sendable {
         title == o.title && maxRisk == o.maxRisk && maxTier == o.maxTier
             && prefers == o.prefers && note == o.note
             && Set(mutedOn) == Set(o.mutedOn) && muteReason == o.muteReason
+            && Set(dispatcherOn) == Set(o.dispatcherOn)
     }
 
     public init(from decoder: Decoder) throws {
@@ -80,6 +101,17 @@ public struct AgentRole: Codable, Sendable {
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         mutedOn = try c.decodeIfPresent([String].self, forKey: .mutedOn) ?? []
         muteReason = try c.decodeIfPresent(String.self, forKey: .muteReason)
+        dispatcherOn = try c.decodeIfPresent([String].self, forKey: .dispatcherOn) ?? []
+
+        // **一次性迁移：控制面原来是用 mute 表达的。**
+        //
+        // 老配置里是 mutedOn:[机器名] + muteReason:"…是控制面…"。
+        // 在这里就地转成 dispatcherOn 并摘掉那条 mute，
+        // 用户不用改文件，也不会出现「既是指挥又被静音」的重影。
+        if dispatcherOn.isEmpty, let why = muteReason, why.contains("控制面") {
+            dispatcherOn = mutedOn
+            mutedOn = []
+        }
     }
 }
 
@@ -206,6 +238,18 @@ public enum AgentRoles {
     /// 这个平台在**本机**是不是被静音了。
     public static func isMuted(_ p: Platform, machine: String = Paths.machineName()) -> Bool {
         role(for: p).mutedOn.contains(machine)
+    }
+
+    /// 这个平台在**本机**是不是指挥。
+    public static func isDispatcher(_ p: Platform,
+                                    machine: String = Paths.machineName()) -> Bool {
+        role(for: p).dispatcherOn.contains(machine)
+    }
+
+    /// 本机的指挥是谁。没配就是 nil ——
+    /// 那种机器退回「谁有额度谁上」。**不能因为找不到指挥就不干活。**
+    public static func dispatcher(machine: String = Paths.machineName()) -> AgentRole? {
+        all().values.first { $0.dispatcherOn.contains(machine) }
     }
 
     /// 这个角色接不接得了这份风险。

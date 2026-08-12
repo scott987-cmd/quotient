@@ -822,6 +822,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         dashboard: dash, runners: RunnerRegistry.all,
         task: task, history: history)
 
+    // 指挥单独一行，而且排在拒绝列表**前面**。
+    // 它不是被排除的候选，是这台机器上发活的那个 ——
+    // 混进「排除」里会让人以为它也接不了。
+    if let d = decision.dispatcher {
+        print(Ansi.dim("  指挥 " + pad(d.displayName, 10) + "本机控制面，不参与竞选"))
+    }
     for r in decision.rejected {
         print(Ansi.dim("  排除 " + pad(r.platform.displayName, 10) + r.reason))
     }
@@ -838,9 +844,17 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         if permanent {
             task.state = .blocked
             task.endedAt = Date()
+            // 指挥要写进理由里。它是这台机器上**唯一可能够得着**高危活的角色，
+            // 却被指定去做别的事了 —— 不说的话，看到的人会以为
+            // 「这台机器上根本没人能干」，从而去改一个错的地方。
+            let dispatcherNote = decision.dispatcher.map {
+                "。注意 \($0.displayName) 是本机指挥（控制面），"
+                    + "按设定不接活 —— 需要的话可以把这一步挪到别的机器"
+            } ?? ""
             task.note = "没有平台能接：" + decision.rejected
                 .map { "\($0.platform.displayName)（\($0.reason)）" }
                 .joined(separator: "；")
+                + dispatcherNote
                 + "。等下去不会变 —— 要么放宽某个角色的上限，要么人工处理。"
             try? TaskStore.append(task)
             if !quiet {
