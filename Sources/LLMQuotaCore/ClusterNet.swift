@@ -314,8 +314,23 @@ public enum ClusterNet {
             SecItemDelete(q as CFDictionary)
             var add = q
             add[kSecValueData as String] = Data(password.utf8)
-            if let access = anyAppAccess() {
-                add[kSecAttrAccess as String] = access
+            // **只在老系统上放宽 ACL。**
+            //
+            // 放宽解决的是 macOS 14 的问题：那里私钥要进登录钥匙串，
+            // llmq update 换了二进制之后签名对不上、每次都要弹窗确认。
+            //
+            // 但它自己有代价：带自定义 SecAccess 的条目，读取会走一条明显更慢的
+            // 路径 —— 实测 `llmq cluster ping` 从毫秒级变成 4 分 37 秒，
+            // 进程采样停在 SecItemCopyMatching → SecKeychainItemCopyContent。
+            // 而外面看到的是「跨机连接挂住」，服务端日志显示连接进来又被
+            // 客户端关掉，所有线索都指向网络，真相却在钥匙串。
+            //
+            // macOS 15+ 走内存导入，压根不碰登录钥匙串里的私钥，
+            // 那个弹窗问题不存在 —— 于是只剩代价。所以按系统版本分。
+            if #unavailable(macOS 15.0) {
+                if let access = anyAppAccess() {
+                    add[kSecAttrAccess as String] = access
+                }
             }
             let s = SecItemAdd(add as CFDictionary, nil)
             guard s == errSecSuccess else { throw ClusterCA.err("存钥匙串失败：\(s)") }
@@ -345,11 +360,27 @@ public enum ClusterNet {
         }
 
         public static func load(node: String) throws -> String {
+            // **必须禁止交互。**
+            //
+            // 不禁的话，一旦这个条目的 ACL 需要系统确认，SecItemCopyMatching
+            // 会**一直等**那个确认 —— 而这个进程可能没有界面（launchd、SSH），
+            // 或者弹窗根本没显示出来。表现是命令永远不返回，
+            // 连它自己那个 30 秒的网络超时都走不到，因为压根没到网络那一步。
+            //
+            // 实测过：进程采样的栈停在
+            //   Passphrase.load → SecItemCopyMatching → SecKeychainItemCopyContent
+            // 而外面看到的是「llmq cluster ping 挂住十分钟」，
+            // 服务端日志显示连接进来又被客户端关掉 —— 全都指向网络，
+            // 而真相在钥匙串。
+            //
+            // 禁掉之后拿不到就立刻返回 errSecInteractionNotAllowed，
+            // 下面那段会把它翻译成一句能照着做的话。
             let q: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: node,
                 kSecReturnData as String: true,
+                kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
             ]
             var out: CFTypeRef?
             let s = SecItemCopyMatching(q as CFDictionary, &out)
