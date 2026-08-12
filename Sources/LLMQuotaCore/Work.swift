@@ -351,19 +351,54 @@ public struct WorkScheduler: Sendable {
                     reason: "\(tightest.0.label)已用 \(Format.percent(tightest.1))"
                         + "，剩 \(Format.percent(headroom))，是当前最闲的"
                 ), headroom + overkillPenalty(platform: p, task: task, history: history)
-                    + rolePreferenceBonus(platform: p, task: task)))
+                    + rolePreferenceBonus(platform: p, task: task)
+                    + stickinessBonus(platform: p, task: task, history: history)))
             } else {
                 // 一条上限都没配。不能因此排除它 —— 那是默认状态，
                 // 排除的话调度器一个平台都挑不出来。给个中性分，排在有数据的后面。
                 candidates.append((Pick(
                     platform: p, runner: runner,
                     reason: "未配额度上限，按中性优先级参与调度"
-                ), 0.5 + overkillPenalty(platform: p, task: task, history: history)))
+                ), 0.5 + overkillPenalty(platform: p, task: task, history: history)
+                    + stickinessBonus(platform: p, task: task, history: history)))
             }
         }
 
         let ordered = candidates.sorted { $0.1 > $1.1 }.map(\.0)
         return Decision(candidates: ordered, rejected: rejected)
+    }
+
+    /// 上次干过这个仓库的人优先。
+    ///
+    /// ## 为什么值得给分
+    ///
+    /// 换人的真实代价不是切换本身，是**重新认识这个项目**：
+    /// 新 agent 要把相关代码重读一遍才敢动手，而那部分探索烧的额度
+    /// 不产生任何产出。同一个人接着做，至少在它自己的会话缓存和
+    /// 「刚看过这块代码」的记忆还热的时候，省下的是实打实的。
+    ///
+    /// ## 为什么是加分而不是硬绑定
+    ///
+    /// 硬绑定会让一个仓库永远只由一个平台做 —— 那个平台额度耗尽时，
+    /// 整个仓库就停摆了。而这套系统存在的理由恰恰是「谁有额度谁上」。
+    /// 所以只给一点倾斜：额度相当时优先老人，额度差得多时该换还是换。
+    ///
+    /// 0.12 这个量级是刻意调小的：它大约相当于 12% 的额度余量差距，
+    /// 能在「都还宽裕」时决定人选，但拦不住「一个快满了、一个空着」。
+    ///
+    /// 只看最近 24 小时：更早的记忆早就凉了，给分等于凭空偏袒。
+    func stickinessBonus(platform: Platform, task: WorkTask?,
+                         history: [WorkTask], now: Date = Date()) -> Double {
+        guard let task else { return 0 }
+        let recent = history.filter {
+            $0.platform == platform
+                && $0.repo == task.repo
+                && $0.id != task.id
+                && ($0.endedAt ?? $0.createdAt) > now.addingTimeInterval(-24 * 3600)
+        }
+        // 只认**干成过**的：失败的那次说明它在这个仓库上不顺，
+        // 再优先给它等于把同一堵墙撞第二遍。
+        return recent.contains { $0.state == .done } ? 0.12 : 0
     }
 
     /// 用强平台干简单活要扣分。

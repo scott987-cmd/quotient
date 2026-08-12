@@ -2494,3 +2494,69 @@ final class MiniMaxQuotaTests: XCTestCase {
         XCTAssertEqual(MiniMaxQuotaAdapter.label(minutes: 10080), "每周")
     }
 }
+
+// MARK: - 粘性调度
+
+final class StickinessTests: XCTestCase {
+
+    private func task(_ id: String, repo: String) -> WorkTask {
+        WorkTask(id: id, prompt: "x", repo: repo)
+    }
+    private func done(_ id: String, repo: String, platform: Platform,
+                      ago: TimeInterval) -> WorkTask {
+        var t = task(id, repo: repo)
+        t.platform = platform
+        t.state = .done
+        t.endedAt = Date().addingTimeInterval(-ago)
+        return t
+    }
+
+    /// 同一个仓库上次干成过的人要加分 —— 换人的真实代价是重新认识项目。
+    func testRecentSuccessOnSameRepoGetsBonus() {
+        let s = WorkScheduler()
+        let now = task("new", repo: "/r")
+        let hist = [done("old", repo: "/r", platform: .glm, ago: 3600)]
+        XCTAssertGreaterThan(s.stickinessBonus(platform: .glm, task: now, history: hist), 0)
+        XCTAssertEqual(s.stickinessBonus(platform: .kimi, task: now, history: hist), 0,
+                       "没干过这个仓库的不该加分")
+    }
+
+    /// 别的仓库干过不算 —— 项目上下文是按仓库算的。
+    func testOtherRepoDoesNotCount() {
+        let s = WorkScheduler()
+        let hist = [done("old", repo: "/other", platform: .glm, ago: 3600)]
+        XCTAssertEqual(s.stickinessBonus(platform: .glm, task: task("n", repo: "/r"),
+                                         history: hist), 0)
+    }
+
+    /// 失败过的不加分：再优先给它等于把同一堵墙撞第二遍。
+    func testFailedAttemptsDoNotStick() {
+        let s = WorkScheduler()
+        var f = done("old", repo: "/r", platform: .glm, ago: 3600)
+        f.state = .failed
+        XCTAssertEqual(s.stickinessBonus(platform: .glm, task: task("n", repo: "/r"),
+                                         history: [f]), 0)
+    }
+
+    /// 太久以前的不算 —— 记忆早凉了，给分等于凭空偏袒。
+    func testStaleHistoryDoesNotStick() {
+        let s = WorkScheduler()
+        let hist = [done("old", repo: "/r", platform: .glm, ago: 48 * 3600)]
+        XCTAssertEqual(s.stickinessBonus(platform: .glm, task: task("n", repo: "/r"),
+                                         history: hist), 0)
+    }
+
+    /// **加分不能变成硬绑定。**
+    ///
+    /// 硬绑定会让一个仓库永远只由一个平台做，那个平台额度耗尽时整个仓库停摆 ——
+    /// 而这套系统存在的理由恰恰是「谁有额度谁上」。
+    /// 所以粘性必须小于「一个快满了、一个空着」这种量级的差距。
+    func testStickinessCannotOverrideALargeQuotaGap() {
+        let s = WorkScheduler()
+        let bonus = s.stickinessBonus(platform: .glm, task: task("n", repo: "/r"),
+                                      history: [done("o", repo: "/r", platform: .glm, ago: 600)])
+        // 老人只剩 10% 余量，新人还剩 90% —— 差 0.8，粘性绝不该翻盘。
+        XCTAssertLessThan(bonus, 0.8,
+                          "粘性盖过了额度差距，一个仓库会被绑死在一个平台上")
+    }
+}
