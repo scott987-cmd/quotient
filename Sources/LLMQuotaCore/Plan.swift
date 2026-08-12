@@ -319,9 +319,24 @@ public struct PlansConfig: Codable, Sendable {
                                + "积分口径，和这里的 token 对不上，别直接填。"),
                 ]
             ),
+            // MiniMax **自己报官方额度**（`mmx quota show`），和 Codex 一样
+            // 不需要手填上限。它按模型给出两个窗口：general 是 5 小时、
+            // video 是 24 小时，都另有一个每周窗口。
+            //
+            // 这两条用 .percent 口径 —— 数字直接来自平台，不从本地日志推。
+            // 在接上它之前，MiniMax 一直报「30 天 0 次」，还被列进
+            // 「装了没在用，每月 119 元空烧」，而实际上每次派活的分诊都是它做的。
+            // 「在烧额度但看不见」是这套工具最该消灭的状态。
             PlatformPlan(
                 platform: .minimax, planName: "MiniMax", currency: "CNY",
-                limits: [monthly(.billableTokens, hint: h)]
+                limits: [
+                    QuotaLimit(id: "5h", label: "5 小时", windowMinutes: 300,
+                               kind: .session, metric: .percent,
+                               hint: "平台直报，不用填"),
+                    QuotaLimit(id: "weekly", label: "每周", windowMinutes: 10080,
+                               kind: .periodic, metric: .percent,
+                               hint: "平台直报，不用填"),
+                ]
             ),
             PlatformPlan(
                 platform: .deepseek, planName: "DeepSeek", currency: "CNY",

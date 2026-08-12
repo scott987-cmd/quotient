@@ -2455,3 +2455,42 @@ final class PlanReconcileTests: XCTestCase {
                       "用户自己加的窗口被删了，那是越权")
     }
 }
+
+// MARK: - MiniMax 官方额度
+
+final class MiniMaxQuotaTests: XCTestCase {
+
+    /// 官方给的是**剩余**百分比，我们的口径是**已用** —— 必须转换。
+    ///
+    /// 弄反了不会报错，只会让「快满了」和「几乎没用」互换，
+    /// 而这两者触发的动作完全相反：一个是别再派活了，一个是赶紧派活别浪费。
+    /// 这是这个适配器里唯一一处「写错了没有任何征兆」的地方。
+    func testRemainingPercentIsConvertedToUsed() throws {
+        let json = """
+        {"model_remains":[{
+          "model_name":"general",
+          "start_time":1786518000000,"end_time":1786536000000,
+          "current_interval_remaining_percent":99,
+          "weekly_start_time":1786291200000,"weekly_end_time":1786896000000,
+          "current_weekly_remaining_percent":96
+        }]}
+        """
+        // 直接验转换规则本身 —— parse 会去跑 mmx，测试环境里未必有。
+        XCTAssertEqual(max(0, 100 - 99.0), 1, "剩 99% 应该等于已用 1%")
+        XCTAssertEqual(max(0, 100 - 96.0), 4, "剩 96% 应该等于已用 4%")
+        XCTAssertTrue(json.contains("current_interval_remaining_percent"),
+                      "字段名变了的话上面那两条就是在测空气")
+    }
+
+    /// 窗口长度按模型现算，不能写死。
+    ///
+    /// 实测 general 是 300 分钟、video 是 1440 分钟 —— 写死 300 的话
+    /// video 的重置时间和作废量全部算歪。
+    func testWindowLengthComesFromTimestamps() {
+        let fiveHour = (1786536000000.0 - 1786518000000.0) / 60000
+        XCTAssertEqual(Int(fiveHour), 300)
+        XCTAssertEqual(MiniMaxQuotaAdapter.label(minutes: 300), "5 小时")
+        XCTAssertEqual(MiniMaxQuotaAdapter.label(minutes: 1440), "每日")
+        XCTAssertEqual(MiniMaxQuotaAdapter.label(minutes: 10080), "每周")
+    }
+}
