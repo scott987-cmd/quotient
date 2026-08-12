@@ -56,3 +56,35 @@
 | Qwen | 免费 OAuth 层 2026-04-15 关停，走百炼 | 看百炼的周额度 |
 
 **一个来源可靠、口径对不上的数字，比没有数字更危险** —— 它看起来像已经配好了。
+
+<!-- llmq:progress 自动生成，别手改；手写的内容放在这个块外面 -->
+
+## 最近落地（自动记录，别手改）
+
+最后更新：2026-08-12 16:47　共 20 个任务
+
+| 时间 | 干了什么 | 谁干的 | 改动 |
+|---|---|---|---|
+| 08-11 19:21 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | Qwen | 1 个文件 |
+| 08-11 19:21 | 在 README.md 的「使用」小节末尾，补一小段说明 llmq work loop 这… | Claude | 1 个文件 |
+| 08-11 19:21 | 在 SECURITY.md 末尾加一节「日常自查清单」，用无序列表列出 4 条：跑 llm… | Claude | 1 个文件 |
+| 08-11 19:21 | 在 README.md 里加一小节「从手机派任务」，说明把一个纯文本文件放进 iCloud… | Claude | 1 个文件 |
+| 08-11 19:21 | 在 Sources/LLMQuotaCore/Format.swift 的 Format.… | Claude | 1 个文件 |
+| 08-11 19:21 | Add a short note near the top of README.md sa… | Claude | 1 个文件 |
+| 08-11 19:21 | 在 SECURITY.md 里把跨机那节的示例命令更新一下 | Claude | 1 个文件 |
+| 08-11 09:57 | 在 Format.swift 顶部加一句文件说明注释 | Claude | 0 个文件 |
+| 08-10 21:30 | 在 README.md 顶部的项目简介下面加一行，写明本项目零第三方依赖、只用 Swift… | Claude | 1 个文件 |
+| 08-10 21:29 | 把上次那个问题修一下 | Claude | 0 个文件 |
+
+**卡着的**：
+
+- `71e37b07` 失败 — 把 Package.swift 里的 swift-tools-version 升一档，并确…：（测试风险闸门用的，已作废）
+- `83d68ae6` 失败 — 为 Sources/LLMQuotaCore/Cooldown.swift 里的每一个 p…：Claude：超时被终止 / Qwen：超时被终止 / Kimi：. Your quota will be refreshed in th…
+- `2d301be3` 失败 — 把 Sources/LLMQuotaCore/Format.swift 里 Format.…：分类器验证用例，手动取消
+- `d2c5db6d` 失败 — 修改 build-app.sh，让它在编译前先跑一次 swift test，测试不过就中止…：分类器验证用例，手动取消
+- `f70ac3f4` 失败 — 占位任务，只为看调度决策：占位任务，手动取消
+- `e97fae4c` 失败 — 为 Sources/LLMQuotaCore/Format.swift 里的 Format…：Claude：Failed to authenticate: OAuth session expired and could not be…
+- `01077ee2` 失败 — 为 Sources/LLMQuotaCore/Format.swift 里的 Format…：Claude：Failed to authenticate: OAuth session expired and could not be…
+- `17f8a4e0` 失败 — 为 Sources/LLMQuotaCore/Format.swift 里的 Format…：退出码 1：Failed to authenticate: OAuth session expired and could not be …
+
+<!-- /llmq:progress -->
