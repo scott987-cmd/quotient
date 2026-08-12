@@ -435,8 +435,25 @@ public struct WorkScheduler: Sendable {
             // **只看本机**。跨机聚合的那个用在这里会让另一台机器上
             // 完全空闲的 agent 跟着一起闲置 —— 实测就是这么把用户
             // 唯一可用的那台机器给锁死的。
-            if let last = report.lastHumanActivityHere,
-               now.timeIntervalSince(last) < humanIdleGrace {
+            // **别把调度器自己的用量当成人的。**
+            //
+            // 实测：Qwen 的适配器建 UsageEvent 时没传 lane，于是取了保守默认值
+            // `interactive` —— 调度器刚跑完一个 Qwen 任务，
+            // 那笔用量转头就被认成「人在用」，于是同一个平台被自己挡 20 分钟。
+            // 在 Kimi 耗尽、Claude 是指挥、火山档次不够的情况下，等于自锁。
+            //
+            // 修法不是去猜各家日志格式（每家字段都不一样，而且会改版），
+            // 而是用**我们自己拥有的事实**：调度器知道它什么时候、在哪个平台
+            // 跑过活。落在自己那段执行窗口里的「人类活动」，一律不算。
+            let last = report.lastHumanActivityHere.flatMap { t -> Date? in
+                let ranByUs = history.contains { h in
+                    h.platform == p
+                        && (h.startedAt.map { $0 <= t } ?? false)
+                        && ((h.endedAt ?? now).addingTimeInterval(60) >= t)
+                }
+                return ranByUs ? nil : t
+            }
+            if let last, now.timeIntervalSince(last) < humanIdleGrace {
                 rejected.append(Rejection(
                     platform: p,
                     reason: "你 \(Int(now.timeIntervalSince(last) / 60)) 分钟前还在用它，先让着你"))

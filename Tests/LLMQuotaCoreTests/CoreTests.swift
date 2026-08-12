@@ -4418,3 +4418,70 @@ final class ChangedFileCountTests: XCTestCase {
                        "三点比较：只算我们这条分支自己的改动")
     }
 }
+
+// MARK: - 别把调度器自己的用量当成人的
+
+final class SelfYieldTests: XCTestCase {
+
+    /// **调度器不能被自己的用量挡住。**
+    ///
+    /// 实测：Qwen 的适配器建 UsageEvent 时没传 lane，取了保守默认值
+    /// `interactive`。于是调度器刚跑完一个 Qwen 任务，那笔用量转头就被
+    /// 认成「人在用」，同一个平台被自己挡 20 分钟 ——
+    /// 在 Kimi 耗尽、Claude 是指挥、火山档次不够时等于自锁。
+    ///
+    /// 判据用我们自己拥有的事实（任务的执行窗口），
+    /// 而不是去猜每家日志的 lane 字段 —— 那些字段各不相同还会改版。
+    func testUsageDuringOurOwnRunIsNotHuman() {
+        let now = Date()
+        var ran = WorkTask(id: "a", prompt: "p", repo: "/r")
+        ran.platform = .qwen
+        ran.startedAt = now.addingTimeInterval(-900)
+        ran.endedAt = now.addingTimeInterval(-300)
+
+        // 那笔「人类活动」正好落在我们自己的执行窗口里
+        let inside = now.addingTimeInterval(-600)
+        let ranByUs = [ran].contains { h in
+            h.platform == .qwen
+                && (h.startedAt.map { $0 <= inside } ?? false)
+                && ((h.endedAt ?? now).addingTimeInterval(60) >= inside)
+        }
+        XCTAssertTrue(ranByUs, "落在自己执行窗口里的用量不算人的")
+    }
+
+    /// **真的人在用时必须照样让开。**
+    /// 放宽过头的话，调度器会在你正敲代码时抢你的额度 ——
+    /// 那比它自锁严重得多。
+    func testGenuineHumanUsageStillYields() {
+        let now = Date()
+        var ran = WorkTask(id: "a", prompt: "p", repo: "/r")
+        ran.platform = .qwen
+        ran.startedAt = now.addingTimeInterval(-3600)
+        ran.endedAt = now.addingTimeInterval(-3000)
+
+        let recent = now.addingTimeInterval(-120)   // 两分钟前，不在那段窗口里
+        let ranByUs = [ran].contains { h in
+            h.platform == .qwen
+                && (h.startedAt.map { $0 <= recent } ?? false)
+                && ((h.endedAt ?? now).addingTimeInterval(60) >= recent)
+        }
+        XCTAssertFalse(ranByUs, "两分钟前的用量不在我们的执行窗口里，是人的")
+    }
+
+    /// 别的平台跑过活，不影响这个平台的判断。
+    func testOtherPlatformRunsDoNotMask() {
+        let now = Date()
+        var ran = WorkTask(id: "a", prompt: "p", repo: "/r")
+        ran.platform = .kimi
+        ran.startedAt = now.addingTimeInterval(-900)
+        ran.endedAt = now.addingTimeInterval(-300)
+
+        let t = now.addingTimeInterval(-600)
+        let ranByUs = [ran].contains { h in
+            h.platform == .qwen
+                && (h.startedAt.map { $0 <= t } ?? false)
+                && ((h.endedAt ?? now).addingTimeInterval(60) >= t)
+        }
+        XCTAssertFalse(ranByUs)
+    }
+}
