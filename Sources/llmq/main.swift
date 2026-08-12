@@ -440,6 +440,14 @@ func cmdWork(_ args: [String]) throws {
             repo = RepoRegistry.all().first { $0.alias == p }?.localPath
                 ?? NSString(string: p).expandingTildeInPath
         }
+        if rest.contains("--write") {
+            // 平时靠合并时自动写。这个开关是给「现在就想把 STATUS.md 刷新一下」
+            // 用的 —— 比如刚接手一个仓库，想先看看它的自动段长什么样。
+            let wrote = ProgressLog.recordLanding(repo: repo, branch: nil)
+            print(wrote ? Ansi.green("已更新 ") + repo + "/STATUS.md"
+                        : Ansi.dim("内容没变，没动文件"))
+            return
+        }
         print(Ansi.dim(repo))
         print(ProgressLog.render(repo: repo, tasks: TaskStore.all())
             .replacingOccurrences(of: ProgressLog.begin, with: "")
