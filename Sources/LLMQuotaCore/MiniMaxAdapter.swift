@@ -55,11 +55,31 @@ public struct MiniMaxQuotaAdapter: UsageAdapter {
         }
         let r = Proc.run(bin, ["quota", "show", "--output", "json"],
                          cwd: "/tmp", env: [:], timeout: 30)
-        guard r.exitCode == 0,
-              let d = r.stdout.data(using: .utf8),
+        // **命令跑失败要喊出来，不能静默当成「没有用量」。**
+        //
+        // 这条吞下去的代价实测过：launchd 起的采集进程 PATH 里没有 node，
+        // 而 mmx 是 `#!/usr/bin/env node` 脚本 —— which 找得到文件，
+        // 执行却报 `env: node: No such file or directory`。
+        // 非零退出码被吞成空结果之后，报告说 MiniMax
+        // 「已安装，但最近 32 天没有用量」、手机上显示「在编未上岗」、
+        // 甚至把它列进「每月 119 元在空烧」。而它一直在被用。
+        //
+        // 把「读不到」说成「你没在用」，会让人去退订一个正在干活的服务。
+        guard r.exitCode == 0 else {
+            let why = r.timedOut ? "超时" : String((r.stderr + r.stdout)
+                .trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
+            FileHandle.standardError.write(Data(
+                "mmx quota show 跑失败（退出码 \(r.exitCode)）：\(why)\n".utf8))
+            return ParsedFile(events: [], quotas: [], lastEventAt: nil)
+        }
+        guard let d = r.stdout.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               let models = obj["model_remains"] as? [[String: Any]]
-        else { return ParsedFile(events: [], quotas: [], lastEventAt: nil) }
+        else {
+            FileHandle.standardError.write(Data(
+                "mmx quota show 的输出解析不了，前 120 字：\(r.stdout.prefix(120))\n".utf8))
+            return ParsedFile(events: [], quotas: [], lastEventAt: nil)
+        }
 
         let now = Date()
         var quotas: [OfficialQuota] = []

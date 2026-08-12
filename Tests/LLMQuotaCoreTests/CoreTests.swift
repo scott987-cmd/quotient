@@ -2859,3 +2859,53 @@ final class FileInstallTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: dst), Data("新的".utf8))
     }
 }
+
+// MARK: - 子进程 PATH
+
+final class ToolPathTests: XCTestCase {
+
+    /// **launchd 下必须能跑起 node 系 CLI。**
+    ///
+    /// launchd 起的进程只有 /usr/bin:/bin:/usr/sbin:/sbin。而这些工具多数是
+    /// `#!/usr/bin/env node` 脚本 —— which 找得到文件，执行却报
+    /// `env: node: No such file or directory`。「找得到但跑不起来」这个组合
+    /// 特别难查：手动在终端里一切正常，只有定时任务不行。
+    func testAugmentedPATHIncludesToolDirsUnderLaunchd() {
+        let p = Proc.augmentedPATH("/usr/bin:/bin:/usr/sbin:/sbin")
+        let dirs = p.split(separator: ":").map(String.init)
+        for d in Proc.toolDirs {
+            XCTAssertTrue(dirs.contains(d), "缺 \(d)，node 系 CLI 在 launchd 下会跑不起来")
+        }
+    }
+
+    /// 原有的 PATH 要保住，而且排在前面 —— 用户自己配的优先级不能被我们打乱。
+    func testExistingPATHIsPreservedAndKeepsPriority() {
+        let p = Proc.augmentedPATH("/my/first:/usr/bin")
+        let dirs = p.split(separator: ":").map(String.init)
+        XCTAssertEqual(dirs.first, "/my/first")
+        XCTAssertTrue(dirs.contains("/usr/bin"))
+    }
+
+    /// 不能有重复项：重复会让每次查找都多走一遍无用的目录。
+    func testNoDuplicateEntries() {
+        let p = Proc.augmentedPATH("/opt/homebrew/bin:/usr/bin:/opt/homebrew/bin")
+        let dirs = p.split(separator: ":").map(String.init)
+        XCTAssertEqual(dirs.count, Set(dirs).count, "PATH 里有重复项")
+    }
+
+    /// PATH 为空（launchd 有时真的什么都不给）也要能用。
+    func testWorksWithNoInheritedPATH() {
+        let dirs = Proc.augmentedPATH(nil).split(separator: ":").map(String.init)
+        XCTAssertTrue(dirs.contains("/usr/bin"), "兜底的系统目录不能少")
+        XCTAssertTrue(dirs.contains(Proc.toolDirs[0]))
+    }
+
+    /// which 和子进程 PATH 必须用同一份目录清单 ——
+    /// 分成两份的话，早晚出现「找得到、跑不起来」，而那正是这次的 bug。
+    func testWhichAndPATHShareTheSameDirs() {
+        let p = Proc.augmentedPATH("")
+        for d in Proc.toolDirs {
+            XCTAssertTrue(p.contains(d))
+        }
+    }
+}

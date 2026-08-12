@@ -606,17 +606,56 @@ public enum RunnerRegistry {
 // MARK: - 进程
 
 public enum Proc {
+    /// 这些 CLI 装在哪。`which` 和子进程的 PATH 共用同一份清单 ——
+    /// 分成两份的话，早晚会出现「找得到、跑不起来」。
+    static let toolDirs = [
+        "\(NSHomeDirectory())/.local/bin",
+        "\(NSHomeDirectory())/.hermes/node/bin",
+        "\(NSHomeDirectory())/.kimi-code/bin",
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+    ]
+
+    /// 给子进程一个能用的 PATH。
+    ///
+    /// ## 为什么非加不可
+    ///
+    /// launchd 起的进程**不继承登录 shell 的 PATH**，只有
+    /// `/usr/bin:/bin:/usr/sbin:/sbin`。而这些 CLI 大多是 node 脚本，
+    /// 第一行是 `#!/usr/bin/env node` —— 于是：
+    ///
+    ///   `which` 找得到 `~/.hermes/node/bin/mmx` 这个**文件**，
+    ///   执行时却因为 PATH 里没有 node 而失败：
+    ///   `env: node: No such file or directory`
+    ///
+    /// 「找得到但跑不起来」这个组合特别难查：手动在终端里跑一切正常，
+    /// 只有 launchd 下的定时任务不行，而它的失败又被适配器吞成了空结果。
+    ///
+    /// 实际后果：MiniMax 的额度采集在定时任务里永远是空的，
+    /// 于是报告说它「已安装，但最近 32 天没有用量」、
+    /// 手机上显示「在编未上岗」，甚至列进「每月 119 元在空烧」——
+    /// 而真相是这个工具一直在被用，只是采集进程跑不动它。
+    /// 一条把「我读不到」说成「你没在用」的诊断，比没有诊断更糟。
+    static func augmentedPATH(_ current: String?) -> String {
+        var seen = Set<String>()
+        var out: [String] = []
+        for d in (current?.split(separator: ":").map(String.init) ?? []) + toolDirs
+        where !d.isEmpty && seen.insert(d).inserted {
+            out.append(d)
+        }
+        for d in ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] where seen.insert(d).inserted {
+            out.append(d)
+        }
+        return out.joined(separator: ":")
+    }
+
     public static func which(_ name: String) -> String? {
         // 有些 CLI 自带安装目录、不往 PATH 里放软链（Kimi Code 就是），
         // 只靠 `which` 会漏掉可用的平台。
-        let candidates = [
-            "\(NSHomeDirectory())/.local/bin/\(name)",
-            "\(NSHomeDirectory())/.hermes/node/bin/\(name)",
-            "\(NSHomeDirectory())/.kimi-code/bin/\(name)",
-            "/opt/homebrew/bin/\(name)",
-            "/usr/local/bin/\(name)",
-        ]
-        for c in candidates where FileManager.default.isExecutableFile(atPath: c) { return c }
+        for d in toolDirs {
+            let c = "\(d)/\(name)"
+            if FileManager.default.isExecutableFile(atPath: c) { return c }
+        }
         let out = run("/usr/bin/which", [name], cwd: nil, env: [:], timeout: 5).stdout
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return out.isEmpty ? nil : out
@@ -643,6 +682,7 @@ public enum Proc {
         p.arguments = args
         if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
         var env = ProcessInfo.processInfo.environment
+        env["PATH"] = augmentedPATH(env["PATH"])
         for (k, v) in extraEnv { env[k] = v }
         p.environment = env
 
