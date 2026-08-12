@@ -1672,6 +1672,17 @@ func cmdSecurity() throws {
 }
 
 func cmdDoctor() throws {
+    // 降级过的安全设置要**主动报**，不能等人去翻文件。
+    // 一个静默变弱的系统，看起来和没变弱的一模一样。
+    let onDisk = ClusterNet.Passphrase.nodesWithPassphraseOnDisk()
+    if !onDisk.isEmpty {
+        print(Ansi.yellow("⚠ 集群口令在磁盘上：") + onDisk.joined(separator: " "))
+        print(Ansi.dim("  钥匙串写不进去时的退路（0600）。弱在：拿到 "
+                       + "Application Support 备份的人就拿到了可用身份。"))
+        print(Ansi.dim("  想收回去，在那台机器上**本地**跑一次 "
+                       + "llmq cluster import —— SSH 会话里登录钥匙串是锁着的，修不了。"))
+        print("")
+    }
     print(Ansi.bold("数据源探测"))
     print(Ansi.dim(pad("采集器", 34) + pad("平台", 12) + pad("状态", 16)
         + pad("已验证", 10) + "路径"))

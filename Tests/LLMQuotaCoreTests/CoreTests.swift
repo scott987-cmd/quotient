@@ -2680,9 +2680,63 @@ final class ClusterKeychainTests: XCTestCase {
 
     /// 口令是给 p12 用的，没人需要记，所以要足够长且每次都不一样。
     func testRandomPasswordIsLongAndUnique() {
-        let a = ClusterCA.randomPassword(), b = ClusterCA.randomPassword()
+        let a = ClusterNet.randomPassword(), b = ClusterNet.randomPassword()
         XCTAssertNotEqual(a, b)
         XCTAssertGreaterThanOrEqual(a.count, 30)
-        XCTAssertNotNil(Data(base64Encoded: a), "要能被 openssl 当普通口令用")
+        // base64url：不含 + / =，免得在命令行和 URL 里被转义搞坏。
+        XCTAssertNil(a.rangeOfCharacter(from: CharacterSet(charactersIn: "+/=")))
+        XCTAssertFalse(a.allSatisfy { $0 == "A" }, "全零随机数会编码成一串 A")
+    }
+}
+
+// MARK: - 口令落盘退路
+
+final class PassphraseFallbackTests: XCTestCase {
+
+    private func withTempCADir(_ body: (URL) throws -> Void) rethrows {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("pass-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        ClusterCA.dirOverride = tmp
+        defer { ClusterCA.dirOverride = nil; try? FileManager.default.removeItem(at: tmp) }
+        try? body(tmp)
+    }
+
+    /// 落盘的那份要能被读回来 —— 否则这条退路等于没有。
+    func testDiskFallbackRoundTrips() {
+        withTempCADir { _ in
+            let f = ClusterNet.Passphrase.fallbackFile(node: "n1")
+            try? Data("s3cret".utf8).write(to: f)
+            XCTAssertEqual(ClusterNet.Passphrase.diskFallback(node: "n1"), "s3cret")
+        }
+    }
+
+    /// **空文件当作没有。**
+    ///
+    /// 返回 "" 的话，它会一路走到 SecPKCS12Import 然后报「口令不对」——
+    /// 而真相是「这里压根没存东西」。两者的排查方向完全不同。
+    func testEmptyFallbackFileCountsAsAbsent() {
+        withTempCADir { _ in
+            try? Data().write(to: ClusterNet.Passphrase.fallbackFile(node: "n2"))
+            XCTAssertNil(ClusterNet.Passphrase.diskFallback(node: "n2"))
+        }
+    }
+
+    /// 尾随换行是写文件时最容易混进来的东西，口令里多一个 \n 就解不开 p12。
+    func testTrailingNewlineIsStripped() {
+        withTempCADir { _ in
+            try? Data("s3cret\n".utf8).write(
+                to: ClusterNet.Passphrase.fallbackFile(node: "n3"))
+            XCTAssertEqual(ClusterNet.Passphrase.diskFallback(node: "n3"), "s3cret")
+        }
+    }
+
+    /// doctor 要能列出降级过的节点。列不出来就等于静默变弱。
+    func testDoctorCanEnumerateDegradedNodes() {
+        withTempCADir { _ in
+            try? Data("x".utf8).write(to: ClusterNet.Passphrase.fallbackFile(node: "b"))
+            try? Data("x".utf8).write(to: ClusterNet.Passphrase.fallbackFile(node: "a"))
+            XCTAssertEqual(ClusterNet.Passphrase.nodesWithPassphraseOnDisk(), ["a", "b"])
+        }
     }
 }

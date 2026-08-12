@@ -333,7 +333,48 @@ public enum ClusterNet {
                 }
             }
             let s = SecItemAdd(add as CFDictionary, nil)
-            guard s == errSecSuccess else { throw ClusterCA.err("存钥匙串失败：\(s)") }
+            if s == errSecSuccess {
+                try? FileManager.default.removeItem(at: fallbackFile(node: node))
+                return
+            }
+            // **写不进钥匙串就落盘，但要大声说出来。**
+            //
+            // 这不是洁癖问题，是可用性问题：SSH 会话里登录钥匙串是锁着的
+            // （实测 -25308），而解锁要人输密码。也就是说远程修不了 ——
+            // 一台机器的跨机身份坏掉之后，只能有人**坐到那台机器前面**才能救。
+            // 对一个设计成无人值守的系统，这是个比「口令落盘」严重得多的问题。
+            //
+            // 落盘弱在哪要说清楚：钥匙串挡的是「Application Support 被整个
+            // 备份走」这一种情况。落盘之后，拿到那份备份的人就拿到了这个节点的
+            // 可用身份 —— 能连进集群派任务。所以不能静默降级，
+            // `llmq doctor` 会把它列出来。
+            //
+            // 顺带一提，主机上这层保护本来就不存在：ca.key 明文躺在同一个
+            // 目录里（0600），而它比任何一张 p12 都强 —— 能给任意节点签证书。
+            let f = fallbackFile(node: node)
+            do {
+                try Data(password.utf8).write(to: f, options: [.atomic])
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: f.path)
+                FileHandle.standardError.write(Data(
+                    ("钥匙串写不进去（OSStatus \(s)），口令已改存 \(f.path)（0600）。"
+                     + "安全性弱于钥匙串，llmq doctor 会一直提示。\n").utf8))
+            } catch {
+                throw ClusterCA.err("存钥匙串失败（\(s)），落盘也失败：\(error.localizedDescription)")
+            }
+        }
+
+        /// 钥匙串用不了时的退路。放在 CA 目录里，跟着它的 0700 走。
+        static func fallbackFile(node: String) -> URL {
+            ClusterCA.dir.appendingPathComponent("\(node).pass")
+        }
+
+        /// 有哪些节点的口令在磁盘上 —— 给 `llmq doctor` 报出来用。
+        public static func nodesWithPassphraseOnDisk() -> [String] {
+            ((try? FileManager.default.contentsOfDirectory(atPath: ClusterCA.dir.path)) ?? [])
+                .filter { $0.hasSuffix(".pass") }
+                .map { String($0.dropLast(5)) }
+                .sorted()
         }
 
         /// 构造一个「不限程序」的 SecAccess。
@@ -412,6 +453,10 @@ public enum ClusterNet {
             case errSecItemNotFound:
                 throw ClusterCA.err("钥匙串里没有 \(node) 的口令，先跑 llmq cluster import")
             case errSecInteractionNotAllowed, errSecAuthFailed:
+                // 顺序有讲究：先看落盘的那份，再考虑重签。
+                // 重签会换掉 p12，对端不受影响（同一个 CA），
+                // 但没必要为了一个还能读到的口令折腾一遍。
+                if let pw = diskFallback(node: node) { return pw }
                 // 换了二进制就读不到了。**这台机器要是握着 CA，就别求人。**
                 if let pw = try? reissueSelf(node: node) { return pw }
                 throw ClusterCA.err(
@@ -437,9 +482,20 @@ public enum ClusterNet {
                 kSecReturnData as String: true,
             ]
             var out: CFTypeRef?
-            guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
-                  let d = out as? Data else { return nil }
+            if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+               let d = out as? Data {
+                return String(decoding: d, as: UTF8.self)
+            }
+            return diskFallback(node: node)
+        }
+
+        /// 读落盘的那份。空文件当没有 —— 空口令解不开任何 p12，
+        /// 让它一路走到「口令不对」比在这里返回 "" 更难查。
+        static func diskFallback(node: String) -> String? {
+            guard let d = try? Data(contentsOf: fallbackFile(node: node)),
+                  !d.isEmpty else { return nil }
             return String(decoding: d, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         /// 拿盘上的 CA 给自己重签一张身份，配一个新口令存回钥匙串。
@@ -463,7 +519,7 @@ public enum ClusterNet {
             guard ClusterCA.hasPrivateCA else {
                 throw ClusterCA.err("没有 CA 私钥，重签不了")
             }
-            let pw = ClusterCA.randomPassword()
+            let pw = ClusterNet.randomPassword()
             _ = try ClusterCA.issue(node: node, password: pw)
             try? delete(node: node)
             try save(pw, node: node)
@@ -928,7 +984,11 @@ public enum ClusterNet {
     /// 生成 p12 口令。
     public static func randomPassword(bytes: Int = 24) -> String {
         var b = [UInt8](repeating: 0, count: bytes)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes, &b)
+        // 忽略返回值等于「随机数拿没拿到都当拿到了」。失败时那个数组还是全零，
+        // 而全零口令不会有任何报错，只会安静地把强度归零。
+        if SecRandomCopyBytes(kSecRandomDefault, bytes, &b) != errSecSuccess {
+            b = (0..<bytes).map { _ in UInt8.random(in: .min ... .max) }
+        }
         return Data(b).base64EncodedString()
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "+", with: "-")
