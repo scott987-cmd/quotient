@@ -528,7 +528,9 @@ func cmdWork(_ args: [String]) throws {
     // 两条路各写一份的话，迟早会出现一边提交、一边只改状态的分歧，
     // 那时候任务显示 done 而分支上什么都没有。
     case "approve":
-        let id = rest.dropFirst().first(where: { !$0.hasPrefix("--") }) ?? ""
+        // rest 已经去掉子命令了（cmdWork 开头就 dropFirst 过），
+        // 这里再 dropFirst 会把任务 id 一起丢掉 —— 犯过一次。
+        let id = rest.first(where: { !$0.hasPrefix("--") }) ?? ""
         guard !id.isEmpty, let t0 = TaskStore.all().first(where: { $0.id.hasPrefix(id) }) else {
             print(Ansi.red("要给任务 id：llmq work approve <id> [--reject]")); exit(2)
         }
@@ -2751,23 +2753,40 @@ func cmdUpdate(_ rest: [String]) throws {
         // 也发版了、对方也更新了」三件事同时成立，问题却一点没变 ——
         // 这正好浪费了一轮排查。采集和 worker 不受影响，它们是
         // StartInterval 每次新起进程，自然就用上了新二进制。
-        if restartClusterServe() {
-            print(Ansi.dim("  已重启常驻的 cluster serve（换二进制不换进程，得踢一下）"))
+        let kicked = restartResidentServices()
+        if !kicked.isEmpty {
+            print(Ansi.dim("  已重启常驻服务（换二进制不换进程，得踢一下）："
+                + kicked.map { $0.replacingOccurrences(of: "com.llmquotabar.", with: "") }
+                    .joined(separator: "、")))
         }
     }
 }
 
-/// 踢一下常驻的 cluster serve。没装就返回 false。
+/// 踢一下所有常驻服务。返回被重启的 label。
+///
+/// **两个都要踢，不能只踢 cluster。**
+/// `work loop` 和 `cluster serve` 一样是常驻的：换了磁盘上的二进制，
+/// 那个跑了几天的进程还在执行老代码。只踢 cluster 的后果实测到了 ——
+/// 新加的高危路径闸发版、部署、cluster 重启，看起来一切就绪，
+/// 而 worker 还是老的，于是一个改了 build-app.sh 的任务照样直接提交，
+/// 闸门形同虚设。而这时候「代码写了、测试过了、也部署了」三件事都成立。
 @discardableResult
-func restartClusterServe() -> Bool {
-    let label = "com.llmquotabar.cluster"
+func restartResidentServices() -> [String] {
     let listed = Proc.run("/bin/launchctl", ["list"], cwd: "/tmp", env: [:], timeout: 15)
-    guard listed.stdout.contains(label) else { return false }
-    let r = Proc.run("/bin/launchctl",
-                     ["kickstart", "-k", "gui/\(getuid())/\(label)"],
-                     cwd: "/tmp", env: [:], timeout: 30)
-    return r.exitCode == 0
+    var done: [String] = []
+    for label in ["com.llmquotabar.cluster", "com.llmquotabar.worker"] {
+        guard listed.stdout.contains(label) else { continue }
+        let r = Proc.run("/bin/launchctl",
+                         ["kickstart", "-k", "gui/\(getuid())/\(label)"],
+                         cwd: "/tmp", env: [:], timeout: 30)
+        if r.exitCode == 0 { done.append(label) }
+    }
+    return done
 }
+
+/// 兼容旧调用点。
+@discardableResult
+func restartClusterServe() -> Bool { !restartResidentServices().isEmpty }
 
 /// 把编译产物打成发布包。和装机包同一个布局，install 那边按这个布局解。
 enum ReleasePacker {
