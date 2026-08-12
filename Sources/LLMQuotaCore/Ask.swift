@@ -33,6 +33,19 @@ public struct Ask: Codable, Sendable {
     ///
     /// 没有它的话：任务问了 Q1，你三天没回；期间任务又跑了一轮问出 Q2；
     /// 你终于回答，答的是 Q1，系统却当成 Q2 的答案并进去。
+    /// 这一轮是「问问题」还是「要审批」。
+    ///
+    /// 两者的答复处理**完全不同**：问题答完要把任务重新排队、让 agent 带着
+    /// 答案接着干；审批答完活已经干完躺在工作区里，「放行」是**提交**，
+    /// 重跑反而会把已有成果铲掉重来。
+    ///
+    /// 老数据没这个字段，解码时默认按 question 处理 —— 那是原来唯一的形态。
+    public enum Kind: String, Codable, Sendable {
+        case question
+        case approval
+    }
+    public var kind: Kind = .question
+
     public var id: String
     public var taskID: String
     /// 哪台机器提的问。
@@ -76,11 +89,37 @@ public struct Ask: Codable, Sendable {
         }
     }
 
+    /// 容错解码。
+    ///
+    /// **默认值救不了合成解码器** —— 实测过：给属性写了 `= .question`，
+    /// 缺这个键的老 JSON 照样抛 keyNotFound，整条 Ask 解不出来，
+    /// 于是手机上那个问题凭空消失、任务永远卡在 blocked。
+    ///
+    /// 这个坑在这个项目里踩到第五次（TaskProfile 缺 classifiedAt、
+    /// OfficeEvent 缺 excluded、PlatformReport 缺 role、ClusterPresence 缺 canReach）。
+    /// 凡是会跨版本读写的结构，一律手写 decodeIfPresent。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .question
+        id = try c.decode(String.self, forKey: .id)
+        taskID = try c.decode(String.self, forKey: .taskID)
+        machineID = try c.decodeIfPresent(String.self, forKey: .machineID) ?? ""
+        round = try c.decodeIfPresent(Int.self, forKey: .round) ?? 1
+        askedAt = try c.decodeIfPresent(Date.self, forKey: .askedAt) ?? Date()
+        platform = try c.decodeIfPresent(Platform.self, forKey: .platform)
+        taskPrompt = try c.decodeIfPresent(String.self, forKey: .taskPrompt) ?? ""
+        repoName = try c.decodeIfPresent(String.self, forKey: .repoName) ?? ""
+        questions = try c.decodeIfPresent([Question].self, forKey: .questions) ?? []
+        progressNote = try c.decodeIfPresent(String.self, forKey: .progressNote)
+        wipCommit = try c.decodeIfPresent(String.self, forKey: .wipCommit)
+    }
+
     public init(id: String = UUID().uuidString.prefix(12).lowercased(),
                 taskID: String, machineID: String, round: Int, askedAt: Date = Date(),
                 platform: Platform?, taskPrompt: String, repoName: String,
                 questions: [Question], progressNote: String? = nil,
-                wipCommit: String? = nil) {
+                wipCommit: String? = nil, kind: Kind = .question) {
+        self.kind = kind
         self.id = String(id)
         self.taskID = taskID
         self.machineID = machineID
@@ -443,6 +482,26 @@ public enum AskIngest {
             }
 
             var t = task
+            // 审批和提问的答复处理完全不同。
+            //
+            // 提问：答完重新排队，agent 带着答案接着干。
+            // 审批：活已经干完躺在工作区里，「放行」是**提交**——
+            // 走重新排队那条路会把已有成果铲掉重来，白烧一份额度，
+            // 而且第二次跑出来的东西未必和你看过的那份一样。
+            if pending.kind == .approval {
+                let picked = answer.answers.first?.value ?? ""
+                let approve = !answer.abandon && picked.contains("放行")
+                let r = Approval.settle(task: t, approve: approve)
+                t = r.task
+                t.pendingAsk = nil
+                AskStore.retract(taskID: t.id, machine: machineID)
+                AskStore.archive(url, machine: machineID,
+                                 suffix: approve ? "approved" : "rejected")
+                try? save(t)
+                tasks[t.id] = t
+                out.append(Result(taskID: t.id, accepted: true, note: r.note))
+                continue
+            }
             if answer.abandon {
                 t.state = .failed
                 t.endedAt = Date()

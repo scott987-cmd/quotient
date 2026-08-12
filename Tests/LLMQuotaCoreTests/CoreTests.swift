@@ -2324,3 +2324,83 @@ final class RiskyPathGateTests: XCTestCase {
         XCTAssertTrue(hits.contains("deploy.sh"), "新增脚本没被拦：\(hits)")
     }
 }
+
+// MARK: - 高危改动的放行/丢弃
+
+final class ApprovalTests: XCTestCase {
+
+    /// 建一个带一次未提交改动的 agent 工作区。
+    private func makeWorkspace() throws -> (repo: String, task: WorkTask, tmp: URL) {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("appr-\(UUID().uuidString.prefix(8))")
+        let repo = tmp.appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        let d = repo.path
+        _ = GitWorkspace.git(["init", "-q", "-b", "main"], in: d)
+        try "x".write(to: repo.appendingPathComponent("README.md"),
+                      atomically: true, encoding: .utf8)
+        _ = GitWorkspace.git(["add", "-A"], in: d)
+        _ = GitWorkspace.git(["-c", "user.email=t@t", "-c", "user.name=t",
+                              "commit", "-qm", "init"], in: d)
+
+        let branch = "agent/claude/aaaa1111"
+        let ws = tmp.appendingPathComponent("ws").path
+        _ = GitWorkspace.git(["worktree", "add", "-q", "-b", branch, ws, "main"], in: d)
+        // agent 改了一个脚本 —— 高危。
+        try "#!/bin/sh\necho hi\n".write(to: URL(fileURLWithPath: ws + "/deploy.sh"),
+                                        atomically: true, encoding: .utf8)
+
+        var t = WorkTask(id: "aaaa1111", prompt: "顺手加个脚本", repo: d)
+        t.state = .blocked
+        t.branch = branch
+        t.platform = .claude
+        return (d, t, tmp)
+    }
+
+    /// 放行 = 真的提交到那个分支上。
+    ///
+    /// 只改状态不提交的话，任务记录说 done，而 `work review` 看不到这个分支
+    /// （它只列有提交的）—— 产出无声无息地蒸发，而且没人会发现。
+    func testApproveActuallyCommits() throws {
+        let (repo, task, tmp) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let out = Approval.settle(task: task, approve: true)
+        XCTAssertEqual(out.task.state, .done, out.note)
+
+        let log = GitWorkspace.git(["log", "--oneline", task.branch!], in: repo).stdout
+        XCTAssertTrue(log.contains("顺手加个脚本"), "分支上没有这次提交：\(log)")
+        let files = GitWorkspace.git(["show", "--name-only", "--format=", task.branch!],
+                                     in: repo).stdout
+        XCTAssertTrue(files.contains("deploy.sh"), "提交里没有那个文件：\(files)")
+    }
+
+    /// 丢弃 = 分支和工作区都清掉，而且记下丢弃原因。
+    ///
+    /// 留着一个没人要的半成品分支的话，下次 work review 又会把它列出来问一遍，
+    /// 噪音会累积。而 discardedAt 要记 —— 储备池靠它判断「这个缺陷允许重来」。
+    func testRejectCleansUpAndRecordsReason() throws {
+        let (repo, task, tmp) = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let out = Approval.settle(task: task, approve: false)
+        XCTAssertEqual(out.task.state, .failed)
+        XCTAssertNotNil(out.task.discardedAt, "没记丢弃时间，储备池会以为这事没做过")
+        XCTAssertNil(out.task.branch)
+
+        let branches = GitWorkspace.git(["branch", "--list", "agent/*"], in: repo).stdout
+        XCTAssertFalse(branches.contains("aaaa1111"), "分支没清掉：\(branches)")
+    }
+
+    /// 工作区已经不在时，**不许**标成 done。
+    ///
+    /// 标了就是撒谎：分支上什么都没有，而任务记录说它成功了。
+    func testMissingWorkspaceFailsInsteadOfLying() throws {
+        var t = WorkTask(id: "bbbb2222", prompt: "x", repo: "/nonexistent-repo-xyz")
+        t.state = .blocked
+        t.branch = "agent/claude/bbbb2222"
+        let out = Approval.settle(task: t, approve: true)
+        XCTAssertEqual(out.task.state, .failed)
+        XCTAssertNotEqual(out.task.state, .done, "工作区都没了还标 done 就是撒谎")
+    }
+}

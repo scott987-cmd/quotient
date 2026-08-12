@@ -522,32 +522,26 @@ func cmdWork(_ args: [String]) throws {
         }
         print("\n" + Ansi.green("生成了 \(made) 个储备任务"))
 
-    // llmq work approve <任务id> —— 放行一个卡在高危路径闸上的任务
+    // llmq work approve <任务id> [--reject] —— 放行/丢弃一个卡在高危路径闸上的任务
+    //
+    // 和手机上点按钮走的是**同一个函数**（Approval.settle）。
+    // 两条路各写一份的话，迟早会出现一边提交、一边只改状态的分歧，
+    // 那时候任务显示 done 而分支上什么都没有。
     case "approve":
-        let id = rest.dropFirst().first ?? ""
-        guard !id.isEmpty, var t = TaskStore.all().first(where: { $0.id.hasPrefix(id) }) else {
-            print(Ansi.red("要给任务 id：llmq work approve <id>")); exit(2)
+        let id = rest.dropFirst().first(where: { !$0.hasPrefix("--") }) ?? ""
+        guard !id.isEmpty, let t0 = TaskStore.all().first(where: { $0.id.hasPrefix(id) }) else {
+            print(Ansi.red("要给任务 id：llmq work approve <id> [--reject]")); exit(2)
         }
-        guard t.state == .blocked else {
-            print(Ansi.yellow("任务 \(t.id) 现在是 \(t.state)，不是等确认的状态")); exit(1)
+        guard t0.state == .blocked else {
+            print(Ansi.yellow("任务 \(t0.id) 现在是 \(t0.state)，不是等确认的状态")); exit(1)
         }
-        let ws = Review.worktreePath(repo: t.repo, branch: t.branch ?? "")
-        guard let wsPath = ws else {
-            print(Ansi.red("找不到它的工作区，改动可能已经被清掉了")); exit(1)
+        let r = Approval.settle(task: t0, approve: !rest.contains("--reject"))
+        try TaskStore.append(r.task)
+        AskStore.retract(taskID: t0.id, machine: Paths.machineID())
+        print((r.task.state == .done ? Ansi.green : Ansi.yellow)(r.note))
+        if r.task.state == .done {
+            print(Ansi.dim("接下来：llmq work review --auto 走验证合并"))
         }
-        let commit = GitWorkspace.git(["add", "-A"], in: wsPath)
-        guard commit.exitCode == 0,
-              GitWorkspace.git(["commit", "-m",
-                                "agent(\(t.platform?.rawValue ?? "?")): \(t.prompt.prefix(60))"
-                                    + "\n\n人工确认放行（碰到高危路径）"],
-                               in: wsPath).exitCode == 0 else {
-            print(Ansi.red("提交失败")); exit(1)
-        }
-        t.state = .done
-        t.note = "碰高危路径，人工确认后提交"
-        try TaskStore.append(t)
-        print(Ansi.green("已放行并提交到 ") + (t.branch ?? "?"))
-        print(Ansi.dim("接下来：llmq work review --auto 走验证合并"))
 
     case "cooldowns":
         let active = CooldownLedger.active()
@@ -1111,13 +1105,32 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 print(Ansi.yellow("  ⚠︎ 碰到高危路径，没提交，等人确认：")
                     + risky.prefix(5).joined(separator: "、"))
                 print(Ansi.dim("  改动留在 " + ws.path))
-                _ = Notifier.feishu(
-                    "任务 \(task.id) 改到了高危路径，等你确认：\n"
-                    + risky.prefix(8).joined(separator: "\n")
-                    + "\n\n看改动：cd \(ws.path) && git diff"
-                    + "\n放行：llmq work approve \(task.id)"
-                    + "\n丢弃：llmq work review --discard \(ws.branch)",
-                    subject: "高危改动待确认")
+                // 推到手机上等你点。
+                //
+                // 为什么不走飞书交互卡片：那需要一个飞书能访问的**入站回调地址**
+                // （公网服务或内网穿透），和 SECURITY.md 第一节「只允许开一个端口」
+                // 直接冲突 —— 那个端口是带 mTLS 的集群口，不该为了一个审批按钮
+                // 再开一个。而 Ask 这条通道走 iCloud 文件，一个入站端口都不需要，
+                // iOS App 已经能把带选项的问题渲染成按钮。
+                let ask = Ask(
+                    taskID: task.id,
+                    machineID: Paths.machineID(),
+                    round: task.askRounds + 1,
+                    platform: task.platform,
+                    taskPrompt: task.prompt,
+                    repoName: (task.repo as NSString).lastPathComponent,
+                    questions: [Ask.Question(
+                        text: "这次改动碰到了高危路径，要放行吗？\n"
+                            + risky.prefix(8).joined(separator: "\n"),
+                        options: ["放行并提交", "丢弃这次改动"],
+                        // 不给倾向性建议：高危改动该由人看过再定，
+                        // 给了「建议放行」等于把这道闸门又软化回去。
+                        suggestion: nil)],
+                    progressNote: "改了 \(changed) 个文件，工作区留在 \(ws.path)")
+                try? AskStore.publish(ask)
+                task.pendingAsk = ask
+                task.askRounds += 1
+                print(Ansi.dim("  已推到手机等确认"))
             } else {
                 // 提交前先验一次。**在提交之前**是刻意的：提交完再验的话，
                 // 坏代码已经落在分支上，还得再回滚一次；而且 work review
