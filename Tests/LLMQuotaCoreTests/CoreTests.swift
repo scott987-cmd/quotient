@@ -3437,3 +3437,51 @@ final class MentionsRiskyPathTests: XCTestCase {
                       "分诊说低危，但文件名摆在那儿 —— 必须拆")
     }
 }
+
+// MARK: - 孤儿 running 任务的回收
+
+final class OrphanReclaimTests: XCTestCase {
+
+    /// 判据必须是 pid，不能是「跑了多久」。
+    ///
+    /// 实测的故障：worker 被重启（llmq update 每次都会重启它）时，
+    /// 正在执行的 agent 进程一起被杀，任务记录永远停在 .running。
+    /// 对图更致命 —— 下游永远等不到上游 done，整张图静默停摆，
+    /// 而从外面看不出是坏了还是在跑。
+    ///
+    /// 但**不能按时长判**：同一台机器上可能同时有 launchd 的 worker
+    /// 和一个手敲的 `llmq work loop`，按时长判会让后启动的那个把
+    /// 前一个正在干的活抢过来标成失败，两边最后写同一条记录。
+    func testLivePIDMeansNotAnOrphan() {
+        let me = ProcessInfo.processInfo.processIdentifier
+        XCTAssertEqual(kill(me, 0), 0, "自己的进程当然活着")
+    }
+
+    /// 一个几乎不可能存在的 pid 应当判定为已死。
+    func testDeadPIDIsDetected() {
+        // 挑一个极大的 pid：macOS 默认上限远小于它。
+        XCTAssertNotEqual(kill(Int32(999_999), 0), 0, "不存在的进程必须判死")
+    }
+
+    /// 老记录没有 runnerPID（nil）时要当孤儿回收 ——
+    /// 那些是这次改动之前留下的，本来就没人管。
+    func testMissingPIDIsTreatedAsOrphan() throws {
+        let t = try SnapshotCoding.decoder().decode(WorkTask.self, from: Data("""
+        {"id":"old","prompt":"p","repo":"/r","state":"running",
+         "createdAt":"2026-08-12T00:00:00Z"}
+        """.utf8))
+        XCTAssertNil(t.runnerPID, "旧记录没这个字段，解码不能因此失败")
+        XCTAssertEqual(t.state, .running)
+    }
+
+    /// runnerPID 要能编码回去 —— 只改 init(from:) 不改编码侧的话，
+    /// 字段写不出去，下次读又是 nil，回收判据等于永远不生效。
+    func testRunnerPIDRoundTrips() throws {
+        var t = WorkTask(id: "a", prompt: "p", repo: "/r")
+        t.state = .running
+        t.runnerPID = 4242
+        let d = try SnapshotCoding.encoder().encode(t)
+        let back = try SnapshotCoding.decoder().decode(WorkTask.self, from: d)
+        XCTAssertEqual(back.runnerPID, 4242)
+    }
+}

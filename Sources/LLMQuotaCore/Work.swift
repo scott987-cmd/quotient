@@ -95,6 +95,17 @@ public struct WorkTask: Codable, Sendable {
     /// 在图里的短标题。prompt 仍然是给 agent 的完整指令，这个只用于显示。
     public var stepTitle: String?
 
+    /// 哪个进程正在跑它。
+    ///
+    /// 存这个是为了让「回收孤儿」从猜变成确定。worker 被重启时（`llmq update`
+    /// 每次都会重启它）in-flight 的任务会永远停在 `.running`，
+    /// 必须有人回收 —— 但**不能靠「跑了多久」来判**：
+    /// 那会在同时跑着两个 worker 时，把另一个正在干的活当成孤儿抢掉。
+    ///
+    /// 有 pid 就能精确判断：进程还在 → 别动；进程没了 → 孤儿。
+    /// pid 被复用会让我们误判成「还在」，那是安全的方向（只是晚回收一轮）。
+    public var runnerPID: Int32?
+
     /// 这一步产出的、要交给下游的东西（文件路径，相对仓库根）。
     ///
     /// 这是「MiniMax 出图 → Qwen 写代码」那类协作的载体。
@@ -153,6 +164,7 @@ public struct WorkTask: Codable, Sendable {
         dependsOn = try c.decodeIfPresent([String].self, forKey: .dependsOn) ?? []
         stepTitle = try c.decodeIfPresent(String.self, forKey: .stepTitle)
         outputs = try c.decodeIfPresent([String].self, forKey: .outputs) ?? []
+        runnerPID = try c.decodeIfPresent(Int32.self, forKey: .runnerPID)
     }
 
     public var duration: TimeInterval? {

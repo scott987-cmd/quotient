@@ -921,6 +921,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     }
 
     task.state = .running
+    // 记下是谁在跑它 —— 回收孤儿时靠这个精确判断，而不是靠「跑了多久」。
+    task.runnerPID = ProcessInfo.processInfo.processIdentifier
     task.startedAt = Date()
     try TaskStore.append(task)
     Inbox.writeResult(for: task)
@@ -1370,6 +1372,40 @@ func cmdWorkLoop(_ args: [String]) throws {
 
     Inbox.ensureDirectories()
     Inbox.pruneResults()
+
+    // **启动时先回收上一条命留下的 running。**
+    //
+    // 实测：worker 被重启（`llmq update` 每次都会重启它）时，正在执行的
+    // agent 进程被一起杀掉，而任务记录永远停在 `.running` —— 没有任何机制管它。
+    //
+    // 对普通任务的后果是「一个任务永远不结束」；对图更致命：
+    // **下游节点永远等不到上游 done，整张图静默停摆**，
+    // 而且从外面完全看不出是坏了还是还在跑。
+    //
+    // 判据是「worker 刚启动」而不是「跑了多久」：agent 是我们的子进程，
+    // 我们一死它就没了，所以启动这一刻看到的任何 running 都必然是孤儿。
+    // 反过来用超时判会误杀一个正常长跑的任务。
+    for t in TaskStore.all() where t.state == .running {
+        // **进程还活着就别碰。**
+        //
+        // 同一台机器上可能同时有 launchd 起的 worker 和一个手敲的
+        // `llmq work loop`。只按状态回收的话，后启动的那个会把前一个
+        // 正在干的活抢过来标成失败 —— 而那个活还在跑，最后两边都写同一个
+        // 任务记录，产出归属彻底乱掉。
+        if let pid = t.runnerPID, pid > 0, kill(pid, 0) == 0 {
+            print(Ansi.dim("跳过 " + t.id + "：进程 \(pid) 还在跑，不是孤儿"))
+            continue
+        }
+        var x = t
+        x.state = .failed
+        x.endedAt = Date()
+        let ran = t.startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
+        x.note = "worker 重启时它正在执行（已跑 \(ran) 秒），进程随之被杀 —— "
+            + "记录回收成失败，可以重新入队。"
+            + (t.graphID != nil ? "图内节点：不回收的话下游会永远等在这里。" : "")
+        try? TaskStore.append(x)
+        print(Ansi.yellow("回收孤儿任务 ") + Ansi.dim(x.id + "  " + (x.note ?? "")))
+    }
 
     print(Ansi.bold("工作循环已启动")
         + Ansi.dim("  每 \(Int(policy.tickSeconds))s 查一次队列"
