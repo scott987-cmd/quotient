@@ -388,6 +388,15 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
     /// 按当前速度预计会作废的额度（原始计量单位）。仅周期窗口有意义。
     public var projectedWaste: Double?
 
+    /// 没配上限时的**实测下限**：历史上任意一个同长度窗口里用出去过的最大量，
+    /// 而且那次没被拒 —— 所以真实上限一定不低于它。
+    ///
+    /// 为什么值得单独显示：查完各家官方文档之后，能填的上限几乎没有
+    /// （Claude/Kimi 不公布，GLM 公布的是对不上口径的「积分」）。
+    /// 「未填」什么都不说，而「实测至少用到过 394 次」是硬信息 ——
+    /// 它至少能告诉你这个平台的量级，也是学习器唯一能给的保守结论。
+    public var observedFloor: Double?
+
     public var health: QuotaHealth
     /// true 表示这个数字来自平台官方回报，不是本地推算。
     public var isOfficial: Bool
@@ -420,8 +429,10 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
         health: QuotaHealth,
         isOfficial: Bool,
         sourceNote: String,
-        byMachine: [String: Double] = [:]
+        byMachine: [String: Double] = [:],
+        observedFloor: Double? = nil
     ) {
+        self.observedFloor = observedFloor
         self.platform = platform
         self.planName = planName
         self.limitID = limitID

@@ -1733,11 +1733,29 @@ func cmdPlan(_ args: [String]) throws {
         if let c = plan.monthlyCost {
             print("  月费 \(c) \(plan.currency)")
         }
+        // 没配上限时把**实测下限**显示出来。
+        //
+        // 「未填」什么都不说，而「实测至少用到过 394 次」是硬信息：
+        // 那次确实用出去了、没被拒，所以真实上限不低于它。
+        // 查完各家官方文档之后（大多不公布或口径对不上），这往往是唯一的数字。
+        let floors = Dictionary(
+            LLMQuota.dashboard().reports
+                .flatMap(\.statuses)
+                .compactMap { st -> (String, Double)? in
+                    guard let f = st.observedFloor else { return nil }
+                    return ("\(st.platform.rawValue)|\(st.limitID)", f)
+                },
+            uniquingKeysWith: { a, _ in a })
+
         for l in plan.limits {
             let cap = l.limit.map { Format.metricValue($0, metric: l.metric) }
                 ?? Ansi.yellow("未填")
-            print("  " + pad(l.label, 8) + pad(l.kind == .periodic ? "周期" : "滚动", 6)
-                + pad(l.metric.displayName, 14) + "上限 " + cap)
+            var line = "  " + pad(l.label, 8) + pad(l.kind == .periodic ? "周期" : "滚动", 6)
+                + pad(l.metric.displayName, 14) + "上限 " + pad(cap, 12)
+            if l.limit == nil, let f = floors["\(plan.platform.rawValue)|\(l.id)"] {
+                line += Ansi.dim("实测至少 " + Format.metricValue(f, metric: l.metric))
+            }
+            print(line)
         }
     }
     print("\n" + Ansi.dim("用 llmq plan edit 打开编辑，把各家订阅页面上的实际上限填进 limit 字段。"))

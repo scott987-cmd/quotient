@@ -177,6 +177,29 @@ public struct QuotaEngine: Sendable {
 
     // MARK: - Status computed from local logs
 
+    /// 历史上任意一个 `windowSeconds` 长的窗口里，这个口径用出去过的最大量。
+    ///
+    /// **这是一个下限，不是估计**：那次确实用出去了、而且没被拒，
+    /// 所以真实上限一定不低于它。查完各家官方文档之后（大多不公布、
+    /// 或者口径对不上），这往往是唯一能给出的硬数字。
+    ///
+    /// 步长取窗口的 1/12：太密了白算，太疏了会漏掉峰值刚好落在两步之间的情况。
+    static func peakInWindow(_ buckets: [UsageBucket], windowSeconds: TimeInterval,
+                             metric: QuotaMetric, pricing: Pricing?, now: Date) -> Double? {
+        guard let earliest = buckets.map(\.start).min(),
+              now.timeIntervalSince(earliest) >= windowSeconds * 2 else { return nil }
+        let step = max(60, windowSeconds / 12)
+        var peak = 0.0
+        var end = earliest.addingTimeInterval(windowSeconds)
+        while end <= now {
+            let from = end.addingTimeInterval(-windowSeconds)
+            let inWindow = buckets.filter { $0.start >= from && $0.start < end }
+            peak = max(peak, metric.value(from: inWindow, pricing: pricing))
+            end = end.addingTimeInterval(step)
+        }
+        return peak > 0 ? peak : nil
+    }
+
     private func localStatus(
         limit: QuotaLimit,
         plan: PlatformPlan,
@@ -264,6 +287,14 @@ public struct QuotaEngine: Sendable {
             waste = max(0, cap - p * cap)
         }
 
+        // 没配上限时给一个实测下限：历史上同长度窗口里用出去过的最大量。
+        // 配了上限就不算 —— 那时候真实的剩余百分比已经有了，下限是多余信息，
+        // 而滑窗扫描是有成本的。
+        let floor: Double? = limit.limit == nil
+            ? Self.peakInWindow(laneMatched, windowSeconds: limit.windowSeconds,
+                                metric: limit.metric, pricing: plan.pricing, now: now)
+            : nil
+
         return QuotaStatus(
             platform: plan.platform,
             planName: plan.planName,
@@ -284,7 +315,8 @@ public struct QuotaEngine: Sendable {
             sourceNote: limit.limit == nil
                 ? (limit.hint ?? "未配置上限，仅统计用量")
                 : "由本地日志推算",
-            byMachine: machineSplit
+            byMachine: machineSplit,
+            observedFloor: floor
         )
     }
 

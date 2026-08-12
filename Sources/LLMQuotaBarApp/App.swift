@@ -343,7 +343,15 @@ struct QuotaRow: View {
                                     in: RoundedRectangle(cornerRadius: 3))
                 }
                 if status.limit == nil {
-                    Text("未配上限").foregroundStyle(.orange)
+                    // 没配上限时，「实测至少 X」比一句「未配上限」有用得多：
+                    // 那次确实用出去了、没被拒，所以真实上限不低于它。
+                    // 各家官方大多不公布可用的数字，这往往是唯一的硬信息。
+                    if let f = status.observedFloor {
+                        Text("实测至少 " + Format.metricValue(f, metric: status.metric))
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text("未配上限").foregroundStyle(.orange)
+                    }
                 }
                 Spacer()
                 if let t = status.timeToReset {
