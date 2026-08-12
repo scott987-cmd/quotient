@@ -161,10 +161,51 @@ public enum PlansStore {
         for url in [canonicalFile, Paths.plansFile] {
             if let data = try? Data(contentsOf: url),
                let cfg = try? dec.decode(PlansConfig.self, from: data) {
-                return cfg
+                return reconcileWindows(cfg)
             }
         }
         return PlansConfig.template()
+    }
+
+    /// 让模板里的**窗口定义**能到达已经存在的配置，同时保住用户填的数值。
+    ///
+    /// ## 为什么需要这个
+    ///
+    /// 窗口定义（哪几个窗口、多长、什么口径）是**我们查出来的知识**，
+    /// 会随着对各家套餐了解的加深而修正；而 limit 里的数字是**用户填的**，
+    /// 一个个从订阅页抄来的，丢了要全部重来。两者的归属不同，
+    /// 却存在同一个文件里 —— 于是原来只要用户存过一次配置，
+    /// 后续所有窗口修正都到不了他那儿。
+    ///
+    /// 实际后果：查出 Kimi 和 GLM 的额度是**每 7 天**刷新（官方原文
+    /// 「以订阅日为起点每 7 天刷新」「周积分」），把模板从每月改成每周，
+    /// 而用户的配置纹丝不动，作废预警继续按 30 天算剩余 ——
+    /// 实际每 7 天就清零一次，「还早着呢」这个判断整整错了四倍，
+    /// 正好把这个工具最该抓的那种浪费漏掉。
+    ///
+    /// 所以：窗口以模板为准，数值按 id 从旧配置搬过来。
+    /// 旧配置里有、模板里没有的窗口保留 —— 那可能是用户自己加的，
+    /// 替他删掉是越权。
+    static func reconcileWindows(_ saved: PlansConfig) -> PlansConfig {
+        let tpl = PlansConfig.template()
+        var out = saved
+        for i in out.plans.indices {
+            guard let t = tpl.plan(for: out.plans[i].platform) else { continue }
+            let savedLimits = out.plans[i].limits
+            let byID = Dictionary(savedLimits.map { ($0.id, $0) },
+                                  uniquingKeysWith: { a, _ in a })
+            var merged: [QuotaLimit] = t.limits.map { def in
+                var l = def
+                // 只搬数值和锚点，其余（窗口长度、口径、说明）以模板为准。
+                l.limit = byID[def.id]?.limit
+                l.anchor = byID[def.id]?.anchor
+                return l
+            }
+            let templateIDs = Set(t.limits.map(\.id))
+            merged += savedLimits.filter { !templateIDs.contains($0.id) && $0.limit != nil }
+            out.plans[i].limits = merged
+        }
+        return out
     }
 
     public static func save(_ config: PlansConfig, force: Bool = false) throws {

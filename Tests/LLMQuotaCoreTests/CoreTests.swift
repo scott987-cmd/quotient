@@ -2404,3 +2404,54 @@ final class ApprovalTests: XCTestCase {
         XCTAssertNotEqual(out.task.state, .done, "工作区都没了还标 done 就是撒谎")
     }
 }
+
+// MARK: - 窗口定义要能到达已有配置
+
+final class PlanReconcileTests: XCTestCase {
+
+    /// 模板改了窗口，已存在的配置要跟上；用户填的数值不能丢。
+    ///
+    /// 这两件事归属不同却存在同一个文件里：窗口定义（几个窗口、多长、什么口径）
+    /// 是查出来的知识，会随着对各家套餐了解的加深而修正；
+    /// limit 里的数字是用户一个个从订阅页抄来的，丢了要全部重来。
+    ///
+    /// 不做这件事的后果实测到了：查出 Kimi/GLM 是每 7 天刷新、把模板从每月
+    /// 改成每周之后，用户的配置纹丝不动，作废预警继续按 30 天算剩余 ——
+    /// 实际每 7 天清零一次，「还早着呢」这个判断整整错了四倍。
+    func testTemplateWindowsReachSavedConfigWhileKeepingValues() {
+        // 一份「老」配置：窗口是过时的每月，但用户在 5 小时那条上填了数。
+        let old = PlansConfig(plans: [
+            PlatformPlan(platform: .kimi, planName: "Kimi", limits: [
+                QuotaLimit(id: "5h", label: "5 小时", windowMinutes: 300,
+                           kind: .session, metric: .requests, limit: 500),
+                QuotaLimit(id: "monthly", label: "每月", windowMinutes: 43200,
+                           kind: .periodic, metric: .billableTokens, limit: 9_999),
+            ]),
+        ])
+        let out = PlansStore.reconcileWindows(old)
+        guard let kimi = out.plan(for: .kimi) else { return XCTFail("平台没了") }
+
+        // 模板里的窗口要出现
+        XCTAssertTrue(kimi.limits.contains { $0.id == "weekly" && $0.windowMinutes == 10080 },
+                      "模板的每周窗口没进来：\(kimi.limits.map(\.id))")
+        // 用户填的数值要保住
+        XCTAssertEqual(kimi.limits.first { $0.id == "5h" }?.limit, 500,
+                       "用户填的上限被冲掉了 —— 那是一个个从订阅页抄来的")
+        // 过时的窗口不再留着当第三个（模板里没有它，而它有值时才保留）
+        let ids = kimi.limits.map(\.id)
+        XCTAssertEqual(Set(ids).count, ids.count, "出现了重复窗口：\(ids)")
+    }
+
+    /// 用户自己加的窗口（模板里没有、但填了值）不能替他删掉。
+    func testUnknownButFilledLimitsSurvive() {
+        let old = PlansConfig(plans: [
+            PlatformPlan(platform: .kimi, planName: "Kimi", limits: [
+                QuotaLimit(id: "custom-2h", label: "两小时", windowMinutes: 120,
+                           kind: .rolling, metric: .requests, limit: 42),
+            ]),
+        ])
+        let out = PlansStore.reconcileWindows(old)
+        XCTAssertTrue(out.plan(for: .kimi)!.limits.contains { $0.id == "custom-2h" },
+                      "用户自己加的窗口被删了，那是越权")
+    }
+}

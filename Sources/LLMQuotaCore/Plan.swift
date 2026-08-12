@@ -281,7 +281,14 @@ public struct PlansConfig: Codable, Sendable {
                     fiveHour(.requests,
                              hint: "官方不公布具体数字，只说有 5 小时滚动窗口。"
                                  + "网上流传的 300–1200 次/5h 是第三方区间，不是上限。"),
-                    monthly(.billableTokens, hint: h),
+                    // **是每周不是每月。**
+                    // 官方原文：「Agent Credits 以订阅日为起点每 7 天刷新」。
+                    // 写成每月的话，作废预警会按 30 天算剩余 —— 而实际每 7 天
+                    // 就清零一次，于是「还早着呢」这个判断整整错了四倍，
+                    // 正好把这个工具最该抓的那种浪费漏掉。
+                    weekly(.billableTokens,
+                           hint: "官方是以订阅日为起点每 7 天刷新的额度，"
+                               + "各档具体数字不公布，看自己的订阅页。"),
                 ]
             ),
             // GLM 是**唯一公布了确切数字、但我们仍然填不进去**的一家。
@@ -306,9 +313,10 @@ public struct PlansConfig: Codable, Sendable {
                              hint: "官方按「积分」计：Lite 2,000/5h、Pro 12,000、Max 28,000。"
                                  + "积分按 token 折算且工作日 14–18 点 3 倍，"
                                  + "和这里的「次数」口径对不上，别直接填那个数。"),
-                    monthly(.billableTokens,
-                            hint: "官方是每 7 天刷新的周积分：Lite 10,000、Pro 60,000、Max 140,000。"
-                                + "同样是积分口径。"),
+                    // 同样是每周不是每月：官方叫「周积分」，7 天一个周期。
+                    weekly(.billableTokens,
+                           hint: "官方是每 7 天刷新的周积分：Lite 10,000、Pro 60,000、Max 140,000。"
+                               + "积分口径，和这里的 token 对不上，别直接填。"),
                 ]
             ),
             PlatformPlan(
