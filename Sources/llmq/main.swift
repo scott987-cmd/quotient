@@ -940,7 +940,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         } else {
             do {
                 ws = try GitWorkspace.prepare(
-                    repo: task.repo, taskID: task.id, platform: pick.platform)
+                    repo: task.repo, taskID: task.id, platform: pick.platform,
+                    graphID: task.graphID)
             } catch {
                 // **把真实原因带上。**
                 //
@@ -960,6 +961,14 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         // 接力说明只追加文件清单和中断原因，**不贴 diff** ——
         // 工作区就在 agent 眼前，让它自己看比塞进提示词便宜得多。
         var effectivePrompt = task.prompt + ((handoff ?? task.handoff)?.briefing() ?? "")
+        // 图内节点要知道自己在整件事里的位置。
+        //
+        // 换了平台的 agent 对前面发生了什么一无所知 —— 这正是「上下文丢失」
+        // 在图这一层的样子。而跨厂商的两个 CLI **不可能共享会话**，
+        // 能交接的只有磁盘上的产物，所以这段必须显式拼进提示词。
+        if let brief = TaskGraph.briefing(for: task, in: TaskStore.all()) {
+            effectivePrompt += "\n\n" + brief
+        }
         if let (ans, ask) = resumedAnswer {
             effectivePrompt += ans.briefing(for: ask)
         }
@@ -1258,6 +1267,16 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     OfficeLog.publish()
     try TaskStore.append(task)
     Inbox.writeResult(for: task)   // 让手机端能看到结果
+
+    // 上游被拦下之后，下游要跟着冻结。
+    //
+    // 不传的话它们会一直躺在 queued 里等一个永远不会 done 的上游 ——
+    // 就是刚修好的那个死锁换到了图这一层。挂在这里（而不是每个转 blocked
+    // 的地方）是因为路径有好几条：能力不够、人工闸门、提问超轮次。
+    for x in TaskGraph.propagateBlocked(TaskStore.all()) {
+        try? TaskStore.append(x)
+        print(Ansi.yellow("  冻结 ") + Ansi.dim("\(x.id.prefix(8))  " + (x.note ?? "")))
+    }
 
     let ok = task.state == .done
     let total = Date().timeIntervalSince(overallStart)

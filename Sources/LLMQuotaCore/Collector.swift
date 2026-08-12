@@ -316,7 +316,16 @@ struct AdapterCache: Codable {
 public enum Paths {
     public static let appName = "LLMQuotaBar"
 
+    /// 测试用：把整个数据目录挪到临时位置。产品代码里永远是 nil。
+    ///
+    /// 加这个是因为踩到了：worktree 相关的测试直接在**真实的**
+    /// Application Support 里建 worktree，和正在跑的 worker 抢同一个位置，
+    /// 于是整套测试偶发失败（一次 5 个），而单跑每一条都过。
+    /// 测试污染生产状态，最后总会变成一个查不出原因的怪问题。
+    public static var appSupportOverride: URL?
+
     public static var appSupport: URL {
+        if let appSupportOverride { return appSupportOverride }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent(appName, isDirectory: true)
     }

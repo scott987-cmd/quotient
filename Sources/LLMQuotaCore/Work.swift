@@ -912,11 +912,30 @@ public enum GitWorkspace {
         public var branch: String
     }
 
-    public static func prepare(repo: String, taskID: String, platform: Platform) throws -> Workspace {
-        let branch = "agent/\(platform.rawValue)/\(taskID)"
+    /// - Parameter graphID: 属于哪张任务图。非 nil 时**整张图共用一个
+    ///   worktree 和一个分支**。
+    ///
+    ///   为什么不能一节点一 worktree：第二步要看得见第一步改了什么，
+    ///   而这两步可能是**不同平台**干的，所以分支名里也不能带平台。
+    ///
+    ///   为什么这里必须小心：下面那句 `worktree remove --force` 原本是
+    ///   无条件执行的（清理上次异常退出的残留）。图内第二个节点跑起来时，
+    ///   那个目录里装的正是第一步的提交 —— 照原样删下去，
+    ///   前一步的产出就没了，而且不会有任何报错，
+    ///   表现为「第二步的 agent 说找不到第一步说的那些改动」。
+    public static func prepare(repo: String, taskID: String, platform: Platform,
+                               graphID: String? = nil) throws -> Workspace {
+        let key = graphID ?? taskID
+        let branch = graphID.map { "agent/graph/\($0)" }
+            ?? "agent/\(platform.rawValue)/\(taskID)"
         let root = Paths.appSupport.appendingPathComponent("worktrees", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let path = root.appendingPathComponent(taskID).path
+        let path = root.appendingPathComponent(key).path
+
+        // 图内后续节点：复用，**绝对不能删**。
+        if graphID != nil, let live = existingWorkspace(taskID: key), live.branch == branch {
+            return live
+        }
 
         // 残留就先清掉，避免上一次异常退出挡住这次。
         _ = git(["worktree", "remove", "--force", path], in: repo)
@@ -1070,7 +1089,21 @@ public enum GitWorkspace {
     /// - Parameter branch: 一并删掉的分支。失败或空跑的分支上什么都没提交，
     ///   留着只会越堆越多 —— 实测跑三次就攒了 4 个垃圾分支。
     ///   只在确认没有提交时才传，成功的分支要留给用户 review。
-    public static func cleanup(repo: String, path: String, branch: String? = nil) {
+    /// - Parameter graphFinished: 整张图都完了吗。
+    ///
+    ///   **中心防线。** 图内的节点共用一个 worktree，任何一个节点跑完就清理
+    ///   会把整张图的进度删掉 —— 而调用点有五处（零改动、失败、人工放行…），
+    ///   在每一处都记得判断是不现实的，漏一处就是静默的数据丢失。
+    ///   所以判断放在这里：分支名是 `agent/graph/*` 且没说图完了，就不动它。
+    public static func cleanup(repo: String, path: String, branch: String? = nil,
+                               graphFinished: Bool = false) {
+        let b = branch ?? existingWorkspace(taskID: URL(fileURLWithPath: path)
+            .lastPathComponent)?.branch
+        if !graphFinished, let b, b.hasPrefix("agent/graph/") {
+            FileHandle.standardError.write(Data(
+                "保留 \(b)：图还没跑完，删了会带走前面几步的提交\n".utf8))
+            return
+        }
         _ = git(["worktree", "remove", "--force", path], in: repo)
         if let branch {
             _ = git(["branch", "-D", branch], in: repo)

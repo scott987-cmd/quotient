@@ -33,6 +33,16 @@
   离散度 28.5%（阈值 15%），判为不可信、不会写入。需要更多官方百分比样本。
 - **MiniMax 的媒体能力**：`mmx` 能生图/视频/音乐/语音，调度器只把它当分诊器用。
 
+## 已知问题
+
+- **整套测试偶发失败（约 1/3 概率，1–5 条不等）。** 根因是测试和常驻的
+  `com.llmquotabar.worker` 共用真实的 `tasks.jsonl` —— worker 每 5 分钟写一次。
+  已经给做真实 worktree 操作的测试类加了 `Paths.appSupportOverride` 隔离
+  （它原来直接在真实 Application Support 里建 worktree，和 worker 抢同一个目录），
+  但共用任务库这条还没解。
+  **三次连续通过不等于稳定**，别把偶发失败当成自己刚改的东西弄坏了。
+  彻底的解法是整个测试 bundle 启动时统一重定向 Paths.appSupport。
+
 ## 已作废的条目
 
 - **Hermes profile**：那套 kanban 没用（它自带调度器会抢着执行，

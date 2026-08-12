@@ -3196,3 +3196,83 @@ final class TaskGraphTests: XCTestCase {
         XCTAssertNil(TaskGraph.briefing(for: node("a"), in: [node("a")]))
     }
 }
+
+// MARK: - 图共用 worktree 的清理防线
+
+final class GraphWorktreeTests: XCTestCase {
+
+    /// **测试必须在自己的沙箱里建 worktree。**
+    /// 不隔离的话会写进真实的 Application Support，和正在跑的 worker
+    /// 抢同一个目录 —— 整套测试偶发失败，而单跑每条都过。
+    private var sandbox: URL!
+    override func setUp() {
+        sandbox = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("gwt-as-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+    }
+    override func tearDown() {
+        Paths.appSupportOverride = nil
+        try? FileManager.default.removeItem(at: sandbox)
+    }
+
+    /// 建一个真仓库，跑一遍「两个节点接力」的完整流程。
+    private func repo() throws -> String {
+        let d = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("gwt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        for a in [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                  ["config", "user.name", "t"]] {
+            _ = GitWorkspace.git(a, in: d.path)
+        }
+        try Data("x".utf8).write(to: d.appendingPathComponent("a.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: d.path)
+        _ = GitWorkspace.git(["commit", "-qm", "init"], in: d.path)
+        return d.path
+    }
+
+    /// **第二个节点必须看得见第一个节点的提交。**
+    ///
+    /// prepare 原来无条件 `worktree remove --force`（清理上次的残留）。
+    /// 图内第二个节点跑起来时，那个目录里装的正是第一步的产出 ——
+    /// 照原样删下去前一步就没了，而且不报错，
+    /// 表现是「第二步的 agent 说找不到第一步说的那些改动」。
+    func testSecondNodeReusesTheWorktreeAndSeesTheFirstCommit() throws {
+        let r = try repo()
+        defer { try? FileManager.default.removeItem(atPath: r) }
+
+        let w1 = try GitWorkspace.prepare(repo: r, taskID: "n1", platform: .glm, graphID: "g9")
+        try Data("第一步".utf8).write(to: URL(fileURLWithPath: w1.path)
+            .appendingPathComponent("step1.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: w1.path)
+        _ = GitWorkspace.git(["commit", "-qm", "step1"], in: w1.path)
+
+        let w2 = try GitWorkspace.prepare(repo: r, taskID: "n2", platform: .kimi, graphID: "g9")
+        XCTAssertEqual(w2.path, w1.path, "同一张图必须复用同一个 worktree")
+        XCTAssertEqual(w2.branch, "agent/graph/g9", "分支名里不能带平台 —— 两步可能不同平台")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: w2.path).appendingPathComponent("step1.txt").path),
+            "第一步的产出必须还在")
+    }
+
+    /// 没有 graphID 的普通任务，行为一个字都不变。
+    func testPlainTaskKeepsPerTaskBranch() throws {
+        let r = try repo()
+        defer { try? FileManager.default.removeItem(atPath: r) }
+        let w = try GitWorkspace.prepare(repo: r, taskID: "solo", platform: .glm)
+        XCTAssertEqual(w.branch, "agent/glm/solo")
+    }
+
+    /// **cleanup 的中心防线**：图没跑完就不许删。
+    /// 调用点有五处，在每处都记得判断不现实，漏一处就是静默的数据丢失。
+    func testCleanupRefusesToRemoveAnUnfinishedGraphWorktree() throws {
+        let r = try repo()
+        defer { try? FileManager.default.removeItem(atPath: r) }
+        let w = try GitWorkspace.prepare(repo: r, taskID: "n1", platform: .glm, graphID: "g8")
+        GitWorkspace.cleanup(repo: r, path: w.path, branch: w.branch)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: w.path), "图没完，不能删")
+
+        GitWorkspace.cleanup(repo: r, path: w.path, branch: w.branch, graphFinished: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: w.path), "说了图完了才删")
+    }
+}
