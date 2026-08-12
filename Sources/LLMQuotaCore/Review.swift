@@ -59,8 +59,31 @@ public enum Review {
 
         let worktrees = Set(activeWorktreeBranches(repo: repo))
 
+        // **跑到一半的图不能进待审名单。**
+        //
+        // 图内所有节点共用一个分支，第一个节点提交完这条分支就有内容了 ——
+        // 而 `work review --auto` 只看「能不能干净合入 + 验证过不过」，
+        // 于是一个只改了函数签名、还没改调用点的半成品会被合进 main
+        //（只改定义时完全可能编译通过，verify 挡不住语义上做了一半的重构）。
+        //
+        // 更糟的是合并成功后 mergeUnverified 会 `worktree remove --force`：
+        // 如果此刻正有节点在这个目录里干活（review 和 work loop 是两个进程，
+        // 只有后者上了锁），活着的 agent 的工作目录会被直接抽走，
+        // 未提交的产出无声消失。
+        //
+        // 判据：图里还有没跑完的节点就跳过。全部终态了才允许审。
+        let unfinishedGraphs: Set<String> = Set(
+            tasks.filter {
+                $0.graphID != nil && ($0.state == .queued || $0.state == .running
+                                      || $0.state == .blocked)
+            }.compactMap { $0.graphID })
+
         var items: [Item] = []
         for b in branches where !merged.contains(b) {
+            if b.hasPrefix("agent/graph/") {
+                let gid = String(b.dropFirst("agent/graph/".count))
+                if unfinishedGraphs.contains(gid) { continue }
+            }
             guard let mb = mergeBase(repo: repo, base: base, branch: b) else { continue }
             let stat = numstat(repo: repo, from: mb, to: b)
             guard !stat.files.isEmpty else { continue }

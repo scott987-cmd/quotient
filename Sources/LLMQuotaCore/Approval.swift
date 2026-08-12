@@ -43,13 +43,43 @@ public enum Approval {
         }
 
         guard approve else {
-            GitWorkspace.cleanup(repo: t.repo, path: ws, branch: branch)
+            // **丢弃必须真的把改动抹掉，而且要检查它真被抹掉了。**
+            //
+            // 审查抓到的最严重一条：图内节点共用一个 worktree，而 cleanup
+            // 对 `agent/graph/*` 有一道「图没跑完就不删」的守卫 —— 于是这里
+            // 一个 git 命令都不执行，直接 return。而下面照样写
+            // 「已丢弃并清理工作区」。
+            //
+            // 后果不是「界面说错话」那么轻：那批碰了高危路径、**故意没提交**
+            // 留在工作区里的改动一个字都没少，下一个跑在同一目录里的兄弟节点
+            // 走 `git add -A` 会把它一起提交、经 review 合进 main ——
+            // **你的人工否决被静默翻转**，而这条路径正是高危闸门唯一的人工出口。
+            //
+            // 所以图内节点改成「就地还原」：把工作区恢复到 HEAD，
+            // 已提交的历史不动（那是前面几步的成果，不能连坐）。
+            let isGraph = branch.hasPrefix("agent/graph/")
+            var cleaned = true
+            var how = "已丢弃并清理工作区"
+            if isGraph {
+                _ = GitWorkspace.git(["checkout", "--", "."], in: ws)
+                _ = GitWorkspace.git(["clean", "-fd"], in: ws)
+                // 验证真的干净了。**说了抹掉就必须抹掉** ——
+                // 这里报一句假话，被否决的改动就会混进下一次提交。
+                let left = GitWorkspace.git(["status", "--porcelain"], in: ws)
+                    .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                cleaned = left.isEmpty
+                how = cleaned
+                    ? "已丢弃，工作区已还原（图共用工作区，保留前面几步的提交）"
+                    : "**没能完全还原**，工作区里还剩：" + left.prefix(200)
+            } else {
+                GitWorkspace.cleanup(repo: t.repo, path: ws, branch: branch)
+            }
             t.state = .failed
-            t.branch = nil
+            t.branch = isGraph ? branch : nil
             t.discardedAt = Date()
             t.discardReason = "高危改动，你选择了丢弃"
-            t.note = "碰到高危路径，你选择了丢弃"
-            return Outcome(task: t, note: "已丢弃并清理工作区")
+            t.note = how
+            return Outcome(task: t, note: how)
         }
 
         let add = GitWorkspace.git(["add", "-A"], in: ws)

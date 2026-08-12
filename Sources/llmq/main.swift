@@ -470,6 +470,41 @@ func cmdWork(_ args: [String]) throws {
             printProfile(t.profile)
         }
 
+    case "retry":
+        // **failed 必须有一条回得去的路。**
+        //
+        // 审查抓到的：全仓库没有任何地方把 .failed 推回 .queued，
+        // 而 isReady 要求上游 .done —— 一个节点失败就永久冻死它的全部下游，
+        // 唯一恢复手段是手工编辑 tasks.jsonl。
+        // 而 TaskGraph 的注释里还写着「失败允许换个平台重试」，那是句假话。
+        guard let id = rest.first else {
+            print("用法：llmq work retry <任务id> [--same-platform]"); exit(2)
+        }
+        let allT = TaskStore.all()
+        guard var t = allT.first(where: { $0.id == id || $0.id.hasSuffix(id) }) else {
+            print(Ansi.red("找不到任务 " + id)); exit(1)
+        }
+        guard t.state == .failed || t.state == .blocked else {
+            print(Ansi.red("只有失败或被拦下的任务能重试，这个是 \(t.state.rawValue)")); exit(1)
+        }
+        t.state = .queued
+        t.frozenBy = nil
+        t.endedAt = nil
+        t.runnerPID = nil
+        t.discardedAt = nil
+        t.discardReason = nil
+        // 默认清空「试过谁」，否则换平台重试第一道硬排除就把它们全挡了。
+        // 想让它在同一个平台上再试一次就加 --same-platform。
+        if !rest.contains("--same-platform") { t.triedPlatforms = [] }
+        t.note = "人工重新入队"
+        try TaskStore.append(t)
+        print(Ansi.green("已重新入队 ") + t.id)
+        // 重新入队之后要立刻对账 —— 被它冻住的下游该解冻了。
+        for x in TaskGraph.reconcile(TaskStore.all()) {
+            try? TaskStore.append(x)
+            print(Ansi.dim("  解冻 " + x.id + "  " + (x.note ?? "")))
+        }
+
     case "log":
         // 进度是自动算出来的，不靠谁记得去写 —— 任务库里本来就有全部素材。
         var repo = FileManager.default.currentDirectoryPath
@@ -776,7 +811,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|approve]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|approve|retry|log]")
         exit(2)
     }
 }
@@ -1312,9 +1347,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     // 不传的话它们会一直躺在 queued 里等一个永远不会 done 的上游 ——
     // 就是刚修好的那个死锁换到了图这一层。挂在这里（而不是每个转 blocked
     // 的地方）是因为路径有好几条：能力不够、人工闸门、提问超轮次。
-    for x in TaskGraph.propagateBlocked(TaskStore.all()) {
+    for x in TaskGraph.reconcile(TaskStore.all()) {
         try? TaskStore.append(x)
-        print(Ansi.yellow("  冻结 ") + Ansi.dim("\(x.id.prefix(8))  " + (x.note ?? "")))
+        print(Ansi.yellow("  对账 ") + Ansi.dim("\(x.id.prefix(8))  " + (x.note ?? "")))
     }
 
     let ok = task.state == .done

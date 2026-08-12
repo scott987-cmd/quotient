@@ -3553,3 +3553,186 @@ final class ReserveFractionTests: XCTestCase {
         XCTAssertEqual(back.reserveFraction, 0.2)
     }
 }
+
+// MARK: - 审查发现的问题（每条对应一个已确认缺陷）
+
+final class AuditFixTests: XCTestCase {
+
+    private func node(_ id: String, deps: [String] = [], idx: Int = 0,
+                      state: WorkTask.State = .queued, frozenBy: String? = nil) -> WorkTask {
+        var t = WorkTask(id: id, prompt: "p", repo: "/r")
+        t.graphID = "g"; t.dependsOn = deps; t.state = state
+        t.stepIndex = idx; t.stepTitle = "步骤" + id; t.frozenBy = frozenBy
+        return t
+    }
+
+    // MARK: 上游 failed 后下游必须被冻住并且可见
+
+    /// 原来只传播 blocked，上游 failed 时下游停在 queued 且 note 为空 ——
+    /// 既永远不就绪，又从任何界面看都像「还没轮到它」。
+    /// 同时储备池看见 queued > 0 就拒绝生成新活，整条流水线被堵。
+    func testFailedUpstreamFreezesDownstreamVisibly() throws {
+        let a = node("a", idx: 0, state: .failed)
+        let b = node("b", deps: ["a"], idx: 1)
+        let out = TaskGraph.reconcile([a, b])
+        // **断言完 count 之后不能直接下标取。**
+        // 数组是空的时候 out[0] 会 fatalError，而 XCTest 里一次崩溃
+        // 会带走**整个测试进程** —— 后面所有测试根本不会跑，
+        // 于是「只红了一条」看起来像别的测试没在守，实际是它们没被执行。
+        // 刚才就被这个坑骗了一次。
+        let first = try XCTUnwrap(out.first, "上游 failed 时下游必须被冻住")
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(first.state, .blocked)
+        XCTAssertEqual(first.frozenBy, "a")
+        XCTAssertTrue(first.note?.contains("失败") ?? false, "必须说清楚为什么冻着")
+    }
+
+    /// **必须能解冻。** 原来是单向门：人放行了上游，下游还冻着，
+    /// 没有任何代码会把它放回队列，整张图永久死掉。
+    func testDownstreamUnfreezesWhenUpstreamRecovers() {
+        let a = node("a", idx: 0, state: .done)
+        let b = node("b", deps: ["a"], idx: 1, state: .blocked, frozenBy: "a")
+        let out = TaskGraph.reconcile([a, b])
+        XCTAssertEqual(out.first?.state, .queued)
+        XCTAssertNil(out.first?.frozenBy)
+    }
+
+    /// **人工闸门拦下的 blocked 绝不能被解冻逻辑碰。**
+    /// 它是在等人做决定，自动放回队列等于替人放行了一个高危改动。
+    func testHumanBlockedTaskIsNeverAutoUnfrozen() {
+        var t = node("x", idx: 0, state: .blocked)
+        t.frozenBy = nil          // 不是被上游冻的，是人工闸门拦的
+        t.note = "碰到高危路径，等人确认"
+        XCTAssertTrue(TaskGraph.reconcile([t]).isEmpty, "不该动它")
+    }
+
+    /// 冻结要一路传到底，解冻也要。
+    func testFreezeAndThawAreTransitive() {
+        let a = node("a", idx: 0, state: .failed)
+        let b = node("b", deps: ["a"], idx: 1)
+        let c = node("c", deps: ["b"], idx: 2)
+        let frozen = TaskGraph.reconcile([a, b, c])
+        XCTAssertEqual(Set(frozen.map { $0.id }), ["b", "c"])
+
+        var a2 = a; a2.state = .done
+        let thawed = TaskGraph.reconcile([a2] + frozen)
+        XCTAssertEqual(Set(thawed.map { $0.id }), ["b", "c"])
+        XCTAssertTrue(thawed.allSatisfy { $0.state == .queued })
+    }
+
+    // MARK: 顺序不能靠 createdAt
+
+    /// createdAt 编码成 ISO8601 之后秒以下被抹平，
+    /// 拆解时那 1 毫秒的间隔落盘就没了，「第一步」变成随机的哪一步。
+    func testOrderSurvivesTimestampTruncation() {
+        var a = node("a", idx: 0), b = node("b", idx: 1), c = node("c", idx: 2)
+        let same = Date()
+        a.createdAt = same; b.createdAt = same; c.createdAt = same
+        XCTAssertEqual(TaskGraph.nextReady([c, b, a])?.id, "a")
+    }
+
+    func testStepIndexRoundTrips() throws {
+        var t = node("a", idx: 3)
+        t.frozenBy = "z"
+        let back = try SnapshotCoding.decoder()
+            .decode(WorkTask.self, from: SnapshotCoding.encoder().encode(t))
+        XCTAssertEqual(back.stepIndex, 3)
+        XCTAssertEqual(back.frozenBy, "z")
+    }
+
+    // MARK: 重复局部 id
+
+    /// 两个 s1 会在 idMap 里后者覆盖前者，两个节点拿到同一个真实 id，
+    /// 任务库按 id 覆盖 —— 整张图静默少一步，validate 也查不出来。
+    func testDuplicateLocalIDsVoidThePlan() {
+        let steps = TaskDecomposer.parse("""
+        {"steps":[{"id":"s1","title":"一","prompt":"p","dependsOn":[]},
+                  {"id":"s1","title":"二","prompt":"p","dependsOn":[]}]}
+        """)!
+        var t = WorkTask(id: "gid", prompt: "x", repo: "/r")
+        t.profile = TaskProfile(tier: .complex, risk: .safe, estimatedMinutes: 9,
+                                isSelfContained: true, rationale: "")
+        XCTAssertNil(TaskDecomposer.build(steps, from: t, planner: .claude, now: Date()))
+    }
+
+    // MARK: 迁移只增不减
+
+    /// **迁移不能清空 mutedOn。**
+    ///
+    /// roles.json 在 iCloud 上被两台机器共享，而还没更新的那台不认识
+    /// dispatcherOn —— 它做一次 roles --set 就会把这个字段写没。
+    /// 如果迁移当初还把 mutedOn 清了，控制面保护就此**永久消失**，
+    /// Claude 开始接活，而且没有任何东西能恢复它。
+    func testMigrationKeepsLegacyMuteAsFallback() throws {
+        let r = try SnapshotCoding.decoder().decode(AgentRole.self, from: Data("""
+        {"platform":"claude","title":"架构师","maxRisk":"sensitive",
+         "mutedOn":["甲机"],"muteReason":"这台的 Claude 是控制面"}
+        """.utf8))
+        XCTAssertEqual(r.dispatcherOn, ["甲机"], "要迁过去")
+        XCTAssertEqual(r.mutedOn, ["甲机"], "但旧字段要留着 —— 那是旧机器唯一认得的保护")
+    }
+}
+
+// MARK: - 配置与审阅的健壮性
+
+final class AuditFixTests2: XCTestCase {
+
+    /// **一条坏角色不能带走整份配置。**
+    ///
+    /// 原来整个数组一把解，任何一条解不出来就静默退回出厂默认 ——
+    /// 而出厂默认里没有 dispatcherOn，控制面 Claude 随即开始接活。
+    /// 一次手误换来一个悄悄改变调度行为的系统。
+    func testOneBadRoleDoesNotWipeTheWholeConfig() {
+        let f = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("roles-\(UUID().uuidString).json")
+        try? """
+        [{"platform":"claude","title":"架构师","maxRisk":"sensitive",
+          "dispatcherOn":["甲机"]},
+         {"platform":"这不是平台","title":"坏的","maxRisk":"normal"},
+         {"platform":"qwen","title":"开发","maxRisk":"normal","reserveFraction":0}]
+        """.write(to: f, atomically: true, encoding: .utf8)
+        AgentRoles.fileOverride = f
+        defer { AgentRoles.fileOverride = nil; try? FileManager.default.removeItem(at: f) }
+
+        XCTAssertTrue(AgentRoles.isDispatcher(.claude, machine: "甲机"),
+                      "坏的那条不该带走 claude 的指挥身份")
+        XCTAssertEqual(AgentRoles.reserve(for: .qwen, default: 0.25), 0,
+                       "坏的那条也不该带走 qwen 的留白配置")
+    }
+
+    /// **跑到一半的图不能进待审名单。**
+    ///
+    /// 图内节点共用一个分支，第一步提交完这条分支就有内容了。
+    /// 让它进 review --auto 的话，一个只改了函数签名、还没改调用点的
+    /// 半成品会被合进 main（只改定义时完全可能编译通过），
+    /// 而且合并后的 worktree remove --force 会把正在干活的 agent 的
+    /// 工作目录直接抽走。
+    func testUnfinishedGraphIsExcludedFromReview() throws {
+        let d = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("rv-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: d) }
+        for a in [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                  ["config", "user.name", "t"]] { _ = GitWorkspace.git(a, in: d.path) }
+        try Data("x".utf8).write(to: d.appendingPathComponent("a.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: d.path)
+        _ = GitWorkspace.git(["commit", "-qm", "init"], in: d.path)
+        _ = GitWorkspace.git(["checkout", "-qb", "agent/graph/gg"], in: d.path)
+        try Data("y".utf8).write(to: d.appendingPathComponent("b.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: d.path)
+        _ = GitWorkspace.git(["commit", "-qm", "step1"], in: d.path)
+        _ = GitWorkspace.git(["checkout", "-q", "main"], in: d.path)
+
+        var s1 = WorkTask(id: "ggs1", prompt: "p", repo: d.path)
+        s1.graphID = "gg"; s1.state = .done
+        var s2 = WorkTask(id: "ggs2", prompt: "p", repo: d.path)
+        s2.graphID = "gg"; s2.state = .queued        // 还没跑
+
+        XCTAssertTrue(Review.list(repo: d.path, tasks: [s1, s2]).isEmpty,
+                      "图没跑完，这条分支不该出现在待审名单里")
+
+        s2.state = .done
+        XCTAssertFalse(Review.list(repo: d.path, tasks: [s1, s2]).isEmpty,
+                       "全部跑完之后才该能审")
+    }
+}

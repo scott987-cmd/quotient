@@ -41,7 +41,13 @@ public enum TaskGraph {
     /// 静默串行化会让人以为并行在工作。
     public static func nextReady(_ all: [WorkTask]) -> WorkTask? {
         all.filter { isReady($0, in: all) }
-            .sorted { $0.createdAt < $1.createdAt }
+            // 图内按 stepIndex 排，不靠 createdAt —— 后者编码成 ISO8601
+            // 之后秒以下被抹平，同一批节点读回来时间戳完全相同，
+            // 「第一步」会变成随机的哪一步。
+            .sorted {
+                if let a = $0.stepIndex, let b = $1.stepIndex, a != b { return a < b }
+                return $0.createdAt < $1.createdAt
+            }
             .first
     }
 
@@ -108,33 +114,71 @@ public enum TaskGraph {
 
     // MARK: - 阻塞传播
 
-    /// 上游转 blocked 之后，下游要跟着冻结。
+    /// 根据上游状态，把下游该冻的冻上、该解的解开。
     ///
-    /// 不处理的话它们会一直躺在 queued 里等一个永远不会 done 的上游 ——
-    /// 那正是刚修好的那个死锁，只是换到了图这一层。
+    /// ## 为什么是「对账」而不是「传播」
     ///
-    /// **只传播 blocked，不传播 failed。** 失败允许换个平台重试，
-    /// 重试成功下游就能跑；而 blocked 是在等人，人处理完上游会重新触发，
-    /// 下游自然解冻。
-    public static func propagateBlocked(_ all: [WorkTask]) -> [WorkTask] {
+    /// 第一版只做单向传播：上游 blocked 就冻结下游。审查指出两个洞，
+    /// 而且两个都会导致**整张图永久死掉**：
+    ///
+    /// 1. **没有解冻路径。** 人在手机上放行了上游，下游还冻着 ——
+    ///    没有任何代码会把它放回队列。
+    /// 2. **上游 failed 时下游根本不被冻。** 它们停在 queued，
+    ///    而 `isReady` 要求上游 `.done`，于是永远不就绪、也永远没有 note ——
+    ///    从任何界面看都像「还没轮到它」。同时储备池看见 queued > 0
+    ///    就拒绝生成新活，「一个跑不了的任务堵死整条流水线」
+    ///    这个修过一次的故障在图这层原样复现。
+    ///
+    /// 单向传播补不出解冻，所以改成每轮重新对账：下游状态**由上游推导**，
+    /// 冻和解走同一段逻辑，不可能只实现一半。
+    ///
+    /// 判据是 `frozenBy` 而不是 `.blocked`：人工闸门拦下的 blocked 也是
+    /// blocked，但那是在等人做决定 —— 解冻逻辑碰它就等于替人放行。
+    public static func reconcile(_ all: [WorkTask]) -> [WorkTask] {
         var byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        var changed = true
         var touched: [String: WorkTask] = [:]
+        var changed = true
+
         while changed {
             changed = false
-            for t in byID.values where t.state == .queued {
-                guard let upstream = t.dependsOn.first(where: {
-                    byID[$0]?.state == .blocked
-                }), let up = byID[upstream] else { continue }
-                var x = t
-                x.state = .blocked
-                x.note = "上游 \(up.stepTitle ?? String(up.id.prefix(8))) 在等人处理"
-                byID[t.id] = x
-                touched[t.id] = x
-                changed = true
+            for t in byID.values {
+                // 谁挡着它。上游 blocked（等人）或 failed（跑挂了，且没有任何
+                // 重试路径会自动把它推回 queued）都算挡着。
+                let blocker = t.dependsOn.first {
+                    let st = byID[$0]?.state
+                    return st == .blocked || st == .failed
+                }
+
+                if t.state == .queued, let b = blocker, let up = byID[b] {
+                    var x = t
+                    x.state = .blocked
+                    x.frozenBy = b
+                    let why = up.state == .failed ? "失败了" : "在等人处理"
+                    x.note = "上游「\(up.stepTitle ?? String(up.id.suffix(2)))」\(why)，"
+                        + "这一步先冻住。上游恢复后会自动解冻。"
+                    byID[t.id] = x; touched[t.id] = x; changed = true
+                    continue
+                }
+
+                // 解冻：只解我们自己冻的（frozenBy 非空），而且挡路的已经让开。
+                if t.state == .blocked, t.frozenBy != nil, blocker == nil {
+                    var x = t
+                    x.state = .queued
+                    x.frozenBy = nil
+                    x.note = "上游恢复了，重新排队"
+                    byID[t.id] = x; touched[t.id] = x; changed = true
+                }
             }
         }
-        return touched.values.sorted { $0.createdAt < $1.createdAt }
+        return touched.values.sorted {
+            ($0.stepIndex ?? 0, $0.createdAt) < ($1.stepIndex ?? 0, $1.createdAt)
+        }
+    }
+
+    /// 旧名字，保留给已有调用点。
+    @available(*, deprecated, renamed: "reconcile")
+    public static func propagateBlocked(_ all: [WorkTask]) -> [WorkTask] {
+        reconcile(all)
     }
 
     // MARK: - 上下文

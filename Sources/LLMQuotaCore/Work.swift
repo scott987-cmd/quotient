@@ -95,6 +95,20 @@ public struct WorkTask: Codable, Sendable {
     /// 在图里的短标题。prompt 仍然是给 agent 的完整指令，这个只用于显示。
     public var stepTitle: String?
 
+    /// 在图里的序号。**顺序不能靠 createdAt。**
+    ///
+    /// 拆解时用「相差 1 毫秒」来保序，而 createdAt 编码成 ISO8601 之后
+    /// 秒以下被抹平 —— 落盘再读回来所有节点时间戳完全相同，
+    /// 「第一步」变成随机的哪一步。显式存序号才稳。
+    public var stepIndex: Int?
+
+    /// 被上游冻结时，记下是哪个上游。
+    ///
+    /// **必须和「人工闸门拦下的 blocked」分开。** 两者状态相同但含义相反：
+    /// 前者是「上游还没好，等一等」，后者是「等人做决定」。
+    /// 不分开的话，解冻逻辑会把一个**人正在审的**高危任务偷偷放回队列。
+    public var frozenBy: String?
+
     /// 哪个进程正在跑它。
     ///
     /// 存这个是为了让「回收孤儿」从猜变成确定。worker 被重启时（`llmq update`
@@ -165,6 +179,8 @@ public struct WorkTask: Codable, Sendable {
         stepTitle = try c.decodeIfPresent(String.self, forKey: .stepTitle)
         outputs = try c.decodeIfPresent([String].self, forKey: .outputs) ?? []
         runnerPID = try c.decodeIfPresent(Int32.self, forKey: .runnerPID)
+        frozenBy = try c.decodeIfPresent(String.self, forKey: .frozenBy)
+        stepIndex = try c.decodeIfPresent(Int.self, forKey: .stepIndex)
     }
 
     public var duration: TimeInterval? {

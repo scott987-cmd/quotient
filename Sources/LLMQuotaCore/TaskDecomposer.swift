@@ -90,6 +90,13 @@ public enum TaskDecomposer {
     static func build(_ steps: [Step], from task: WorkTask,
                       planner: Platform, now: Date) -> [WorkTask]? {
         guard !steps.isEmpty, steps.count <= maxSteps else { return nil }
+        // **重复的局部 id 会静默吃掉一个节点。**
+        //
+        // idMap 是字典，两个 s1 后写的覆盖先写的，两个节点于是拿到同一个
+        // 真实 id；任务库按 id 覆盖，第二个直接把第一个改写掉。
+        // 而 validate 看到的是「一个节点」，环和悬空边都查不出问题 ——
+        // 整张图少了一步，没有任何地方会报错。
+        guard Set(steps.map { $0.id }).count == steps.count else { return nil }
 
         let graphID = task.id
         var idMap: [String: String] = [:]
@@ -111,7 +118,11 @@ public enum TaskDecomposer {
                 deps.append(m)
             }
             n.dependsOn = deps
-            n.createdAt = now.addingTimeInterval(Double(i) * 0.001)   // 保序
+            // 顺序存成显式序号。**不能靠 createdAt** ——
+            // 它编码成 ISO8601 之后秒以下被抹平，落盘再读回来所有节点
+            // 时间戳完全相同，「第一步」就变成随机的哪一步了。
+            n.stepIndex = i
+            n.createdAt = now.addingTimeInterval(Double(i) * 0.001)
             n.origin = task.origin
             n.preferredPlatform = task.preferredPlatform
             nodes.append(n)

@@ -131,9 +131,18 @@ public struct AgentRole: Codable, Sendable {
         // 老配置里是 mutedOn:[机器名] + muteReason:"…是控制面…"。
         // 在这里就地转成 dispatcherOn 并摘掉那条 mute，
         // 用户不用改文件，也不会出现「既是指挥又被静音」的重影。
+        //
+        // **迁移只增不减。** 第一版顺手把 mutedOn 清空了，那会造成一个
+        // 无法恢复的故障：roles.json 存在 iCloud 上被两台机器共享，
+        // 而还没更新的那台不认识 dispatcherOn —— 它做一次 `roles --set`
+        // 就会把这个字段整个写没，而 mutedOn 又已经被清了，
+        // **控制面保护就此永久消失**，Claude 开始接活。
+        //
+        // 保留 mutedOn 则两边都安全：新代码先看 dispatcherOn（指挥判定在
+        // 静音判定之前，见 WorkScheduler.decide），旧代码看见 mute 也照样
+        // 不派活给它。一个字段两种表达，向前向后都兼容。
         if dispatcherOn.isEmpty, let why = muteReason, why.contains("控制面") {
             dispatcherOn = mutedOn
-            mutedOn = []
         }
     }
 }
@@ -219,6 +228,30 @@ public enum AgentRoles {
     public static func all() -> [Platform: AgentRole] {
         if let cached, let cachedAt, Date().timeIntervalSince(cachedAt) < 30 { return cached }
         var out = Dictionary(defaults().map { ($0.platform, $0) }, uniquingKeysWith: { a, _ in a })
+        // **逐条解码，坏的跳过。**
+        //
+        // 原来是整个数组一把解：任何一条角色解不出来（手改坏了、
+        // 新版本写了旧版本不认识的枚举值），整份配置**静默退回出厂默认** ——
+        // 而出厂默认里没有 dispatcherOn，控制面 Claude 随即开始接活。
+        // 一次手误换来一个悄悄改变调度行为的系统。
+        if let data = try? Data(contentsOf: file),
+           let rows = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+            let dec = SnapshotCoding.decoder()
+            var bad = 0
+            for row in rows {
+                guard let one = try? JSONSerialization.data(withJSONObject: row),
+                      let r = try? dec.decode(AgentRole.self, from: one) else {
+                    bad += 1; continue
+                }
+                out[r.platform] = r
+            }
+            if bad > 0 {
+                FileHandle.standardError.write(Data(
+                    "roles.json 里有 \(bad) 条解不出来，已跳过（其余照常生效）\n".utf8))
+            }
+            cached = out; cachedAt = Date()
+            return out
+        }
         if let data = try? Data(contentsOf: file),
            let saved = try? SnapshotCoding.decoder().decode([AgentRole].self, from: data) {
             // 用户配置覆盖默认，但**不删默认里有而配置里没有的** ——
