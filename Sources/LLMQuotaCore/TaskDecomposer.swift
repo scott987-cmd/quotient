@@ -40,8 +40,33 @@ public enum TaskDecomposer {
     /// 不该让它经过一次语义判断再被丢掉。
     public static func shouldDecompose(_ t: WorkTask) -> Bool {
         if GitWorkspace.mentionsRiskyPath(t.prompt) { return true }
+        // **明说了是多步的，就按多步办。**
+        //
+        // 实测漏掉的一类：一个「第一步…第二步…第三步…」写得清清楚楚的任务，
+        // 被分诊判成「常规」——理由是「指令明确、无需新设计」，
+        // 那是在判**难度**，而这个任务的特征是**步数**。
+        // 于是三步被塞进一次执行，接力、会话延续、产物传递全都用不上，
+        // 而且中间任何一步碰到高危路径都会把整包拖住。
+        if mentionsSteps(t.prompt) { return true }
         guard let p = t.profile else { return false }
+        // 估时长的也拆。一个 30 分钟的任务哪怕每一步都简单，
+        // 拆开也值得：便宜的平台干机械的部分，贵的只干难的那步。
+        if p.estimatedMinutes >= 25 { return true }
         return p.tier == .complex || p.risk == .sensitive
+    }
+
+    /// 提示词里有没有明写「分几步」。
+    ///
+    /// 只认**显式的步骤标记**，不认「然后」「接着」这类连词 ——
+    /// 后者在中文里太常见，一句「改完然后跑一下测试」也会中，
+    /// 那会把大量单步任务推去走拆解，每次白烧一遍指挥的额度。
+    static func mentionsSteps(_ prompt: String) -> Bool {
+        let markers = ["第一步", "第二步", "第三步", "第 1 步", "第 2 步",
+                       "step 1", "step 2", "Step 1", "Step 2",
+                       "1. ", "2. ", "（1）", "（2）"]
+        let hits = markers.filter { prompt.contains($0) }.count
+        // 至少两个标记才算 —— 只出现「第一步」很可能是在描述别的东西。
+        return hits >= 2
     }
 
     // MARK: - 拆

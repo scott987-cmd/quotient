@@ -4197,3 +4197,57 @@ final class WasteMeterTests: XCTestCase {
         XCTAssertFalse(s.contains("token"), "上限未知时不许把浪费说成一个 token 数")
     }
 }
+
+// MARK: - 拆解触发：多步和长任务
+
+final class DecomposeTriggerTests: XCTestCase {
+
+    private func task(_ prompt: String, tier: TaskProfile.Tier = .standard,
+                      risk: TaskProfile.Risk = .normal, minutes: Int = 5) -> WorkTask {
+        var t = WorkTask(id: "a", prompt: prompt, repo: "/r")
+        t.profile = TaskProfile(tier: tier, risk: risk, estimatedMinutes: minutes,
+                                isSelfContained: true, rationale: "")
+        return t
+    }
+
+    /// **实测漏掉的那一类。**
+    ///
+    /// 一个「第一步…第二步…第三步…」写得清清楚楚的任务被分诊判成「常规」，
+    /// 理由是「指令明确、无需新设计」—— 那是在判**难度**，
+    /// 而这个任务的特征是**步数**。三步塞进一次执行，
+    /// 接力、会话延续、产物传递全都用不上。
+    func testExplicitStepsTriggerDecomposition() {
+        XCTAssertTrue(TaskDecomposer.shouldDecompose(
+            task("第一步，加命令。第二步，补测试。第三步，改文档。")))
+    }
+
+    /// 只出现一个步骤标记不算 —— 很可能是在描述别的东西。
+    func testSingleStepMarkerIsNotEnough() {
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(
+            task("按照第一步那个方案改一下这个函数")))
+    }
+
+    /// **不认「然后」「接着」这类连词。**
+    /// 中文里太常见，一句「改完然后跑测试」也会中，
+    /// 那会把大量单步任务推去走拆解，每次白烧一遍指挥的额度。
+    func testConjunctionsDoNotTrigger() {
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(
+            task("改一下 Format.swift 然后跑一遍测试，接着提交")))
+    }
+
+    /// 估时长的也拆：哪怕每步都简单，
+    /// 拆开也能让便宜的平台干机械的部分、贵的只干难的那步。
+    func testLongTaskTriggersEvenWhenEasy() {
+        XCTAssertTrue(TaskDecomposer.shouldDecompose(
+            task("重排一遍所有文件的 import 顺序", tier: .trivial,
+                 risk: .safe, minutes: 40)))
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(
+            task("加一句注释", tier: .trivial, risk: .safe, minutes: 3)))
+    }
+
+    /// 原有的两条触发条件不能被覆盖掉。
+    func testExistingTriggersStillWork() {
+        XCTAssertTrue(TaskDecomposer.shouldDecompose(task("重构", tier: .complex)))
+        XCTAssertTrue(TaskDecomposer.shouldDecompose(task("改配置", risk: .sensitive)))
+    }
+}
