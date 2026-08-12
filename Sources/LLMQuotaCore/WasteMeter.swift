@@ -26,7 +26,7 @@ import Foundation
 /// 因为不知道 100% 是多少。
 public enum WasteMeter {
 
-    public struct Report: Codable, Sendable {
+    public struct Report: Codable, Sendable, Equatable {
         /// 窗口长度（分钟）。
         public var windowMinutes: Int
         /// 统计区间里有多少个**完整过去**的窗口。
@@ -162,5 +162,94 @@ public enum WasteMeter {
         case 43200: return "每月窗"
         default: return minutes >= 60 ? "\(minutes / 60) 小时窗" : "\(minutes) 分钟窗"
         }
+    }
+
+    // MARK: - 多机聚合入口
+
+    /// 单个平台的空窗结论。
+    ///
+    /// **刻意把「算不出来」和「算出来是空的」分成互斥的分支。**
+    /// 「没有任何用量桶」和「窗口全空」是两件完全不同的事：
+    /// 前者是这条路子测不了这个平台（比如 MiniMax 不产生本地用量日志），
+    /// 后者才是真的闲着。混进同一条路，测不了的平台就会被输出成
+    /// 「100% 空窗」—— 把没有证据当成证据表明没有，正好是
+    /// measure() 里 MiniMax 那个坑的复刻。
+    public enum Verdict: Sendable, Equatable {
+        /// 算出来了。个别 Report 的 total 仍可能是 0
+        ///（数据还不够一个完整窗口），sentence 会如实说明。
+        case measured([Report])
+        /// 探测到了平台，但所有机器的桶加在一起还是零个。
+        /// 这是「测不出来」，不是「没用过」。
+        case noBuckets
+        /// 配置里查不到这个平台的任何窗口长度（windowMinutes）。
+        case noWindowConfigured
+        /// 拿不到任何一个快照的数据保留起点。
+        case noRetentionStart
+    }
+
+    /// 一个平台的空窗结论 + 它是哪种情况。
+    public struct PlatformWaste: Sendable, Equatable {
+        public var platform: Platform
+        public var verdict: Verdict
+
+        public init(platform: Platform, verdict: Verdict) {
+            self.platform = platform
+            self.verdict = verdict
+        }
+    }
+
+    /// 把各机器的快照按平台聚合，对每个**至少一台机器探测到了**的平台
+    /// 给出空窗结论。纯函数，不读盘 —— 快照和配置都从外面传进来。
+    ///
+    /// 聚合规则：
+    /// - 桶按平台跨机器合并成一份，不是只取第一台。只收 detected 的，
+    ///   和 QuotaEngine 同一条判据。
+    /// - 窗口长度取该平台 plan.limits 里的 windowMinutes。
+    /// - 起点取**探测到该平台的快照**里最早的 retentionStart。
+    ///   往前算过头的话，采集覆盖不到的那段一律是空的，
+    ///   空窗率会虚高到接近 100%。
+    ///
+    /// 查不到窗口长度、拿不到保留起点时，分别落到对应的 Verdict，
+    /// **绝不退回默认值悄悄算一个数出来**。
+    public static func assessAll(
+        snapshots: [MachineSnapshot], config: PlansConfig, now: Date = Date()
+    ) -> [PlatformWaste] {
+        var out: [PlatformWaste] = []
+        for platform in Platform.allCases {
+            var detected = false
+            var buckets: [UsageBucket] = []
+            var retentionStarts: [Date] = []
+            for snap in snapshots {
+                guard let ps = snap.platforms.first(where: { $0.platform == platform })
+                else { continue }
+                guard ps.detected else { continue }
+                detected = true
+                buckets.append(contentsOf: ps.buckets)
+                retentionStarts.append(snap.retentionStart)
+            }
+            guard detected else { continue }
+
+            let verdict: Verdict
+            if buckets.isEmpty {
+                // 先判这个：零个桶时窗口配置再全也算不出来。
+                verdict = .noBuckets
+            } else if retentionStarts.isEmpty {
+                // detected 为真时这里实际到不了 —— 留着这条分支是为了
+                // 哪天快照结构变了（比如 retentionStart 变可选），
+                // 坏数据得到的是明说，而不是一个编造的默认起点。
+                verdict = .noRetentionStart
+            } else {
+                let windows = config.plan(for: platform)?.limits.map(\.windowMinutes) ?? []
+                if windows.isEmpty {
+                    verdict = .noWindowConfigured
+                } else {
+                    verdict = .measured(measureAll(
+                        buckets: buckets, windows: windows,
+                        since: retentionStarts.min()!, now: now))
+                }
+            }
+            out.append(PlatformWaste(platform: platform, verdict: verdict))
+        }
+        return out
     }
 }
