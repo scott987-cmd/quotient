@@ -3390,3 +3390,50 @@ final class TaskDecomposerTests: XCTestCase {
         XCTAssertEqual(TaskGraph.nextReady(n)?.stepTitle, "一")
     }
 }
+
+// MARK: - 提示词里点名的高危文件
+
+final class MentionsRiskyPathTests: XCTestCase {
+
+    /// **实测踩到的那条。**
+    ///
+    /// 分诊器把「补注释 + 在 build-app.sh 末尾加一行」判成低危 ——
+    /// 理由是「不涉及业务逻辑或构建行为变更」，这理由本身没错。
+    /// 但落地时的高危闸看的是**实际改到的文件**，build-app.sh 照样被拦，
+    /// 于是整个任务因为一行注释全盘转人工。
+    /// 提示词里已经写明文件名，那是确定性信息，不该再经过一次语义判断。
+    func testShellScriptInPromptIsDetected() {
+        XCTAssertTrue(GitWorkspace.mentionsRiskyPath(
+            "给 TaskGraph.swift 补文件头注释，同时在 build-app.sh 末尾加一行注释"))
+    }
+
+    func testOtherRiskyPathsAreDetected() {
+        XCTAssertTrue(GitWorkspace.mentionsRiskyPath("把 Package.swift 的版本抬一档"))
+        XCTAssertTrue(GitWorkspace.mentionsRiskyPath("改一下 .github/workflows/ci.yml"))
+        XCTAssertTrue(GitWorkspace.mentionsRiskyPath("动 Tools/gen.py"))
+    }
+
+    /// **不能宁可错杀。** 普通任务被误判成高危会走一遍多余的拆解，
+    /// 每次都白烧一次指挥的额度，而且拆出来的图更容易出错。
+    func testOrdinaryPromptsAreNotFlagged() {
+        XCTAssertFalse(GitWorkspace.mentionsRiskyPath("给 Format.swift 加一句注释"))
+        XCTAssertFalse(GitWorkspace.mentionsRiskyPath("修一下 README.md 的错别字"))
+        XCTAssertFalse(GitWorkspace.mentionsRiskyPath("重构调度器，让它支持多机"))
+        XCTAssertFalse(GitWorkspace.mentionsRiskyPath("把结果 push 到分支"))
+    }
+
+    /// 中文标点紧贴文件名是最常见的写法，不能因为断词失败就漏掉。
+    func testChinesePunctuationDoesNotHideTheFilename() {
+        XCTAssertTrue(GitWorkspace.mentionsRiskyPath("请修改「build-app.sh」，加一行注释"))
+        XCTAssertTrue(GitWorkspace.mentionsRiskyPath("改 deploy.sh。然后跑一遍"))
+    }
+
+    /// 触发条件要真的把它接上 —— 否则上面那些判断只是摆设。
+    func testDecomposerTriggersOnRiskyPathEvenWhenClassifierSaysSafe() {
+        var t = WorkTask(id: "x", prompt: "在 build-app.sh 末尾加一行注释", repo: "/r")
+        t.profile = TaskProfile(tier: .trivial, risk: .safe, estimatedMinutes: 1,
+                                isSelfContained: true, rationale: "只是注释")
+        XCTAssertTrue(TaskDecomposer.shouldDecompose(t),
+                      "分诊说低危，但文件名摆在那儿 —— 必须拆")
+    }
+}

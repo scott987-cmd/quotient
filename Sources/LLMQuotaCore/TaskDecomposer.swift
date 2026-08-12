@@ -30,7 +30,16 @@ public enum TaskDecomposer {
     public static var timeout: TimeInterval = 180
 
     /// 这个任务该不该拆。
+    ///
+    /// 三个触发条件，第三个是实测补上的：分诊器把
+    /// 「补注释 + 在 build-app.sh 末尾加一行」判成低危（理由是不改构建行为，
+    /// 本身没错），于是不拆；但落地时的高危闸看的是**实际改到的文件**，
+    /// build-app.sh 照样被拦，整个任务因为一行注释全盘转人工。
+    ///
+    /// 提示词里已经写明了文件名 —— 那是确定性信息，
+    /// 不该让它经过一次语义判断再被丢掉。
     public static func shouldDecompose(_ t: WorkTask) -> Bool {
+        if GitWorkspace.mentionsRiskyPath(t.prompt) { return true }
         guard let p = t.profile else { return false }
         return p.tier == .complex || p.risk == .sensitive
     }

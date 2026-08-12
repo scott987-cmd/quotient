@@ -1005,6 +1005,35 @@ public enum GitWorkspace {
     }
 
     /// 单条路径算不算高危。
+    /// 提示词里有没有点名一个高危文件。
+    ///
+    /// ## 为什么不能只信分诊器的风险判断
+    ///
+    /// 实测：「给 TaskGraph.swift 补文件头注释，同时在 build-app.sh 末尾
+    /// 加一行注释」被分诊器判成**低危** —— 理由是「不涉及业务逻辑或
+    /// 构建行为变更」。这个理由本身没错，但落地时的高危闸看的是
+    /// **实际改到的文件**，`build-app.sh` 照样被拦下，
+    /// 于是整个任务因为一行注释全盘转人工。
+    ///
+    /// 而提示词里已经把文件名写出来了 —— 那是确定性信息，
+    /// 不该让它经过一次语义判断再丢掉。有确定信息时就别去猜。
+    public static func mentionsRiskyPath(_ prompt: String) -> Bool {
+        let seps = CharacterSet(charactersIn: " \t\n\r，。、；：（）()「」『』\"'`《》")
+        // **只削尾部的标点，别削开头。**
+        // 两头都削的话 `.github/workflows/ci.yml` 会被削成
+        // `github/...`，前缀匹配 `.github/` 立刻失效 —— 而点开头的
+        // 正是最该护住的那批（.github/、.gitlab-ci.yml…）。
+        let trailing = CharacterSet(charactersIn: ".,;:!?")
+        return prompt.components(separatedBy: seps).contains { tok in
+            var t = Substring(tok)
+            while let last = t.unicodeScalars.last, trailing.contains(last) {
+                t = t.dropLast()
+            }
+            guard t.contains(".") || t.contains("/") else { return false }
+            return isRiskyPath(String(t))
+        }
+    }
+
     static func isRiskyPath(_ path: String) -> Bool {
         let name = (path as NSString).lastPathComponent
         if name.hasSuffix(".pbxproj") || name == "Package.swift" { return true }
