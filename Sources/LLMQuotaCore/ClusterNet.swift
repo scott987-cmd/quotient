@@ -375,6 +375,20 @@ public enum ClusterNet {
             //
             // 禁掉之后拿不到就立刻返回 errSecInteractionNotAllowed，
             // 下面那段会把它翻译成一句能照着做的话。
+            //
+            // ## 光有 kSecUseAuthenticationUI 不够
+            //
+            // 那个键**只在数据保护钥匙串那条路上被认**。而通用密码落在老式的
+            // 文件钥匙串里，走的是 `SecItemCopyMatching_osx` →
+            // `SecKeychainItemCopyContent`，它完全不看这个键 —— 于是照样挂死。
+            //
+            // 这个坑第二次踩：上面那段注释信誓旦旦说「禁掉之后立刻返回」，
+            // 而实际采样到的栈还是停在 SecKeychainItemCopyContent，一挂五分钟。
+            // 老式路径要用 `SecKeychainSetUserInteractionAllowed(false)`
+            // 才关得掉，它是**进程级**开关，所以放在读之前。
+            //
+            // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+            SecKeychainSetUserInteractionAllowed(false)
             let q: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
@@ -397,14 +411,65 @@ public enum ClusterNet {
             switch s {
             case errSecItemNotFound:
                 throw ClusterCA.err("钥匙串里没有 \(node) 的口令，先跑 llmq cluster import")
-            case errSecInteractionNotAllowed:
+            case errSecInteractionNotAllowed, errSecAuthFailed:
+                // 换了二进制就读不到了。**这台机器要是握着 CA，就别求人。**
+                if let pw = try? reissueSelf(node: node) { return pw }
                 throw ClusterCA.err(
-                    "钥匙串不让后台进程读 \(node) 的口令（-25308）—— "
-                    + "多半是 llmq update 换了二进制、签名对不上了。"
-                    + "在终端里跑一次 llmq cluster fix-keychain 就好，以后不再需要")
+                    "钥匙串不让这个二进制读 \(node) 的口令（OSStatus \(s)）—— "
+                    + "llmq 更新过，条目还绑在旧二进制上，而这台机器没有 CA 私钥、"
+                    + "没法自己重签。在另一台机器上跑 llmq cluster enroll \(node)，"
+                    + "把 p12 和口令分开传过来，再 llmq cluster import")
             default:
                 throw ClusterCA.err("读钥匙串失败（OSStatus \(s)），节点 \(node)")
             }
+        }
+
+        /// 只读，不自愈。给「换二进制之前先把口令捞出来」用。
+        ///
+        /// `load` 会在读不到时重签身份，那在更新流程里正好是反效果：
+        /// 我们要的是把**现有**口令原样搬过去。
+        public static func rawLoad(node: String) -> String? {
+            SecKeychainSetUserInteractionAllowed(false)
+            let q: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: node,
+                kSecReturnData as String: true,
+            ]
+            var out: CFTypeRef?
+            guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+                  let d = out as? Data else { return nil }
+            return String(decoding: d, as: UTF8.self)
+        }
+
+        /// 拿盘上的 CA 给自己重签一张身份，配一个新口令存回钥匙串。
+        ///
+        /// ## 为什么要有这条路
+        ///
+        /// 钥匙串条目的 ACL 绑在**创建它的那个二进制**上，而这个项目是
+        /// 自动更新的 —— 每发一版就换一次二进制，于是每发一版就读不到一次。
+        /// 实测在 macOS 26 上无解：放宽 ACL（`SecACLSetContents` 传 nil 应用
+        /// 列表）换二进制后照样 errSecAuthFailed；数据保护钥匙串写入直接
+        /// -34018 缺 entitlement，未签名的 CLI 用不了。
+        ///
+        /// 但**口令本来就是我们自己生成的**，而 CA 私钥就在旁边的
+        /// `ca.key`（0600）。读不到就重发一张，比让人去点弹窗干净得多。
+        ///
+        /// 顺带说明一件事：既然 `ca.key` 明文躺在 p12 旁边，
+        /// 「口令进钥匙串防的是 Application Support 备份泄露」这个说法
+        /// 其实已经被它自己抵消了 —— 拿到 CA 私钥的人能给任何节点签证书，
+        /// 比拿到一张 p12 强得多。见 SECURITY.md。
+        static func reissueSelf(node: String) throws -> String {
+            guard ClusterCA.hasPrivateCA else {
+                throw ClusterCA.err("没有 CA 私钥，重签不了")
+            }
+            let pw = ClusterCA.randomPassword()
+            _ = try ClusterCA.issue(node: node, password: pw)
+            try? delete(node: node)
+            try save(pw, node: node)
+            FileHandle.standardError.write(Data(
+                "钥匙串条目绑在旧二进制上，已用本机 CA 自动重签 \(node) 的身份\n".utf8))
+            return pw
         }
 
         /// 删掉一条。测试用来清理一次性条目。

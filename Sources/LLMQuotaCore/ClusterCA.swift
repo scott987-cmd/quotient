@@ -27,6 +27,24 @@ public enum ClusterCA {
         FileManager.default.fileExists(atPath: caCert.path)
     }
 
+    /// 这台机器握着 CA 私钥吗 —— 也就是能不能自己签发新身份。
+    ///
+    /// `exists` 只看证书，而 `import` 过来的机器也有 ca.crt（用来验对端）。
+    /// 两者混用的话，从机会以为自己能重签，然后在 openssl 那一步才失败。
+    public static var hasPrivateCA: Bool {
+        FileManager.default.fileExists(atPath: caKey.path)
+    }
+
+    /// 随机口令。给 p12 用，不需要人记，所以直接取满熵。
+    public static func randomPassword(bytes: Int = 24) -> String {
+        var b = [UInt8](repeating: 0, count: bytes)
+        if SecRandomCopyBytes(kSecRandomDefault, bytes, &b) != errSecSuccess {
+            // 拿不到系统随机数就别硬编一个弱的顶上 —— 那是把「安全」写成谎话。
+            b = (0..<bytes).map { _ in UInt8.random(in: .min ... .max) }
+        }
+        return Data(b).base64EncodedString()
+    }
+
     /// 建一个只给这个集群用的根 CA。
     ///
     /// 用 openssl 而不是 Security.framework 生成：命令行产物是标准 PEM，

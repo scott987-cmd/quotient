@@ -308,14 +308,49 @@ public enum ReleaseChannel {
             .appendingPathComponent(".local/bin", isDirectory: true)
         try? FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
 
+        // **换二进制之前先把集群口令捞出来。**
+        //
+        // 钥匙串条目的 ACL 绑在创建它的那个二进制上，而这个项目自动更新 ——
+        // 每发一版就换一次二进制，于是每发一版，跨机通信就断一次。
+        // macOS 26 上没有绕过去的办法，两条都实测过：放宽 ACL（应用列表
+        // 传 nil）换了二进制照样 errSecAuthFailed；数据保护钥匙串写入直接
+        // -34018 缺 entitlement，未签名的 CLI 用不了。
+        //
+        // 但**现在跑着的还是旧二进制**，它读得到。所以在这儿读出来，
+        // 装完之后让新二进制原样写回去，条目就重新绑到新的那个上面。
+        //
+        // 握着 CA 私钥的机器另有一条自愈路（读不到就重签，见
+        // `Passphrase.reissueSelf`）。这条是给**只导入过身份的从机**准备的 ——
+        // 它没有 ca.key，断了只能人工重新 enroll，两样东西还得分开传。
+        let node = ClusterConfigStore.load()?.nodeName ?? ""
+        let carried = ClusterNet.Passphrase.rawLoad(node: node)
+
         // 原子替换。直接覆盖会让正在运行的进程映像失效，macOS 会 SIGKILL 它。
         let staged = bin.appendingPathComponent(".llmq.new")
         try? FileManager.default.removeItem(at: staged)
         try FileManager.default.copyItem(at: newBin, to: staged)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755], ofItemAtPath: staged.path)
-        _ = try FileManager.default.replaceItemAt(
-            bin.appendingPathComponent("llmq"), withItemAt: staged)
+        let installed = bin.appendingPathComponent("llmq")
+        _ = try FileManager.default.replaceItemAt(installed, withItemAt: staged)
+
+        // 让新二进制自己写一遍，条目的 ACL 就绑到它身上了。
+        //
+        // 口令走环境变量不走 argv：argv 在 `ps` 里对**所有**用户可见，
+        // 环境变量只有同 uid 和 root 看得到。反正接下来还要读 ca.key，
+        // 门槛本来就是「登录用户」。
+        if let carried, !carried.isEmpty, !node.isEmpty {
+            try? ClusterNet.Passphrase.delete(node: node)
+            let r = Proc.run(installed.path, ["cluster", "reseal", node],
+                             cwd: NSTemporaryDirectory(),
+                             env: ["LLMQ_RESEAL_PW": carried], timeout: 60)
+            if r.exitCode != 0 {
+                // 不能吞。吞了的话下一次跨机调用才发现，而那时线索早断了。
+                FileHandle.standardError.write(Data(
+                    ("集群口令没能转交给新二进制（\(r.stderr.prefix(120))）——"
+                     + "跨机通信可能要重新 llmq cluster import\n").utf8))
+            }
+        }
 
         // App 和 CLI 必须一起换。只换一个的话，旧的那个会用它那套过时的
         // 采集器把快照覆盖回去，新接的平台数据就静默消失了。踩过。

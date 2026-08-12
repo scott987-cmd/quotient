@@ -2109,6 +2109,19 @@ func cmdCluster(_ rest: [String]) throws {
         if restartClusterServe() { print(Ansi.dim("已重启 cluster serve")) }
         ClusterPresenceStore.publish()
 
+    // llmq cluster reseal <节点> —— 口令从环境变量读，重新写进钥匙串
+    //
+    // 只在 `ReleaseChannel.install` 里被调用，用来把口令从旧二进制交接给新的：
+    // 条目的 ACL 绑创建者，必须由**新二进制自己**写这一次。
+    // 口令走环境变量不走 argv —— argv 在 ps 里对所有用户可见。
+    case "reseal":
+        guard let n = rest.first, let pw = ProcessInfo.processInfo
+            .environment["LLMQ_RESEAL_PW"], !pw.isEmpty else {
+            print("用法：LLMQ_RESEAL_PW=… llmq cluster reseal <节点>"); exit(2)
+        }
+        try? ClusterNet.Passphrase.delete(node: n)
+        try ClusterNet.Passphrase.save(pw, node: n)
+
     // llmq cluster fix-keychain —— 放宽口令条目的访问控制
     //
     // 必须在终端里交互跑：读那一步可能弹一次窗，点「允许」即可。
@@ -2116,7 +2129,15 @@ func cmdCluster(_ rest: [String]) throws {
         let cfg = loadConfig()
         do {
             try ClusterNet.Passphrase.relax(node: cfg.nodeName)
-            print(Ansi.green("好了 ") + Ansi.dim("—— 以后 llmq update 换了二进制也不会再断"))
+            // **别再承诺「以后不会再断」。**
+            //
+            // 原来这里就是这么写的，而实测在 macOS 26 上放宽根本不管用：
+            // 应用列表传 nil 的 SecAccess，换个二进制读照样 errSecAuthFailed。
+            // 真正管用的是更新时的交接（install 里的 reseal）和
+            // 握有 CA 时的自动重签。这条命令如今只是「重存一遍」。
+            print(Ansi.green("重存好了 ")
+                  + Ansi.dim("—— 注意放宽 ACL 在 macOS 15+ 上并不生效，"
+                             + "真正兜底的是 llmq update 时的口令交接"))
             if restartClusterServe() { print(Ansi.dim("已重启 cluster serve")) }
         } catch {
             print(Ansi.red("\(error.localizedDescription)"))

@@ -2653,3 +2653,36 @@ final class ProgressLogTests: XCTestCase {
         XCTAssertTrue(out.contains("说明待补"))
     }
 }
+
+// MARK: - 钥匙串跨版本存活
+
+final class ClusterKeychainTests: XCTestCase {
+
+    /// **只有 ca.crt 不等于能签发。**
+    ///
+    /// `exists` 看的是证书，而 import 过来的从机也有 ca.crt（用来验对端）。
+    /// 拿它当「能不能自己重签」的判据，从机会以为自己能修，
+    /// 然后在 openssl 那一步才失败 —— 那时错误信息已经和真正的原因隔了两层。
+    func testHasPrivateCADistinguishesCertOnlyMachines() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ca-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp); ClusterCA.dirOverride = nil }
+        ClusterCA.dirOverride = tmp
+
+        try Data("cert".utf8).write(to: tmp.appendingPathComponent("ca.crt"))
+        XCTAssertTrue(ClusterCA.exists, "有证书就算「配过集群」")
+        XCTAssertFalse(ClusterCA.hasPrivateCA, "只有证书不该被当成能签发")
+
+        try Data("key".utf8).write(to: tmp.appendingPathComponent("ca.key"))
+        XCTAssertTrue(ClusterCA.hasPrivateCA)
+    }
+
+    /// 口令是给 p12 用的，没人需要记，所以要足够长且每次都不一样。
+    func testRandomPasswordIsLongAndUnique() {
+        let a = ClusterCA.randomPassword(), b = ClusterCA.randomPassword()
+        XCTAssertNotEqual(a, b)
+        XCTAssertGreaterThanOrEqual(a.count, 30)
+        XCTAssertNotNil(Data(base64Encoded: a), "要能被 openssl 当普通口令用")
+    }
+}
