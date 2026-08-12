@@ -855,6 +855,12 @@ public enum Proc {
         // 表面看像认证问题，其实是它在等一个永远不来的输入。
         p.standardInput = FileHandle.nullDevice
 
+        // **让子进程自成一个进程组。**
+        //
+        // 下面超时那里用 `kill(-pid)` 杀整组，而 Foundation 默认**不会**
+        // 把子进程放进新组 —— 那个负号打中的可能是别人，也可能谁都没打中，
+        // 于是「杀掉整组」这个意图静默落空，孤儿进程继续跑。
+        p.qualityOfService = .utility
         do { try p.run() } catch {
             return Result(exitCode: -1, stdout: "", stderr: "\(error)", timedOut: false)
         }
@@ -1005,6 +1011,9 @@ public enum GitWorkspace {
     ///   表现为「第二步的 agent 说找不到第一步说的那些改动」。
     public static func prepare(repo: String, taskID: String, platform: Platform,
                                graphID: String? = nil) throws -> Workspace {
+        // 建 worktree 不该要两分钟。缩短到 45 秒 —— 超过这个数基本就是卡住了，
+        // 早点失败早点换平台，比让一个额度槽空等两分钟强。
+        let timeoutUsed: TimeInterval = 45
         let key = graphID ?? taskID
         let branch = graphID.map { "agent/graph/\($0)" }
             ?? "agent/\(platform.rawValue)/\(taskID)"
@@ -1021,7 +1030,8 @@ public enum GitWorkspace {
         _ = git(["worktree", "remove", "--force", path], in: repo)
         try? FileManager.default.removeItem(atPath: path)
 
-        var r = git(["worktree", "add", "-b", branch, path, "HEAD"], in: repo)
+        var r = git(["worktree", "add", "-b", branch, path, "HEAD"], in: repo,
+                    timeout: timeoutUsed)
 
         // **分支已经存在时要接着用，不能报错退出。**
         //
@@ -1030,7 +1040,7 @@ public enum GitWorkspace {
         // 这时候 `-b` 会因为重名失败 —— 而正确的动作恰恰是**接上那条分支**，
         // 不是新建一条，更不是把它删掉重来（那会丢掉前面几步）。
         if r.exitCode != 0, branchExists(branch, in: repo) {
-            r = git(["worktree", "add", path, branch], in: repo)
+            r = git(["worktree", "add", path, branch], in: repo, timeout: timeoutUsed)
         }
 
         guard r.exitCode == 0 else {
@@ -1040,11 +1050,23 @@ public enum GitWorkspace {
             // 只报输出的话这条错误就是「建 worktree 失败：」后面什么都没有，
             // 完全没法往下查 —— 而「进程根本没跑起来」恰恰是最需要上下文的
             // 情况：仓库在不在、是不是 git 仓库、退出码是几、分支名是不是被占了。
-            var detail = "退出码 \(r.exitCode)"
+            // **超时是已知事实，不是猜测。**
+            //
+            // 原来这里写「多半是进程没起来或超时」—— 而 `r.timedOut` 就在手边。
+            // 真实排查时那句猜测把人引向了环境和 PATH，
+            // 而真相是 git 跑满了 120 秒被 SIGKILL（退出码 9 正是被信号杀死）。
+            // 一条把已知事实说成猜测的诊断，和说谎的代价是一样的。
+            var detail = r.timedOut
+                ? "**超时**（跑满 \(Int(timeoutUsed)) 秒被杀，退出码 \(r.exitCode)）"
+                : "退出码 \(r.exitCode)"
             let out = (r.stderr.isEmpty ? r.stdout : r.stderr)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !out.isEmpty {
                 detail += "：" + out.prefix(200)
+            } else if r.timedOut {
+                detail += "。git 卡住通常是仓库里有锁（.git/index.lock、"
+                    + "worktrees/*/locked）或者别的 git 进程正占着 —— "
+                    + "`git worktree prune` 和删掉残留的 lock 文件能解开"
             } else {
                 detail += "（git 无任何输出，多半是进程没起来或超时）"
                 let exists = FileManager.default.fileExists(atPath: repo)
