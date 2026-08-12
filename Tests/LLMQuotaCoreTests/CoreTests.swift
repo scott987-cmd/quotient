@@ -3044,7 +3044,16 @@ final class DispatcherRoleTests: XCTestCase {
             "mutedOn":["甲机"],"muteReason":"这台的 Claude 是控制面"}
             """.utf8))
         XCTAssertEqual(r.dispatcherOn, ["甲机"], "控制面该迁到 dispatcherOn")
-        XCTAssertTrue(r.mutedOn.isEmpty, "迁移之后不能还留着 mute，否则一个角色两种身份")
+        // **原来这里断言 mutedOn 必须被清空，那是错的。**
+        //
+        // roles.json 在 iCloud 上被两台机器共享，而还没更新的那台不认识
+        // dispatcherOn —— 它做一次 `roles --set` 就把这个字段整个写没。
+        // 如果迁移当初还清空了 mutedOn，控制面保护就此**永久消失**，
+        // 而且没有任何东西能恢复它。
+        //
+        // 所以迁移只增不减：新代码看 dispatcherOn（判定在静音之前），
+        // 旧代码看见 mute 也照样不派活给它。一个事实两种表达。
+        XCTAssertEqual(r.mutedOn, ["甲机"], "旧字段要留着 —— 那是旧机器唯一认得的保护")
         _ = json
     }
 
@@ -3163,12 +3172,22 @@ final class TaskGraphTests: XCTestCase {
         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
     }
 
-    /// **失败不传播。** 失败允许换个平台重试，重试成功下游就能跑；
-    /// 一挂就整图转人工，会让一次网络抖动变成一次人工介入。
-    func testFailedDoesNotPropagate() {
+    /// **上游 failed 时下游必须被冻住 —— 这条断言原来是反的。**
+    ///
+    /// 原来写的是「失败不传播」，理由是「失败允许换个平台重试，
+    /// 重试成功下游就能跑」。审查证明那条重试路径**在代码里根本不存在**：
+    /// 全仓库没有任何地方把 .failed 推回 .queued。
+    /// 于是下游永远躺在 queued、没有 note、从任何界面看都像「还没轮到它」，
+    /// 同时把储备池的生成闸门长期压住。
+    ///
+    /// 一条写着自信理由的错误断言，比没有断言更危险 —— 它让人相信
+    /// 这个方向已经被想过了。
+    func testFailedUpstreamMustFreezeDownstream() {
         let a = node("a", state: .failed), b = node("b", deps: ["a"])
-        XCTAssertTrue(TaskGraph.propagateBlocked([a, b]).isEmpty)
-        XCTAssertFalse(TaskGraph.isReady(b, in: [a, b]), "但也不该就绪")
+        let out = TaskGraph.reconcile([a, b])
+        XCTAssertEqual(out.first?.id, "b")
+        XCTAssertEqual(out.first?.state, .blocked)
+        XCTAssertFalse(TaskGraph.isReady(b, in: [a, b]))
     }
 
     /// 前情提要要带上**产物路径** —— 这是跨厂商协作唯一能交接的东西。
