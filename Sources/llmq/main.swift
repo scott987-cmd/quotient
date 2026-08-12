@@ -1401,14 +1401,32 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                     break
                 }
 
-                let c = GitWorkspace.commit(
-                    in: ws.path,
-                    message: "agent(\(pick.platform.rawValue)): \(task.prompt.prefix(60))")
+                // **agent 可能已经自己提交过了。**
+                //
+                // 实测 Qwen 跑完会自己 `git commit`（还自己跑了 build 和 test）。
+                // 那时候工作区是干净的，我们再 commit 一次必然失败
+                // 「nothing to commit」—— 而原来的代码把它判成「提交失败」，
+                // 于是一个**完整且已提交**的产出被标成失败，
+                // 下一轮还会换个平台重做一遍。
+                let alreadyCommitted = GitWorkspace.commitsAhead(in: ws.path)
+                let stillDirty = GitWorkspace.git(["status", "--porcelain"], in: ws.path)
+                    .stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+
+                // 工作区干净就不再提交 —— 用 `git status` 当空操作，
+                // 它的退出码是 0，正好当成「这一步没问题」。
+                let c = stillDirty
+                    ? GitWorkspace.commit(
+                        in: ws.path,
+                        message: "agent(\(pick.platform.rawValue)): \(task.prompt.prefix(60))")
+                    : GitWorkspace.git(["status", "--porcelain"], in: ws.path)
+
                 if c.exitCode == 0 {
                     task.state = .done
                     task.note = "改了 \(changed) 个文件"
                         + (v.ran ? "，\(v.summary)" : "")
                         + "，已提交到 \(ws.branch)"
+                        + (!stillDirty && alreadyCommitted > 0
+                           ? "（\(alreadyCommitted) 个提交是 agent 自己打的）" : "")
                     if let h = handoff {
                         task.note! += "（接手 \(h.fromPlatform.displayName) 的进度完成）"
                     }

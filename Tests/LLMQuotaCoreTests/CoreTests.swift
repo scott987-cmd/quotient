@@ -4334,3 +4334,87 @@ final class BranchReuseTests: XCTestCase {
             "接上分支之后，前面几步的提交必须还在")
     }
 }
+
+// MARK: - agent 自己提交时的改动计数
+
+final class ChangedFileCountTests: XCTestCase {
+
+    private func repo() throws -> (String, String) {
+        let d = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cfc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        for a in [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                  ["config", "user.name", "t"]] { _ = GitWorkspace.git(a, in: d.path) }
+        try Data("x".utf8).write(to: d.appendingPathComponent("a.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: d.path)
+        _ = GitWorkspace.git(["commit", "-qm", "init"], in: d.path)
+        _ = GitWorkspace.git(["checkout", "-qb", "work"], in: d.path)
+        return (d.path, d.path)
+    }
+
+    /// **agent 自己提交了，也必须算改动。**
+    ///
+    /// 实测：Qwen 跑了 587 秒、自己 commit 了 2 个文件 +137 行，
+    /// 而我们数出 0 —— 因为只看 `git status`，而它已经干净了。
+    /// 后果不只是记录难看：普通任务走「0 改动」那条分支会调 cleanup，
+    /// **把 worktree 和分支一起删掉**，那 587 秒的成果静默销毁，
+    /// 任务状态还是 done。
+    func testCommittedWorkCounts() throws {
+        let (dir, _) = try repo()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        try Data("新".utf8).write(to: URL(fileURLWithPath: dir)
+            .appendingPathComponent("b.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: dir)
+        _ = GitWorkspace.git(["commit", "-qm", "agent 自己提交的"], in: dir)
+
+        XCTAssertEqual(GitWorkspace.changedFileCount(in: dir), 1,
+                       "已提交的改动必须算数")
+        XCTAssertEqual(GitWorkspace.commitsAhead(in: dir), 1)
+    }
+
+    /// 没提交的照样算 —— 原来的行为不能丢。
+    func testUncommittedWorkStillCounts() throws {
+        let (dir, _) = try repo()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        try Data("脏".utf8).write(to: URL(fileURLWithPath: dir)
+            .appendingPathComponent("c.txt"))
+        XCTAssertEqual(GitWorkspace.changedFileCount(in: dir), 1)
+    }
+
+    /// 同一个文件既提交过又还有未提交的改动，只能算一次。
+    func testSameFileCountedOnce() throws {
+        let (dir, _) = try repo()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let f = URL(fileURLWithPath: dir).appendingPathComponent("d.txt")
+        try Data("一".utf8).write(to: f)
+        _ = GitWorkspace.git(["add", "-A"], in: dir)
+        _ = GitWorkspace.git(["commit", "-qm", "第一版"], in: dir)
+        try Data("二".utf8).write(to: f)          // 又改了，没提交
+        XCTAssertEqual(GitWorkspace.changedFileCount(in: dir), 1, "同一个文件不能数两次")
+    }
+
+    /// **真的什么都没干时必须还是 0。**
+    /// 这条决定了「跑完了但没产生改动」这个判断还准不准 ——
+    /// 放宽过头的话，每个任务都会被当成有产出，脏 worktree 越积越多。
+    func testGenuinelyNoChangesIsStillZero() throws {
+        let (dir, _) = try repo()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        XCTAssertEqual(GitWorkspace.changedFileCount(in: dir), 0)
+        XCTAssertEqual(GitWorkspace.commitsAhead(in: dir), 0)
+    }
+
+    /// base 上有别人的新提交时，不能把那些算进这次的改动。
+    func testBaseAdvancesDoNotCountAsOurChanges() throws {
+        let (dir, _) = try repo()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        _ = GitWorkspace.git(["checkout", "-q", "main"], in: dir)
+        try Data("别人的".utf8).write(to: URL(fileURLWithPath: dir)
+            .appendingPathComponent("other.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: dir)
+        _ = GitWorkspace.git(["commit", "-qm", "main 上的新提交"], in: dir)
+        _ = GitWorkspace.git(["checkout", "-q", "work"], in: dir)
+
+        XCTAssertEqual(GitWorkspace.changedFileCount(in: dir), 0,
+                       "三点比较：只算我们这条分支自己的改动")
+    }
+}

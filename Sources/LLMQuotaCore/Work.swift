@@ -1081,9 +1081,47 @@ public enum GitWorkspace {
         return Workspace(path: path, branch: branch)
     }
 
-    public static func changedFileCount(in dir: String) -> Int {
-        let r = git(["status", "--porcelain"], in: dir)
-        return r.stdout.split(separator: "\n").filter { !$0.isEmpty }.count
+    /// 这次干活到底改了多少文件。
+    ///
+    /// ## 为什么不能只看 `git status`
+    ///
+    /// **agent 会自己提交。** 实测：Qwen 跑了 587 秒，自己 `git commit` 了
+    /// 2 个文件 +137 行，还跑了 `swift build` 和 279 个测试 ——
+    /// 而我们数出来是 **0 个文件**，记成「跑完了但没有产生任何改动」。
+    ///
+    /// 后果不只是记录难看：普通任务走 `changed == 0` 那条分支会调
+    /// `cleanup`，**把 worktree 和分支一起删掉** —— agent 那 587 秒的成果
+    /// 就这么静默销毁了，而任务状态还是 `done`。
+    /// 翻回历史，之前几条「跑完了但没有产生任何改动」很可能都是这么没的。
+    ///
+    /// 所以要数两部分的并集：还没提交的，加上**已经提交但还没落地的**。
+    public static func changedFileCount(in dir: String, base: String = "main") -> Int {
+        var files = Set<String>()
+
+        // 没提交的
+        for line in git(["status", "--porcelain"], in: dir).stdout.split(separator: "\n")
+        where !line.isEmpty {
+            // porcelain 格式是「XY 路径」，路径从第 4 个字符开始。
+            let s = String(line)
+            files.insert(String(s.dropFirst(min(3, s.count))))
+        }
+
+        // 已经提交的。用三点：比的是「相对分叉点」，
+        // 不然 base 上别人的新提交会被算成这次的改动。
+        let committed = git(["diff", "--name-only", "\(base)...HEAD"], in: dir)
+        if committed.exitCode == 0 {
+            for line in committed.stdout.split(separator: "\n") where !line.isEmpty {
+                files.insert(String(line))
+            }
+        }
+        return files.count
+    }
+
+    /// agent 自己提交了几个 commit（相对分叉点）。
+    /// 用来在结果里说清楚「它自己提交了」，而不是让人以为是我们提交的。
+    public static func commitsAhead(in dir: String, base: String = "main") -> Int {
+        let r = git(["rev-list", "--count", "\(base)..HEAD"], in: dir)
+        return Int(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
     /// 推送前扫密钥。命中就拒绝提交 —— agent 可能把凭据写进代码或日志。
