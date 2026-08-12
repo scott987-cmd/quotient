@@ -1721,7 +1721,12 @@ func cmdPlan(_ args: [String]) throws {
     }
 
     let cfg = PlansStore.load()
-    print(Ansi.bold("套餐配置") + Ansi.dim(" · " + Paths.plansFile.path))
+    let src = PlansStore.loadedFrom()
+    print(Ansi.bold("套餐配置") + Ansi.dim(" · " + (src?.path ?? "两份都读不到，用的是空模板")))
+    let filled = PlansStore.load().filledLimitCount
+    if filled == 0 {
+        print(Ansi.yellow("一条上限都没填 —— 菜单栏因此只显示平台名，算不出剩余和作废量。"))
+    }
     for plan in cfg.plans {
         print("\n" + Ansi.bold(plan.platform.displayName) + Ansi.dim(" · \(plan.planName)")
             + (plan.enabled ? "" : Ansi.dim(" [已停用]")))

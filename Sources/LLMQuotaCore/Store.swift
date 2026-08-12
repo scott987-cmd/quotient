@@ -142,6 +142,19 @@ public enum PlansStore {
         Paths.iCloudConfigDir?.appendingPathComponent("plans.json") ?? Paths.plansFile
     }
 
+    /// 实际读到的是哪个文件。**给诊断用** ——
+    /// 之前 `llmq plan` 打印的是写死的本地路径，而它可能读的是 iCloud 那份，
+    /// 也可能两份都读不到用了模板。路径印错等于把人往错方向带。
+    public static func loadedFrom() -> URL? {
+        for url in [canonicalFile, Paths.plansFile] {
+            if let data = try? Data(contentsOf: url),
+               (try? SnapshotCoding.decoder().decode(PlansConfig.self, from: data)) != nil {
+                return url
+            }
+        }
+        return nil
+    }
+
     public static func load() -> PlansConfig {
         let dec = SnapshotCoding.decoder()
         // 优先读 iCloud 权威副本；读不到（App 无权限 / 没开 iCloud）就退回本地镜像。
