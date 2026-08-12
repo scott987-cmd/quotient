@@ -535,6 +535,17 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
     public var last7dRequests: Int
     public var topModels: [ModelUsage]
 
+    /// 空窗统计：每个窗口长度一条。
+    ///
+    /// **这是「浪费了多少」在没有上限时唯一能站住的口径。**
+    /// 实测 13 个额度窗口里只有 3 个有 limit，其余全是 unconfigured
+    /// （而且填不得：GLM 公布积分口径对不上、Kimi/Claude 不公布）。
+    /// 没有分母就算不出「浪费量」，但「这个窗口一次都没用」跟分母无关。
+    ///
+    /// 在 Mac 端算好发出去，不让手机去推 —— 手机拿不到逐个用量桶，
+    /// 而且两台设备各算各的会得出不同的数。
+    public var idleWindows: [WasteMeter.Report]
+
     public var id: String { platform.rawValue }
 
     /// 装了却一直没用 —— 在所有平台里，这是最该考虑退订的那种。
@@ -566,7 +577,8 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         last30dRequests: Int,
         last30dBillableTokens: Int,
         last7dRequests: Int,
-        topModels: [ModelUsage]
+        topModels: [ModelUsage],
+        idleWindows: [WasteMeter.Report] = []
     ) {
         self.platform = platform
         self.planName = planName
@@ -588,6 +600,7 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         self.last30dBillableTokens = last30dBillableTokens
         self.last7dRequests = last7dRequests
         self.topModels = topModels
+        self.idleWindows = idleWindows
     }
 }
 

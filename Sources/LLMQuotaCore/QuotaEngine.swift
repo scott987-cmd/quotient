@@ -147,7 +147,19 @@ public struct QuotaEngine: Sendable {
             last30dRequests: req30,
             last30dBillableTokens: tok30,
             last7dRequests: req7,
-            topModels: models
+            topModels: models,
+            // 空窗按**这个平台配置里真实存在的窗口长度**算 ——
+            // 给一个只有周额度的平台算「5 小时空窗率」，
+            // 只是把一个不存在的窗口摆出来充数。
+            //
+            // 起点用所有快照里最早的 retentionStart：往前算过头的话，
+            // 采集覆盖不到的那段一律是空的，空窗率会虚高到接近 100%，
+            // 而那个数字看起来像「这个订阅完全没在用」。
+            idleWindows: WasteMeter.measureAll(
+                buckets: allBuckets,
+                windows: plan.limits.map(\.windowMinutes),
+                since: snapshots.map(\.retentionStart).min() ?? now.addingTimeInterval(-30 * 86400),
+                now: now)
         )
     }
 
