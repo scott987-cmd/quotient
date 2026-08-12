@@ -2057,13 +2057,49 @@ func cmdCluster(_ rest: [String]) throws {
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o700], ofItemAtPath: ClusterCA.dir.path)
 
+        // **先删后拷会吃掉文件。**
+        //
+        // 原来是 removeItem(dst) 然后 copyItem(src → dst)。传的源路径正好
+        // 就是目标路径时（「已经在位了，我再导一次」是个很自然的动作，
+        // doctor 的提示还专门叫人这么干），第一步把文件删了，
+        // 第二步找不到源，抛错退出 —— 身份文件就此消失，集群直接断。
+        //
+        // 踩了两次：先是我自己拿目标路径当 ca.crt 的源，删掉了从机的 CA 证书；
+        // 然后按同样的形式给出的命令，又删掉了从机的 p12。
+        //
+        // 两条改法一起上：同一个文件就别动它；不同文件也先拷到临时名再替换，
+        // 这样拷贝失败时原文件还在。
+        func install(_ from: URL, to dest: URL, mode: Int) throws {
+            let fm = FileManager.default
+            if from.resolvingSymlinksInPath().standardizedFileURL
+                == dest.resolvingSymlinksInPath().standardizedFileURL {
+                try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: dest.path)
+                return   // 已经在位了
+            }
+            guard fm.fileExists(atPath: from.path) else {
+                throw ClusterCA.err("找不到 \(from.path)")
+            }
+            let staged = dest.deletingLastPathComponent()
+                .appendingPathComponent(".\(dest.lastPathComponent).new")
+            try? fm.removeItem(at: staged)
+            try fm.copyItem(at: from, to: staged)
+            try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: staged.path)
+            if fm.fileExists(atPath: dest.path) {
+                _ = try fm.replaceItemAt(dest, withItemAt: staged)
+            } else {
+                try fm.moveItem(at: staged, to: dest)
+            }
+            // **权限要在替换之后再设一遍。**
+            //
+            // replaceItemAt 是给「保存文档」用的，它会把**原文件**的属性
+            // 搬到替换进来的文件上 —— 于是 staged 上设的 0600 被原来的 0644
+            // 顶掉，私钥变成所有人可读。设权限不报错，也不会有任何现象。
+            try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: dest.path)
+        }
+
         let dst = ClusterCA.dir.appendingPathComponent("\(node).p12")
-        try? FileManager.default.removeItem(at: dst)
-        try FileManager.default.copyItem(at: src, to: dst)
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: dst.path)
-        try? FileManager.default.removeItem(at: ClusterCA.caCert)
-        try FileManager.default.copyItem(at: caSrc, to: ClusterCA.caCert)
+        try install(src, to: dst, mode: 0o600)
+        try install(caSrc, to: ClusterCA.caCert, mode: 0o644)
 
         // 先验一遍能不能真的解开，别等到连不上才发现口令抄错了。
         _ = try ClusterNet.loadIdentity(node: node, password: pw)

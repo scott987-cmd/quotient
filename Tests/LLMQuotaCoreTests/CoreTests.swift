@@ -2765,3 +2765,97 @@ final class DashboardResourceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths[0].path))
     }
 }
+
+// MARK: - 安装文件不能吃掉文件
+
+/// `cluster import` 里那段「把文件放到位」的逻辑，抽出来单测。
+///
+/// 原来是 removeItem(dst) + copyItem(src → dst)。源路径正好等于目标路径时
+/// （「已经在位了，我再导一次」是个很自然的动作），第一步删掉文件，
+/// 第二步找不到源就抛错 —— 文件没了，集群直接断。真的发生了两次。
+enum FileInstall {
+    static func install(_ from: URL, to dest: URL, mode: Int) throws {
+        let fm = FileManager.default
+        if from.resolvingSymlinksInPath().standardizedFileURL
+            == dest.resolvingSymlinksInPath().standardizedFileURL {
+            try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: dest.path)
+            return
+        }
+        guard fm.fileExists(atPath: from.path) else {
+            throw ClusterCA.err("找不到 \(from.path)")
+        }
+        let staged = dest.deletingLastPathComponent()
+            .appendingPathComponent(".\(dest.lastPathComponent).new")
+        try? fm.removeItem(at: staged)
+        try fm.copyItem(at: from, to: staged)
+        try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: staged.path)
+        if fm.fileExists(atPath: dest.path) {
+            _ = try fm.replaceItemAt(dest, withItemAt: staged)
+        } else {
+            try fm.moveItem(at: staged, to: dest)
+        }
+        // replaceItemAt 会把**原文件**的属性搬到替换进来的文件上，
+        // staged 上设的 0600 会被原来的 0644 顶掉 —— 私钥变成所有人可读，
+        // 而且不报错、没有任何现象。所以替换之后要再设一遍。
+        try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: dest.path)
+    }
+}
+
+final class FileInstallTests: XCTestCase {
+
+    private var dir: URL!
+    override func setUp() {
+        dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("inst-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+    override func tearDown() { try? FileManager.default.removeItem(at: dir) }
+
+    /// **源就是目标时，文件必须原封不动。** 这是那次事故的最小复现。
+    func testSamePathKeepsTheFile() throws {
+        let f = dir.appendingPathComponent("a.p12")
+        try Data("身份".utf8).write(to: f)
+        try FileInstall.install(f, to: f, mode: 0o600)
+        XCTAssertEqual(try Data(contentsOf: f), Data("身份".utf8))
+    }
+
+    /// 路径写法不同但指向同一个文件（`./a.p12`、多余的斜杠）也要认出来。
+    func testEquivalentPathSpellingsAreRecognized() throws {
+        let f = dir.appendingPathComponent("a.p12")
+        try Data("身份".utf8).write(to: f)
+        let weird = URL(fileURLWithPath: dir.path + "/./a.p12")
+        try FileInstall.install(weird, to: f, mode: 0o600)
+        XCTAssertEqual(try Data(contentsOf: f), Data("身份".utf8))
+    }
+
+    /// **源不存在时，原有的目标文件不能被毁掉。**
+    /// 先删后拷的老写法在这里会留下一个空目录。
+    func testMissingSourceLeavesDestinationIntact() throws {
+        let dst = dir.appendingPathComponent("a.p12")
+        try Data("旧的".utf8).write(to: dst)
+        XCTAssertThrowsError(
+            try FileInstall.install(dir.appendingPathComponent("nope"), to: dst, mode: 0o600))
+        XCTAssertEqual(try Data(contentsOf: dst), Data("旧的".utf8), "拷贝失败不该毁掉原文件")
+    }
+
+    /// 正常替换要真的换掉内容，并且权限对。
+    func testNormalReplaceWorksAndSetsMode() throws {
+        let src = dir.appendingPathComponent("src.p12")
+        let dst = dir.appendingPathComponent("dst.p12")
+        try Data("新的".utf8).write(to: src)
+        try Data("旧的".utf8).write(to: dst)
+        try FileInstall.install(src, to: dst, mode: 0o600)
+        XCTAssertEqual(try Data(contentsOf: dst), Data("新的".utf8))
+        let m = try FileManager.default.attributesOfItem(atPath: dst.path)[.posixPermissions]
+        XCTAssertEqual(m as? Int, 0o600)
+    }
+
+    /// 目标不存在时也要能装上（第一次 import 走这条）。
+    func testCreatesWhenDestinationAbsent() throws {
+        let src = dir.appendingPathComponent("src.p12")
+        try Data("新的".utf8).write(to: src)
+        let dst = dir.appendingPathComponent("dst.p12")
+        try FileInstall.install(src, to: dst, mode: 0o600)
+        XCTAssertEqual(try Data(contentsOf: dst), Data("新的".utf8))
+    }
+}
