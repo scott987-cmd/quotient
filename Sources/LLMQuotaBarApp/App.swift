@@ -126,9 +126,28 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let dash = model.dashboard {
                         WasteSection(dashboard: dash)
-                        ForEach(dash.reports.filter(\.detected).sorted {
+                        let cards = dash.reports.filter(\.detected).sorted {
                             $0.platform.sortIndex < $1.platform.sortIndex
-                        }) { report in
+                        }
+                        // 一个平台都渲染不出来时，**说出为什么**。
+                        //
+                        // 之前这里是空的：弹窗只剩标题和底部按钮，中间什么都没有，
+                        // 而菜单栏标题还显示着数字 —— 人完全没法判断是没数据、
+                        // 读不到文件、还是 App 坏了。空状态必须自证。
+                        if cards.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("没有可显示的平台").font(.callout).bold()
+                                Text("读到 \(dash.machines.count) 台机器的快照、"
+                                    + "\(dash.reports.count) 个平台，"
+                                    + "其中 \(dash.reports.filter(\.detected).count) 个被判定为「在用」。")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text("快照目录：" + Paths.snapshotsDir.path)
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        ForEach(cards) { report in
                             PlatformCard(report: report, now: dash.generatedAt)
                         }
                         InactiveSection(dashboard: dash)
@@ -139,7 +158,13 @@ struct DashboardView: View {
                 }
                 .padding(14)
             }
-            .frame(maxHeight: 520)
+            // **必须给下限。**
+            //
+            // 只写 maxHeight 时，macOS 26 的 MenuBarExtra(.window) 不向内容
+            // 提议高度，ScrollView 就被压成 0 —— 弹窗只剩标题和底部按钮，
+            // 中间一片空白，而菜单栏标题还正常显示「6 平台」。
+            // 这两件事同时成立的时候极难判断是没数据还是没画出来。
+            .frame(minHeight: 260, maxHeight: 520)
 
             Divider()
             footer
