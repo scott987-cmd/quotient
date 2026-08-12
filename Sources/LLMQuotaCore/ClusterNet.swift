@@ -450,15 +450,25 @@ public enum ClusterNet {
             // 那条错误信息把排查引向「是不是没导入」，而真相是「没权限」。
             // 一条把 A 说成 B 的错误信息，比没有错误信息更耽误事。
             switch s {
-            case errSecItemNotFound:
-                throw ClusterCA.err("钥匙串里没有 \(node) 的口令，先跑 llmq cluster import")
-            case errSecInteractionNotAllowed, errSecAuthFailed:
+            case errSecItemNotFound, errSecInteractionNotAllowed, errSecAuthFailed:
+                // **「条目不存在」也要走退路。**
+                //
+                // 原来这三种情况分开处理，只有后两种会回落。
+                // 而条目是**真的会消失**的：更新时先删旧的、再让新二进制写回，
+                // 中间那一步失败，条目就没了。落盘的那份和本机 CA 都还在，
+                // 却因为分支不同而用不上 —— 一个能自己修好的系统
+                // 报了一句「先跑 llmq cluster import」。
                 // 顺序有讲究：先看落盘的那份，再考虑重签。
                 // 重签会换掉 p12，对端不受影响（同一个 CA），
                 // 但没必要为了一个还能读到的口令折腾一遍。
                 if let pw = diskFallback(node: node) { return pw }
                 // 换了二进制就读不到了。**这台机器要是握着 CA，就别求人。**
                 if let pw = try? reissueSelf(node: node) { return pw }
+                if s == errSecItemNotFound {
+                    throw ClusterCA.err(
+                        "钥匙串里没有 \(node) 的口令，磁盘上也没有，"
+                        + "这台机器又没有 CA 私钥。先跑 llmq cluster import")
+                }
                 throw ClusterCA.err(
                     "钥匙串不让这个二进制读 \(node) 的口令（OSStatus \(s)）—— "
                     + "llmq 更新过，条目还绑在旧二进制上，而这台机器没有 CA 私钥、"

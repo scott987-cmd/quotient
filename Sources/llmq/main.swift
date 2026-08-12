@@ -2073,7 +2073,19 @@ func cmdCluster(_ rest: [String]) throws {
         cfg.nodeName = node
         try ClusterConfigStore.save(cfg)
         print(Ansi.green("导入成功，本机节点名 ") + node)
-        print(Ansi.dim("口令已存进钥匙串，磁盘上只留加密过的 p12"))
+        // **别写死「已存进钥匙串」。**
+        //
+        // save 现在会在钥匙串写不进去时改为落盘，而这行照样打印
+        // 「磁盘上只留加密过的 p12」—— 刚刚在 SSH 里亲眼看到它这么撒谎：
+        // stderr 说口令落盘了，紧接着 stdout 说磁盘上只有 p12。
+        // 结论要从**实际结果**里读，不能从「我们打算做什么」里读。
+        if ClusterNet.Passphrase.nodesWithPassphraseOnDisk().contains(node) {
+            print(Ansi.yellow("口令存在磁盘上 ")
+                  + Ansi.dim("（钥匙串写不进去，多半是在 SSH 会话里）"
+                             + "—— 本地再跑一次这条命令可以收回钥匙串"))
+        } else {
+            print(Ansi.dim("口令已存进钥匙串，磁盘上只留加密过的 p12"))
+        }
 
     // llmq cluster trust <节点名>
     case "trust":
@@ -2126,7 +2138,12 @@ func cmdCluster(_ rest: [String]) throws {
     // 条目的 ACL 绑创建者，必须由**新二进制自己**写这一次。
     // 口令走环境变量不走 argv —— argv 在 ps 里对所有用户可见。
     case "reseal":
-        guard let n = rest.first, let pw = ProcessInfo.processInfo
+        // `rest` 里含子命令本身，所以参数从 1 开始 —— 上面每个 case 都用
+        // need(1,…)。写成 rest.first 会把 "reseal" 当成节点名存进钥匙串，
+        // 而真正那条已经被 install 删掉了，于是跨机通信直接消失。
+        // 同一个错犯第二次了（`work approve` 多写过一个 dropFirst）。
+        let n = need(1, "节点名")
+        guard let pw = ProcessInfo.processInfo
             .environment["LLMQ_RESEAL_PW"], !pw.isEmpty else {
             print("用法：LLMQ_RESEAL_PW=… llmq cluster reseal <节点>"); exit(2)
         }
