@@ -2890,10 +2890,21 @@ enum ReleasePacker {
                         to: root.appendingPathComponent("llmq"))
         try fm.copyItem(at: bin.appendingPathComponent("LLMQuotaBarApp"),
                         to: app.appendingPathComponent("Contents/MacOS/LLMQuotaBar"))
+        // 资源包**两个地方都要放**。
+        //
+        // 原来只放进 App 的 Contents/Resources，于是装到 ~/.local/bin 的
+        // CLI 找不到它，凡是碰到 Bundle.module 的命令一律
+        // 「Fatal error: unable to find bundle named …」直接崩。
+        //
+        // 而且这个崩法很难往打包上想：同一份代码从 .build/release 跑得好好的
+        // （资源包就在旁边），只有装过之后才崩 —— 于是看起来像「安装坏了」。
+        // SwiftPM 的 Bundle.module 是按**可执行文件所在目录**找的，
+        // 所以 CLI 旁边必须有一份。
         for f in (try? fm.contentsOfDirectory(at: bin, includingPropertiesForKeys: nil)) ?? []
         where f.pathExtension == "bundle" {
             try? fm.copyItem(at: f, to: app.appendingPathComponent("Contents/Resources")
                 .appendingPathComponent(f.lastPathComponent))
+            try? fm.copyItem(at: f, to: root.appendingPathComponent(f.lastPathComponent))
         }
         try infoPlist.write(to: app.appendingPathComponent("Contents/Info.plist"),
                             atomically: true, encoding: .utf8)

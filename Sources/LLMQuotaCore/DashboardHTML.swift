@@ -50,22 +50,50 @@ public enum DashboardHTML {
     /// 按 macOS 惯例去找 `X.bundle/Contents/Resources`，直接扑空。
     /// 另外这个 CLI 会被单独拷到 ~/.local/bin，那时 bundle 根本不在旁边，
     /// 所以还得能从已安装的 .app 里、或开发时的源码树里找。
+    /// 候选资源包。**不碰 `Bundle.module`。**
+    ///
+    /// 它是 SwiftPM 生成的 `static let`，找不到资源包时直接 `fatalError`，
+    /// 捕获不了。而下面那一串兜底路径，写的正是「资源包不在旁边」的情形 ——
+    /// 于是为那种情况准备的代码，**在那种情况下一行也执行不到**，进程先崩了。
+    ///
+    /// 更糟的是 `llmq doctor` 会调 `resourceDiagnostics()`：一个专门用来
+    /// 报告「资源找没找到」的诊断，自己死在了资源缺失上。表现是整条命令
+    /// 一个字都不打印就崩，看起来像安装坏了，而不是像少了个文件。
+    ///
+    /// `Bundle(url:)` 找不到只返回 nil，所以自己按路径找。
+    static func candidateBundles() -> [Bundle] {
+        let name = "LLMQuotaBar_LLMQuotaCore.bundle"
+        let exeDir = URL(fileURLWithPath: CommandLine.arguments[0])
+            .resolvingSymlinksInPath().deletingLastPathComponent()
+        var urls = [
+            exeDir.appendingPathComponent(name),
+            // .app 里：可执行文件在 Contents/MacOS，资源在 Contents/Resources
+            exeDir.deletingLastPathComponent().appendingPathComponent("Resources/\(name)"),
+            Bundle.main.bundleURL.appendingPathComponent(name),
+        ]
+        if let r = Bundle.main.resourceURL { urls.append(r.appendingPathComponent(name)) }
+        return urls.compactMap {
+            FileManager.default.fileExists(atPath: $0.path) ? Bundle(url: $0) : nil
+        }
+    }
+
     public static func resourceSearchPaths(_ file: String) -> [URL] {
         var out: [URL] = []
         func add(_ u: URL?) { if let u { out.append(u) } }
 
-        let bundle = Bundle.module
-        add(bundle.url(forResource: file, withExtension: nil, subdirectory: "Resources"))
-        add(bundle.url(forResource: file, withExtension: nil))
-        add(bundle.bundleURL.appendingPathComponent("Resources/\(file)"))
-        add(bundle.resourceURL?.appendingPathComponent(file))
+        for bundle in candidateBundles() {
+            add(bundle.url(forResource: file, withExtension: nil, subdirectory: "Resources"))
+            add(bundle.url(forResource: file, withExtension: nil))
+            add(bundle.bundleURL.appendingPathComponent("Resources/\(file)"))
+            add(bundle.resourceURL?.appendingPathComponent(file))
+        }
 
-        // 可执行文件旁边的 bundle（把二进制和 bundle 一起装时走这条）
+        // 一个候选都没命中时，**仍然要给出试过哪些路径** ——
+        // 一份空的诊断和「没装」长得一模一样。
         let exeDir = URL(fileURLWithPath: CommandLine.arguments[0])
             .resolvingSymlinksInPath().deletingLastPathComponent()
         let bundleName = "LLMQuotaBar_LLMQuotaCore.bundle"
         add(exeDir.appendingPathComponent("\(bundleName)/Resources/\(file)"))
-        // .app 里：可执行文件在 Contents/MacOS，资源在 Contents/Resources
         add(exeDir.deletingLastPathComponent()
             .appendingPathComponent("Resources/\(bundleName)/Resources/\(file)"))
 

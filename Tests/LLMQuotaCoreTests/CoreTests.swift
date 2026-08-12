@@ -2740,3 +2740,28 @@ final class PassphraseFallbackTests: XCTestCase {
         }
     }
 }
+
+// MARK: - 资源查找不能自己崩
+
+final class DashboardResourceTests: XCTestCase {
+
+    /// **诊断不能死在它要诊断的那件事上。**
+    ///
+    /// 原来这条路第一行就是 Bundle.module —— SwiftPM 生成的 static let，
+    /// 找不到资源包时 fatalError。于是「资源包不在旁边」的兜底代码，
+    /// 在资源包不在旁边时一行也跑不到，llmq doctor 整条命令直接崩。
+    func testDiagnosticsReportsMissingInsteadOfCrashing() {
+        let d = DashboardHTML.resourceDiagnostics()
+        XCTAssertEqual(d.count, 2)
+        for e in d {
+            XCTAssertFalse(e.tried.isEmpty, "找不到时也得说清楚试过哪些路径")
+        }
+    }
+
+    /// 不存在的文件也要给出候选路径，而不是空数组或崩溃。
+    func testUnknownFileStillYieldsSearchPaths() {
+        let paths = DashboardHTML.resourceSearchPaths("definitely-not-here.js")
+        XCTAssertFalse(paths.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths[0].path))
+    }
+}

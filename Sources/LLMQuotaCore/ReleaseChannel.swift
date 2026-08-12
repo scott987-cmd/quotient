@@ -334,6 +334,19 @@ public enum ReleaseChannel {
         let installed = bin.appendingPathComponent("llmq")
         _ = try FileManager.default.replaceItemAt(installed, withItemAt: staged)
 
+        // 资源包要跟着二进制走 —— Bundle.module 按可执行文件所在目录找。
+        // 少了它，凡是用到内置资源的命令都会当场
+        // 「Fatal error: unable to find bundle named …」，而 --help 之类
+        // 碰不到资源的命令一切正常，所以安装后的探活根本发现不了。
+        for f in (try? FileManager.default.contentsOfDirectory(
+            at: newBin.deletingLastPathComponent(),
+            includingPropertiesForKeys: nil)) ?? []
+        where f.pathExtension == "bundle" {
+            let dst = bin.appendingPathComponent(f.lastPathComponent)
+            try? FileManager.default.removeItem(at: dst)
+            try? FileManager.default.copyItem(at: f, to: dst)
+        }
+
         // 让新二进制自己写一遍，条目的 ACL 就绑到它身上了。
         //
         // 口令走环境变量不走 argv：argv 在 `ps` 里对**所有**用户可见，
