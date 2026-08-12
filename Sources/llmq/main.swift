@@ -826,7 +826,30 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         print(Ansi.dim("  排除 " + pad(r.platform.displayName, 10) + r.reason))
     }
     guard !decision.candidates.isEmpty else {
-        if !quiet { print(Ansi.red("没有可用平台，任务留在队列里。")) }
+        // **区分「等一等就好」和「等多久都没用」。**
+        //
+        // 原来两者都是「留在队列里」，于是一个所有平台都够不着的任务
+        // 每 5 分钟重试一次、永远派不出去；而储备池又因为
+        // 「队列里还有任务在排」拒绝生成新活 ——
+        // **一个跑不了的任务把整条流水线堵死**，几个平台的额度眼看着作废。
+        // 日志里那句「等冷却过去」还在误导：根本没有冷却。
+        let permanent = !decision.rejected.isEmpty
+            && decision.rejected.allSatisfy { $0.kind == .permanent }
+        if permanent {
+            task.state = .blocked
+            task.endedAt = Date()
+            task.note = "没有平台能接：" + decision.rejected
+                .map { "\($0.platform.displayName)（\($0.reason)）" }
+                .joined(separator: "；")
+                + "。等下去不会变 —— 要么放宽某个角色的上限，要么人工处理。"
+            try? TaskStore.append(task)
+            if !quiet {
+                print(Ansi.yellow("没有平台**能**接这个任务，转人工。") )
+                print(Ansi.dim("  " + (task.note ?? "")))
+            }
+            return .blocked
+        }
+        if !quiet { print(Ansi.red("暂时没有可用平台（冷却/额度），任务留在队列里。")) }
         return .noPlatform
     }
     print(Ansi.bold("候选顺序：") + decision.candidates.enumerated().map {
@@ -1337,7 +1360,9 @@ func cmdWorkLoop(_ args: [String]) throws {
                 case .noPlatform:
                     // 所有平台都在冷却或不可用。不算失败 —— 任务还在队列里，
                     // 等冷却过去自然会跑。但也别急着重试，睡长一点。
-                    print(Ansi.dim("  所有平台都不可用，等冷却过去"))
+                    // 只有真·暂时性的原因才会走到这里 —— 永久性的已经在
+                    // runOneTask 里转成 blocked 了，不再堵队列。
+                    print(Ansi.dim("  暂时没有可用平台（冷却或额度耗尽），等一等"))
                     Thread.sleep(forTimeInterval: min(300, policy.tickSeconds * 10))
                 case .blocked:
                     // 既不算成功也不算失败。而且**立刻去取下一个任务**，

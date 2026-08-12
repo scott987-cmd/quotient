@@ -199,8 +199,26 @@ public struct WorkScheduler: Sendable {
     }
 
     public struct Rejection: Sendable {
+        /// 这个「不行」是等一等就好，还是等多久都没用。
+        ///
+        /// 分不开的代价实测过：一个改到高危路径的任务，所有平台的角色上限
+        /// 都够不着它，于是每 5 分钟重试一次、永远派不出去；
+        /// 而储备池又因为「队列里还有任务在排」拒绝生成新活 ——
+        /// **一个永远跑不了的任务把整条流水线堵死了**，
+        /// 表现是几个平台的额度眼看着过期作废。
+        ///
+        /// 而日志里那句「等冷却过去」是彻头彻尾的误导：没有冷却，
+        /// 等下去也不会变。
+        public enum Kind: Sendable {
+            /// 冷却中、额度耗尽、还没采到用量 —— 时间能解决。
+            case temporary
+            /// 风险/复杂度超出角色上限、没装、改不了文件、被静音 ——
+            /// 时间解决不了，要么改配置，要么人来处理。
+            case permanent
+        }
         public var platform: Platform
         public var reason: String
+        public var kind: Kind = .temporary
     }
 
     public struct Decision: Sendable {
@@ -231,7 +249,7 @@ public struct WorkScheduler: Sendable {
 
             // 接力时别转回已经失败过的平台 —— 它刚在同一个任务上栽过。
             if let task, task.triedPlatforms.contains(p) {
-                rejected.append(Rejection(platform: p, reason: "本任务已在该平台失败过"))
+                rejected.append(Rejection(platform: p, reason: "本任务已在该平台失败过", kind: .permanent))
                 continue
             }
 
@@ -245,7 +263,8 @@ public struct WorkScheduler: Sendable {
                 rejected.append(Rejection(
                     platform: p,
                     reason: "任务风险是\(risk.displayName)，"
-                        + "而\(role.title)最多只接\(role.maxRisk.displayName)的活"))
+                        + "而\(role.title)最多只接\(role.maxRisk.displayName)的活",
+                    kind: .permanent))
                 continue
             }
 
@@ -257,7 +276,8 @@ public struct WorkScheduler: Sendable {
                 if capable < tier {
                     rejected.append(Rejection(
                         platform: p,
-                        reason: "任务是\(tier.displayName)档，该平台目前只被验证到\(capable.displayName)档"))
+                        reason: "任务是\(tier.displayName)档，该平台目前只被验证到\(capable.displayName)档",
+                        kind: .permanent))
                     continue
                 }
             }
@@ -271,13 +291,14 @@ public struct WorkScheduler: Sendable {
                 continue
             }
             guard runner.isAvailable else {
-                rejected.append(Rejection(platform: p, reason: "\(runner.binaryName) 没装或不可执行"))
+                rejected.append(Rejection(platform: p, reason: "\(runner.binaryName) 没装或不可执行", kind: .permanent))
                 continue
             }
             // 编码任务必须能改文件。纯文本生成的执行器派过去必然零改动。
             guard !requiresEditing || runner.canEdit else {
                 rejected.append(Rejection(
-                    platform: p, reason: "\(runner.binaryName) 只能生成文本，改不了文件"))
+                    platform: p, reason: "\(runner.binaryName) 只能生成文本，改不了文件",
+                    kind: .permanent))
                 continue
             }
             // 这台机器上把它留给别的用途了。
@@ -289,7 +310,8 @@ public struct WorkScheduler: Sendable {
                 rejected.append(Rejection(
                     platform: p,
                     reason: "在 \(Paths.machineName()) 上被静音了"
-                        + (AgentRoles.role(for: p).muteReason.map { "：" + $0 } ?? "")))
+                        + (AgentRoles.role(for: p).muteReason.map { "：" + $0 } ?? ""),
+                    kind: .permanent))
                 continue
             }
 

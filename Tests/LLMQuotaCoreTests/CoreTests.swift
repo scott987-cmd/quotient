@@ -2967,3 +2967,50 @@ final class OfficialQuotaOverlapTests: XCTestCase {
                       "官方没报周额度，本地那条周窗口不能被顺手删掉")
     }
 }
+
+// MARK: - 拒绝理由的性质
+
+final class RejectionKindTests: XCTestCase {
+
+    /// 能力不够是**永久**的：角色上限接不了这个风险等级，等多久都一样。
+    func testRiskCeilingIsPermanent() {
+        let r = WorkScheduler.Rejection(platform: .qwen, reason: "任务风险是高危", kind: .permanent)
+        XCTAssertEqual(r.kind, .permanent)
+    }
+
+    /// 冷却是**暂时**的，默认就该是这个 —— 漏标的话最坏结果是多等一会儿，
+    /// 而错标成永久会把一个本来能跑的任务推给人工。默认值要往安全的方向偏。
+    func testDefaultKindIsTemporary() {
+        let r = WorkScheduler.Rejection(platform: .glm, reason: "冷却中")
+        XCTAssertEqual(r.kind, .temporary, "默认必须是暂时的 —— 错标永久会误伤能跑的任务")
+    }
+
+    /// **一条暂时性的拒绝就足以让整体保持等待。**
+    ///
+    /// 只要还有一个平台是「等一等可能就好了」，就不该把任务判死转人工。
+    func testOneTemporaryRejectionKeepsTheTaskWaiting() {
+        let rs = [
+            WorkScheduler.Rejection(platform: .qwen, reason: "上限不够", kind: .permanent),
+            WorkScheduler.Rejection(platform: .glm, reason: "冷却中", kind: .temporary),
+        ]
+        XCTAssertFalse(rs.allSatisfy { $0.kind == .permanent })
+    }
+
+    /// 全是永久性拒绝才判死。
+    func testAllPermanentMeansDeadlock() {
+        let rs = [
+            WorkScheduler.Rejection(platform: .qwen, reason: "上限不够", kind: .permanent),
+            WorkScheduler.Rejection(platform: .kimi, reason: "上限不够", kind: .permanent),
+        ]
+        XCTAssertTrue(rs.allSatisfy { $0.kind == .permanent })
+    }
+
+    /// 一个拒绝都没有 ≠ 死锁。空列表在 allSatisfy 下是 true，
+    /// 直接用会把「压根没枚举平台」误判成「所有平台都接不了」。
+    func testEmptyRejectionListIsNotADeadlock() {
+        let rs: [WorkScheduler.Rejection] = []
+        XCTAssertTrue(rs.allSatisfy { $0.kind == .permanent }, "空列表在语义上恒真")
+        XCTAssertFalse(!rs.isEmpty && rs.allSatisfy { $0.kind == .permanent },
+                       "所以判死锁必须先排除空列表")
+    }
+}
