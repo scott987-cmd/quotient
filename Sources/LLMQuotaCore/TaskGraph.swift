@@ -181,6 +181,35 @@ public enum TaskGraph {
         reconcile(all)
     }
 
+    // MARK: - 完成
+
+    /// 这张图跑完了吗 —— 所有节点都到终态，且**至少有一个真的做成了**。
+    ///
+    /// 「至少一个 done」这条不能省：全部 failed / 全部被丢弃的图，分支上
+    /// 一个提交都没有，把它当「完成」送去合并，review 那边会得到一个空 diff，
+    /// 然后按「无改动」丢掉 —— 中间那几步日志会让人以为产出被吃了。
+    public static func isComplete(graphID: String, in all: [WorkTask]) -> Bool {
+        let nodes = all.filter { $0.graphID == graphID }
+        guard !nodes.isEmpty else { return false }
+        guard nodes.allSatisfy({ $0.state == .done || $0.state == .failed }) else {
+            return false
+        }
+        return nodes.contains { $0.state == .done }
+    }
+
+    /// 图里还没到终态的节点数。给日志用 —— 「还差 2 步」比「没完成」有用。
+    public static func remaining(graphID: String, in all: [WorkTask]) -> Int {
+        all.filter {
+            $0.graphID == graphID && $0.state != .done && $0.state != .failed
+        }.count
+    }
+
+    /// 所有已经跑完、可以送审的图。
+    public static func completeGraphs(_ all: [WorkTask]) -> [String] {
+        Array(Set(all.compactMap { $0.graphID })
+            .filter { isComplete(graphID: $0, in: all) }).sorted()
+    }
+
     // MARK: - 上下文
 
     /// 给某个节点拼一段「前情提要」。

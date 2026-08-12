@@ -128,9 +128,16 @@ public enum ProgressLog {
                                      now: Date = Date()) -> Bool {
         // 「这次合并有没有留下说明」只能在合并当下判断：HEAD 就是那个合并提交。
         var needsNote: Set<String> = []
-        if let branch, let t = tasks.first(where: { $0.branch == branch }),
-           (t.changedFiles ?? 0) >= 3, !mergeTouchedStatus(repo: repo) {
-            needsNote.insert(t.id)
+        // 图分支上所有节点的 branch 都一样，`first(where:)` 会随便挑一个 ——
+        // 「说明待补」于是被贴到一个随机节点头上。图按整张算：
+        // 只要这次合并没动 STATUS.md，改动量够大的节点都标上。
+        if let branch {
+            let onBranch = tasks.filter { $0.branch == branch }
+            if !mergeTouchedStatus(repo: repo) {
+                for t in onBranch where (t.changedFiles ?? 0) >= 3 {
+                    needsNote.insert(t.id)
+                }
+            }
         }
 
         let url = URL(fileURLWithPath: repo).appendingPathComponent("STATUS.md")

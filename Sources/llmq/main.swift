@@ -923,11 +923,23 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 "。注意 \($0.displayName) 是本机指挥（控制面），"
                     + "按设定不接活 —— 需要的话可以把这一步挪到别的机器"
             } ?? ""
+            // 「可以挪到别的机器」不能只是一句话 —— 要给出能照抄的命令。
+            // 常常答案就在旁边那台：这台的 Claude 是指挥不接活，
+            // 另一台上同一个 Claude 是 maxRisk 高危的架构师，额度还闲着。
+            let alias = RepoRegistry.all()
+                .first {
+                    NSString(string: $0.localPath).expandingTildeInPath
+                        == NSString(string: task.repo).expandingTildeInPath
+                }?.alias
+            let elsewhereHint = task.profile.flatMap {
+                Elsewhere.hint(risk: $0.risk, taskPrompt: task.prompt, repoAlias: alias)
+            }
             task.note = "没有平台能接：" + decision.rejected
                 .map { "\($0.platform.displayName)（\($0.reason)）" }
                 .joined(separator: "；")
                 + dispatcherNote
                 + "。等下去不会变 —— 要么放宽某个角色的上限，要么人工处理。"
+                + (elsewhereHint.map { "\n" + $0 } ?? "")
             try? TaskStore.append(task)
             if !quiet {
                 print(Ansi.yellow("没有平台**能**接这个任务，转人工。") )

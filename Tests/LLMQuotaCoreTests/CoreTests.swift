@@ -3755,3 +3755,184 @@ final class AuditFixTests2: XCTestCase {
                        "全部跑完之后才该能审")
     }
 }
+
+// MARK: - 图的落地闭环
+
+final class GraphLandingTests: XCTestCase {
+
+    private func n(_ id: String, _ st: WorkTask.State, g: String = "g") -> WorkTask {
+        var t = WorkTask(id: id, prompt: "p", repo: "/r")
+        t.graphID = g; t.state = st
+        return t
+    }
+
+    /// 全部终态且至少有一个成功 → 可以送审。
+    func testCompleteWhenAllTerminalAndSomethingSucceeded() {
+        XCTAssertTrue(TaskGraph.isComplete(graphID: "g",
+                                           in: [n("a", .done), n("b", .failed)]))
+    }
+
+    /// 还有节点没跑完就不算完成 —— 这正是「不合半张图」的判据。
+    func testNotCompleteWhileAnyNodeIsPending() {
+        for st in [WorkTask.State.queued, .running, .blocked] {
+            XCTAssertFalse(TaskGraph.isComplete(graphID: "g",
+                                                in: [n("a", .done), n("b", st)]),
+                           "\(st.rawValue) 还没终态")
+        }
+    }
+
+    /// **全军覆没的图不算完成。**
+    ///
+    /// 分支上一个提交都没有，送去合并只会得到空 diff、被按「无改动」丢掉，
+    /// 而中间那几步日志会让人以为产出被吃了。
+    func testAllFailedIsNotComplete() {
+        XCTAssertFalse(TaskGraph.isComplete(graphID: "g",
+                                            in: [n("a", .failed), n("b", .failed)]))
+    }
+
+    /// 不认识的图 id 不能算完成 —— 空集合在 allSatisfy 下恒真，
+    /// 直接用会把「这张图不存在」当成「它跑完了」，然后去合一个不存在的分支。
+    func testUnknownGraphIsNotComplete() {
+        XCTAssertFalse(TaskGraph.isComplete(graphID: "没有这张图", in: [n("a", .done)]))
+    }
+
+    func testRemainingCountsPendingNodes() {
+        XCTAssertEqual(TaskGraph.remaining(graphID: "g",
+                                           in: [n("a", .done), n("b", .queued),
+                                                n("c", .running)]), 2)
+    }
+
+    func testCompleteGraphsListsOnlyFinishedOnes() {
+        let tasks = [n("a", .done, g: "g1"),
+                     n("b", .done, g: "g2"), n("c", .queued, g: "g2")]
+        XCTAssertEqual(TaskGraph.completeGraphs(tasks), ["g1"])
+    }
+}
+
+// MARK: - 「挪到别的机器」要给出可执行的命令
+
+final class ElsewhereTests: XCTestCase {
+
+    private func presence(_ machine: String, node: String?) -> ClusterPresence {
+        ClusterPresence(machineID: machine, machineName: machine, nodeName: node,
+                        lanIP: nil, port: 8443, serving: true, boundAddress: nil,
+                        lanRouteInterface: nil, firewallOn: false, canReach: [:],
+                        updatedAt: Date(), version: "t")
+    }
+
+    private func withRoles(_ roles: [AgentRole], _ body: () -> Void) {
+        let f = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("roles-\(UUID().uuidString).json")
+        try? SnapshotCoding.prettyEncoder().encode(roles).write(to: f)
+        AgentRoles.fileOverride = f
+        defer { AgentRoles.fileOverride = nil; try? FileManager.default.removeItem(at: f) }
+        body()
+    }
+
+    /// **这就是那个真实场景**：本机的 Claude 是指挥不接活，
+    /// 另一台上同一个 Claude 是 maxRisk 高危的架构师，接得了，而额度正闲着。
+    func testFindsAMachineWhoseRoleCanTakeIt() {
+        withRoles([AgentRole(platform: .claude, title: "架构师", maxRisk: .sensitive,
+                             dispatcherOn: ["甲机"])]) {
+            let opts = Elsewhere.options(
+                risk: .sensitive,
+                presences: [presence("甲机", node: "a"), presence("乙机", node: "b")],
+                me: "甲机", presentOn: [.claude: ["甲机", "乙机"]])
+            XCTAssertEqual(opts.count, 1)
+            XCTAssertEqual(opts.first?.node, "b")
+            XCTAssertEqual(opts.first?.platforms, [.claude])
+        }
+    }
+
+    /// 在那台机器上被静音的平台不算 —— 建议一条跑不通的命令比不建议更糟。
+    func testMutedOnThatMachineIsExcluded() {
+        withRoles([AgentRole(platform: .claude, title: "架构师", maxRisk: .sensitive,
+                             mutedOn: ["乙机"], muteReason: "那台上它老超时")]) {
+            XCTAssertTrue(Elsewhere.options(
+                risk: .sensitive,
+                presences: [presence("乙机", node: "b")], me: "甲机",
+                presentOn: [.claude: ["乙机"], .qwen: ["乙机"]]).isEmpty)
+        }
+    }
+
+    /// 在那台机器上也是指挥的话，同样不算。
+    func testDispatcherOnThatMachineIsExcluded() {
+        withRoles([AgentRole(platform: .claude, title: "架构师", maxRisk: .sensitive,
+                             dispatcherOn: ["甲机", "乙机"])]) {
+            XCTAssertTrue(Elsewhere.options(
+                risk: .sensitive,
+                presences: [presence("乙机", node: "b")], me: "甲机",
+                presentOn: [.claude: ["乙机"], .qwen: ["乙机"]]).isEmpty)
+        }
+    }
+
+    /// 风险等级不够的平台不算。
+    ///
+    /// presentOn 里只放 qwen：**角色表是「出厂默认 + 文件覆盖」的合并结果**，
+    /// 每个平台都有一条，包括那台机器上没装的。把 claude 也标成「装了」
+    /// 就等于在测一个不存在的场景 —— 而 claude 默认就是高危，
+    /// 那条断言必然不成立。
+    func testInsufficientRiskCeilingIsExcluded() {
+        withRoles([AgentRole(platform: .qwen, title: "开发", maxRisk: .normal)]) {
+            XCTAssertTrue(Elsewhere.options(
+                risk: .sensitive,
+                presences: [presence("乙机", node: "b")], me: "甲机",
+                presentOn: [.qwen: ["乙机"]]).isEmpty, "只有 qwen，它接不了高危")
+            XCTAssertFalse(Elsewhere.options(
+                risk: .normal,
+                presences: [presence("乙机", node: "b")], me: "甲机",
+                presentOn: [.qwen: ["乙机"]]).isEmpty, "常规它接得了")
+        }
+    }
+
+    /// **那台机器上没装的平台不能被建议。**
+    ///
+    /// 角色表对每个平台都有一条，只看角色的话会建议「去 X 上用 Y」，
+    /// 而 Y 在那台上根本不存在，命令跑过去直接失败。
+    /// 一条跑不通的建议比不给建议更糟 —— 它让人以为路已经指好了。
+    func testPlatformNotInstalledOnThatMachineIsExcluded() {
+        withRoles([AgentRole(platform: .claude, title: "架构师", maxRisk: .sensitive)]) {
+            XCTAssertTrue(Elsewhere.options(
+                risk: .sensitive,
+                presences: [presence("乙机", node: "b")], me: "甲机",
+                presentOn: [.claude: ["丙机"]]).isEmpty,
+                "claude 只装在丙机，不该建议去乙机")
+        }
+    }
+
+    /// 没有节点名的 presence 用不了 —— dispatch 要的是节点名。
+    func testPresenceWithoutNodeNameIsUnusable() {
+        withRoles([AgentRole(platform: .claude, title: "架构师", maxRisk: .sensitive)]) {
+            XCTAssertTrue(Elsewhere.options(
+                risk: .sensitive,
+                presences: [presence("乙机", node: nil)], me: "甲机",
+                presentOn: [.claude: ["乙机"]]).isEmpty)
+        }
+    }
+
+    /// 没有可用机器就**不给建议**，而不是给一条跑不通的命令。
+    func testNoHintWhenNowhereCanTakeIt() {
+        withRoles([AgentRole(platform: .qwen, title: "开发", maxRisk: .normal)]) {
+            XCTAssertNil(Elsewhere.hint(risk: .sensitive, taskPrompt: "改 build.sh",
+                                        repoAlias: "llmq",
+                                        presences: [presence("乙机", node: "b")],
+                                        presentOn: [.qwen: ["乙机"]]))
+        }
+    }
+
+    /// 给出的命令要能照抄：带节点名、带引号包住的描述、带 --repo。
+    func testHintIsCopyPastable() throws {
+        var hint: String?
+        withRoles([AgentRole(platform: .claude, title: "架构师",
+                             maxRisk: .sensitive)]) {
+            hint = Elsewhere.hint(
+                risk: .sensitive, taskPrompt: "在 build-app.sh 末尾\n加一行注释",
+                repoAlias: "llmq", presences: [presence("乙机", node: "b")],
+                presentOn: [.claude: ["乙机"]])
+        }
+        let h = try XCTUnwrap(hint)
+        XCTAssertTrue(h.contains("llmq cluster dispatch b \""))
+        XCTAssertTrue(h.contains("--repo llmq"))
+        XCTAssertFalse(h.contains("\n加一行"), "换行会把命令截断，必须压成一行")
+    }
+}

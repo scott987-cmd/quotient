@@ -189,6 +189,17 @@ public enum Review {
         }
         let r = mergeUnverified(repo: repo, branch: branch, base: base,
                                 deleteBranch: deleteBranch)
+        // 图合成功之后，共享 worktree 才该被清掉。
+        //
+        // 这是全仓库**唯一**传 graphFinished: true 的地方 —— 在它之前，
+        // cleanup 对 agent/graph/* 一律拒绝删除（那道守卫防的是「按节点清理
+        // 会毁掉前面几步的提交」）。守卫加了却没人解锁的话，
+        // 共享 worktree 会永远堆在磁盘上，而且下次同名图会复用一个陈旧目录。
+        if case .success = r, branch.hasPrefix("agent/graph/") {
+            if let path = worktreePath(repo: repo, branch: branch) {
+                GitWorkspace.cleanup(repo: repo, path: path, graphFinished: true)
+            }
+        }
         // 落地即记账。挂在这里而不是任务完成时：任务完成时干活的人还在自己的
         // 分支里，几个分支各写各的进度，合过来每次都冲突在同一段。
         // 合并是串行的，写在合并之后天然不打架。
@@ -253,7 +264,31 @@ public enum Review {
     /// TaskStore 是 append-only + 后写覆盖，所以「更新」就是再 append 一条。
     static func markDisposition(branch: String, landed: Bool, reason: String? = nil) {
         let id = String(branch.split(separator: "/").last ?? "")
-        guard !id.isEmpty, var t = TaskStore.all().first(where: { $0.id == id }) else { return }
+        guard !id.isEmpty else { return }
+        let all = TaskStore.all()
+
+        // **图分支要记给图里的每一个节点。**
+        //
+        // 从分支名取最后一段，对 `agent/graph/<gid>` 拿到的是 gid ——
+        // 而 gid 是那个**从没入库的父任务**的 id，图里真实存在的节点叫
+        // `<gid>s1`/`<gid>s2`。于是这个 guard 一直查不到任务、静默 return，
+        // 图内产出的 landedAt 永远是 nil。
+        //
+        // 后果不只是少个时间戳：`work review` 的「产出 N 份、落地 M 份、
+        // 落地率」对所有图内任务恒为 0 —— 而「跑完了但没人要，那份额度
+        // 一样是浪费掉的」正是这个指标存在的全部理由。
+        if branch.hasPrefix("agent/graph/") {
+            let nodes = all.filter { $0.graphID == id }
+            guard !nodes.isEmpty else { return }
+            for var t in nodes {
+                if landed { t.landedAt = Date() }
+                else { t.discardedAt = Date(); t.discardReason = reason }
+                try? TaskStore.append(t)
+            }
+            return
+        }
+
+        guard var t = all.first(where: { $0.id == id }) else { return }
         if landed { t.landedAt = Date() }
         else { t.discardedAt = Date(); t.discardReason = reason }
         try? TaskStore.append(t)

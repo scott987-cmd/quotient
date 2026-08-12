@@ -1277,3 +1277,97 @@ public enum Notifier {
         return Proc.run(hermes, args, cwd: nil, env: [:], timeout: 30).exitCode == 0
     }
 }
+
+
+/// 「这台机器上没人能接，但别的机器能」—— 把这句话变成一条可执行的命令。
+///
+/// ## 为什么值得单独做
+///
+/// 高危任务在这台机器上被拦下时，诊断只能说「要么放宽某个角色的上限，
+/// 要么人工处理」。诚实，但没有可执行的下一步 —— 而**答案往往就在旁边那台
+/// 机器上**：Mac mini 的 Claude 是指挥不接活，MacBook 上同一个 Claude
+/// 却是 maxRisk 高危的架构师，它接得了，而那份额度正闲着。
+///
+/// 一条说了「你可以挪到别的机器」却不说怎么挪的提示，
+/// 实际效果和不说差不多。
+public enum Elsewhere {
+
+    public struct Option: Sendable {
+        /// 集群里的节点名（`llmq cluster dispatch` 要的那个）。
+        public var node: String
+        /// 人看的机器名。
+        public var machine: String
+        /// 那台机器上接得了这个风险等级的平台。
+        public var platforms: [Platform]
+    }
+
+    /// 哪些别的机器接得了这个风险等级的活。
+    ///
+    /// 判据全部按**那台机器**算：角色的 maxRisk 够、在那台没被静音、
+    /// 在那台不是指挥。三者都按机器名存，所以本机算得出来，
+    /// 不需要去问对端 —— 而「问对端」在对端不可达时就给不出建议了，
+    /// 恰恰那种时候人最需要知道该往哪儿挪。
+    /// - Parameter presentOn: 每个平台在哪些机器上**真的装了**。
+    ///
+    ///   这个参数不能省。`AgentRoles.all()` 是「出厂默认 + 文件覆盖」的合并结果，
+    ///   它对每个平台都有一条角色 —— 包括那台机器上根本没装的。
+    ///   只看角色的话会建议「去 X 机器上用 Y」，而 Y 在那台上不存在，
+    ///   命令跑过去直接失败。
+    ///   **一条跑不通的建议比不给建议更糟**：它让人以为路已经指好了。
+    ///
+    ///   写这个函数时我就在注释里承诺了「别造跑不通的命令」，然后没做 ——
+    ///   是测试把它照出来的。
+    public static func options(
+        risk: TaskProfile.Risk,
+        presences: [ClusterPresence] = ClusterPresenceStore.all(),
+        me: String = Paths.machineName(),
+        presentOn: [Platform: Set<String>] = Elsewhere.detectedByMachine()
+    ) -> [Option] {
+        let roles = AgentRoles.all()
+        var out: [Option] = []
+        for p in presences where p.machineName != me {
+            guard let node = p.nodeName, !node.isEmpty else { continue }
+            let ok = roles.values.filter { r in
+                risk <= r.maxRisk
+                    && !r.mutedOn.contains(p.machineName)
+                    && !r.dispatcherOn.contains(p.machineName)
+                    && (presentOn[r.platform]?.contains(p.machineName) ?? false)
+            }.map { $0.platform }.sorted { $0.rawValue < $1.rawValue }
+            if !ok.isEmpty {
+                out.append(Option(node: node, machine: p.machineName, platforms: ok))
+            }
+        }
+        return out.sorted { $0.node < $1.node }
+    }
+
+    /// 从看板算出「每个平台在哪些机器上装了」。
+    public static func detectedByMachine(
+        dashboard: Dashboard? = nil
+    ) -> [Platform: Set<String>] {
+        let d = dashboard ?? LLMQuota.dashboard()
+        var out: [Platform: Set<String>] = [:]
+        for r in d.reports where r.detected || r.installed {
+            out[r.platform] = Set(r.machines)
+        }
+        return out
+    }
+
+    /// 拼一句能直接照抄的话。没有可用的机器就返回 nil ——
+    /// **别造一条跑不通的命令**，那比不给建议更糟。
+    public static func hint(risk: TaskProfile.Risk, taskPrompt: String,
+                            repoAlias: String?,
+                            presences: [ClusterPresence] = ClusterPresenceStore.all(),
+                            presentOn: [Platform: Set<String>]? = nil)
+        -> String? {
+        let present = presentOn ?? detectedByMachine()
+        guard let best = options(risk: risk, presences: presences,
+                                 presentOn: present).first else { return nil }
+        let who = best.platforms.map { $0.displayName }.joined(separator: "、")
+        let one = taskPrompt
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\"", with: "'")
+        return "这台接不了，但 \(best.machine) 上 \(who) 接得了（那份额度正闲着）："
+            + "\n    llmq cluster dispatch \(best.node) \"\(one.prefix(100))\""
+            + (repoAlias.map { " --repo \($0)" } ?? "")
+    }
+}
