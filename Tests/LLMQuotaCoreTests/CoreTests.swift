@@ -3078,3 +3078,121 @@ final class DispatcherRoleTests: XCTestCase {
         }
     }
 }
+
+// MARK: - 任务图
+
+final class TaskGraphTests: XCTestCase {
+
+    private func node(_ id: String, deps: [String] = [],
+                      state: WorkTask.State = .queued,
+                      graph: String? = "g1", title: String? = nil,
+                      outputs: [String] = []) -> WorkTask {
+        var t = WorkTask(id: id, prompt: "做 \(id)", repo: "/r")
+        t.graphID = graph
+        t.dependsOn = deps
+        t.state = state
+        t.stepTitle = title ?? "步骤 \(id)"
+        t.outputs = outputs
+        return t
+    }
+
+    /// 没有依赖的任务立刻就绪 —— 也就是**今天所有任务的行为一个字都不变**。
+    /// 这条是整个改动的安全网：图有 bug 也波及不到普通任务。
+    func testPlainTaskWithoutGraphIsUnaffected() {
+        var t = WorkTask(id: "a", prompt: "x", repo: "/r")
+        t.graphID = nil
+        XCTAssertTrue(TaskGraph.isReady(t, in: [t]))
+    }
+
+    /// 上游没做完，下游不许跑。
+    func testDependentWaitsForUpstream() {
+        let a = node("a"), b = node("b", deps: ["a"])
+        XCTAssertTrue(TaskGraph.isReady(a, in: [a, b]))
+        XCTAssertFalse(TaskGraph.isReady(b, in: [a, b]))
+    }
+
+    /// 上游 done 之后下游就绪。判据是 done 不是 landed ——
+    /// 图内共用一个分支，不需要等整张图合进 main。
+    func testDoneUpstreamUnlocksDependent() {
+        let a = node("a", state: .done), b = node("b", deps: ["a"])
+        XCTAssertTrue(TaskGraph.isReady(b, in: [a, b]))
+    }
+
+    /// **一次只跑一个，哪怕有多个就绪。** 共用 worktree 的并行写必然打架。
+    func testOnlyOneNodeIsHandedOutEvenWhenSeveralAreReady() {
+        let a = node("a"), b = node("b"), c = node("c", deps: ["a"])
+        XCTAssertEqual(TaskGraph.readyCount([a, b, c]), 2, "确实有两个就绪")
+        XCTAssertNotNil(TaskGraph.nextReady([a, b, c]))
+        XCTAssertEqual(TaskGraph.nextReady([a, b, c])?.id, "a", "但只交出一个")
+    }
+
+    /// **环必须在入库前被拦下。**
+    /// 有环不会报错，只会让「就绪」恒为假 —— 全体不动，且没有任何错误信息。
+    func testCycleIsRejected() {
+        let a = node("a", deps: ["b"]), b = node("b", deps: ["a"])
+        XCTAssertEqual(TaskGraph.cycles([a, b]), ["a", "b"])
+        XCTAssertNotNil(TaskGraph.validate([a, b]))
+        XCTAssertTrue(TaskGraph.validate([a, b])!.contains("成环"))
+    }
+
+    /// 自环也是环。
+    func testSelfLoopIsACycle() {
+        let a = node("a", deps: ["a"])
+        XCTAssertFalse(TaskGraph.cycles([a]).isEmpty)
+    }
+
+    /// 指向不存在节点的边比环更隐蔽 —— 图里看起来完全正常，但永远不就绪。
+    func testDanglingDependencyIsRejected() {
+        let a = node("a", deps: ["幽灵"])
+        XCTAssertEqual(TaskGraph.danglingDeps([a]), ["幽灵"])
+        XCTAssertTrue(TaskGraph.validate([a])!.contains("不存在"))
+    }
+
+    /// 正常的链要能通过校验。
+    func testValidChainPasses() {
+        XCTAssertNil(TaskGraph.validate([node("a"), node("b", deps: ["a"])]))
+    }
+
+    /// 上游 blocked → 下游跟着冻结，**并且要一路传到底**。
+    /// 不传播的话它们会一直躺在 queued 里等一个永远不会 done 的上游。
+    func testBlockedPropagatesTransitively() {
+        let a = node("a", state: .blocked)
+        let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+        let touched = TaskGraph.propagateBlocked([a, b, c])
+        XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+        XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+    }
+
+    /// **失败不传播。** 失败允许换个平台重试，重试成功下游就能跑；
+    /// 一挂就整图转人工，会让一次网络抖动变成一次人工介入。
+    func testFailedDoesNotPropagate() {
+        let a = node("a", state: .failed), b = node("b", deps: ["a"])
+        XCTAssertTrue(TaskGraph.propagateBlocked([a, b]).isEmpty)
+        XCTAssertFalse(TaskGraph.isReady(b, in: [a, b]), "但也不该就绪")
+    }
+
+    /// 前情提要要带上**产物路径** —— 这是跨厂商协作唯一能交接的东西。
+    func testBriefingCarriesUpstreamOutputs() {
+        var a = node("a", state: .done, title: "生成插画")
+        a.outputs = ["Assets/hero.png"]
+        a.platform = .minimax
+        let b = node("b", deps: ["a"], title: "把插画接进界面")
+        let brief = TaskGraph.briefing(for: b, in: [a, b])
+        XCTAssertNotNil(brief)
+        XCTAssertTrue(brief!.contains("Assets/hero.png"))
+        XCTAssertTrue(brief!.contains("MiniMax"))
+    }
+
+    /// 要告诉它别顺手把下一步也做了 —— 否则下一步的 agent
+    /// 会面对一个和描述对不上的仓库。
+    func testBriefingWarnsAgainstDoingLaterSteps() {
+        let a = node("a", title: "第一步")
+        let b = node("b", deps: ["a"], title: "第二步")
+        XCTAssertTrue(TaskGraph.briefing(for: a, in: [a, b])!.contains("别顺手"))
+    }
+
+    /// 单节点任务没有前情提要可言，别硬塞一段废话进提示词。
+    func testNoBriefingForSoloTask() {
+        XCTAssertNil(TaskGraph.briefing(for: node("a"), in: [node("a")]))
+    }
+}

@@ -76,6 +76,32 @@ public struct WorkTask: Codable, Sendable {
     /// 存进任务记录才能真的跨进程接上。
     public var handoff: Handoff?
 
+    // MARK: - 任务图
+
+    /// 所属任务图。nil = 它自己就是一整个任务（今天绝大多数任务都是这种）。
+    ///
+    /// 图存在的理由是**粒度**：一个任务里往往只有一小步是高危的，
+    /// 或者只有一步是真难的。整包派给一个平台的后果实测过 ——
+    /// 「在 build-app.sh 末尾加一行注释」整体被判高危，
+    /// 于是所有角色都够不着，整个任务卡死。拆开之后只有碰构建脚本的那步转人工。
+    ///
+    /// 另一半理由是额度：机械的步骤给便宜的平台，难的那步给贵的，
+    /// 这直接就是「一分不浪费」。
+    public var graphID: String?
+
+    /// 必须先完成的节点 id。空 = 可以立刻开跑。
+    public var dependsOn: [String] = []
+
+    /// 在图里的短标题。prompt 仍然是给 agent 的完整指令，这个只用于显示。
+    public var stepTitle: String?
+
+    /// 这一步产出的、要交给下游的东西（文件路径，相对仓库根）。
+    ///
+    /// 这是「MiniMax 出图 → Qwen 写代码」那类协作的载体。
+    /// 它们是不同厂商的不同 CLI、不同进程，**不可能共享一个会话** ——
+    /// 能传递的只有产物。下游节点的 briefing 里会带上这些路径。
+    public var outputs: [String] = []
+
     /// 「这一轮是接着答复继续干」时要用的一对上下文。
     /// 两者缺一就不算恢复 —— 光有答案没有原问题的话，拼不出 briefing。
     public var resumeContext: (AskAnswer, Ask)? {
@@ -117,6 +143,16 @@ public struct WorkTask: Codable, Sendable {
         askRounds = try c.decodeIfPresent(Int.self, forKey: .askRounds) ?? 0
         handoff = try c.decodeIfPresent(Handoff.self, forKey: .handoff)
         answeredAsk = try c.decodeIfPresent(AskAnswer.self, forKey: .answeredAsk)
+        // 图相关的四个字段全部 decodeIfPresent。
+        //
+        // 合成解码器对缺键零容忍，而**写默认值救不了它** ——
+        // 缺键照样抛 keyNotFound，整条记录解不出来然后静默消失。
+        // 任务记录消失意味着一个正在跑的任务凭空不见，比崩溃难查得多。
+        // 这个坑在这个项目里踩过五次，不重蹈。
+        graphID = try c.decodeIfPresent(String.self, forKey: .graphID)
+        dependsOn = try c.decodeIfPresent([String].self, forKey: .dependsOn) ?? []
+        stepTitle = try c.decodeIfPresent(String.self, forKey: .stepTitle)
+        outputs = try c.decodeIfPresent([String].self, forKey: .outputs) ?? []
     }
 
     public var duration: TimeInterval? {
@@ -161,8 +197,15 @@ public enum TaskStore {
         }
     }
 
+    /// 下一个该跑的任务。
+    ///
+    /// 不是「第一个 queued」而是「第一个**就绪**的 queued」：
+    /// 图里的节点要等上游做完。没有图的任务 dependsOn 为空，
+    /// 判定自然退化成今天的行为 —— 这条很要紧，
+    /// 绝大多数任务仍然走完全一样的路，图那套东西一旦有 bug，
+    /// 爆炸半径被限制在少数任务上。
     public static func nextQueued() -> WorkTask? {
-        all().first { $0.state == .queued }
+        TaskGraph.nextReady(all())
     }
 }
 
