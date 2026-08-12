@@ -164,8 +164,15 @@ public enum Review {
                 return .failure(ClusterCA.err("没合：\(why)"))
             }
         }
-        return mergeUnverified(repo: repo, branch: branch, base: base,
-                               deleteBranch: deleteBranch)
+        let r = mergeUnverified(repo: repo, branch: branch, base: base,
+                                deleteBranch: deleteBranch)
+        // 落地即记账。挂在这里而不是任务完成时：任务完成时干活的人还在自己的
+        // 分支里，几个分支各写各的进度，合过来每次都冲突在同一段。
+        // 合并是串行的，写在合并之后天然不打架。
+        if case .success = r {
+            ProgressLog.recordLanding(repo: repo, branch: branch)
+        }
+        return r
     }
 
     static func mergeUnverified(repo: String, branch: String, base: String = "main",

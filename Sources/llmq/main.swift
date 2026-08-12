@@ -433,6 +433,19 @@ func cmdWork(_ args: [String]) throws {
         print(Ansi.green("已入队 ") + t.id + Ansi.dim("  仓库 " + repo))
         printProfile(t.profile)
 
+    case "log":
+        // 进度是自动算出来的，不靠谁记得去写 —— 任务库里本来就有全部素材。
+        var repo = FileManager.default.currentDirectoryPath
+        if let p = rest.first(where: { !$0.hasPrefix("--") }) {
+            repo = RepoRegistry.all().first { $0.alias == p }?.localPath
+                ?? NSString(string: p).expandingTildeInPath
+        }
+        print(Ansi.dim(repo))
+        print(ProgressLog.render(repo: repo, tasks: TaskStore.all())
+            .replacingOccurrences(of: ProgressLog.begin, with: "")
+            .replacingOccurrences(of: ProgressLog.end, with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines))
+
     case "list":
         let tasks = TaskStore.all()
         if tasks.isEmpty { print(Ansi.dim("任务队列是空的。llmq work add \"...\" 加一个。")); return }

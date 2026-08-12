@@ -2560,3 +2560,96 @@ final class StickinessTests: XCTestCase {
                           "粘性盖过了额度差距，一个仓库会被绑死在一个平台上")
     }
 }
+
+// MARK: - 自动进度记录
+
+final class ProgressLogTests: XCTestCase {
+
+    private func t(_ id: String, _ prompt: String, repo: String = "/r",
+                   state: WorkTask.State = .done, files: Int? = 2) -> WorkTask {
+        var x = WorkTask(id: id, prompt: prompt, repo: repo)
+        x.state = state
+        x.changedFiles = files
+        x.endedAt = Date()
+        return x
+    }
+
+    /// **最要紧的一条**：段外是人写的东西，重写机器段不能碰它。
+    /// 碰了的话，这个机制就从「帮人省事」变成「吃掉人的工作」。
+    func testHumanWrittenTextOutsideTheBlockSurvives() {
+        let old = """
+            # 实现状态
+
+            ## 还没做的
+            - 上限学习写回，拟合离散度太大
+
+            \(ProgressLog.begin)
+            旧的自动内容
+            \(ProgressLog.end)
+
+            ## 踩过的坑
+            合成解码器对缺键零容忍。
+            """
+        let new = ProgressLog.replaceBlock(in: old, with:
+            ProgressLog.begin + "\n新内容\n" + ProgressLog.end)
+        XCTAssertTrue(new.contains("上限学习写回，拟合离散度太大"))
+        XCTAssertTrue(new.contains("合成解码器对缺键零容忍。"))
+        XCTAssertTrue(new.contains("新内容"))
+        XCTAssertFalse(new.contains("旧的自动内容"), "旧的机器内容该被换掉")
+    }
+
+    /// 文件里没有标记（比如人手写的老 STATUS.md）就追加，不能覆盖全文。
+    func testAppendsWhenNoMarkerPresent() {
+        let new = ProgressLog.replaceBlock(in: "# 状态\n\n人写的。\n",
+                                           with: ProgressLog.begin + "\nX\n" + ProgressLog.end)
+        XCTAssertTrue(new.contains("人写的。"))
+        XCTAssertTrue(new.contains("X"))
+    }
+
+    /// 只算这个仓库的活 —— 混进别的仓库的进度比没有进度更误导。
+    func testOnlyCountsTasksForThisRepo() {
+        let out = ProgressLog.render(repo: "/r", tasks: [
+            t("a", "本仓库的活"), t("b", "别人的活", repo: "/other")])
+        XCTAssertTrue(out.contains("本仓库的活"))
+        XCTAssertFalse(out.contains("别人的活"))
+    }
+
+    /// 空状态要自证：分不清「没落地过」和「进度没在记」等于没写。
+    func testEmptyStateExplainsItself() {
+        let out = ProgressLog.render(repo: "/r", tasks: [])
+        XCTAssertTrue(out.contains("还没有任务落地"))
+    }
+
+    /// 卡住的比做完的更值钱 —— 下一个人最该知道「哪儿停了、为什么」。
+    func testStuckTasksAreListedWithReason() {
+        var b = t("c1", "改了构建脚本", state: .blocked)
+        b.note = "碰到高危路径，等人工确认"
+        let out = ProgressLog.render(repo: "/r", tasks: [b])
+        XCTAssertTrue(out.contains("等人工确认"))
+        XCTAssertTrue(out.contains("改了构建脚本"))
+    }
+
+    /// 主动丢掉的不是「卡住」。把已放弃说成卡住，会让人去查一个没人在等的东西。
+    func testDiscardedTasksAreNotReportedAsStuck() {
+        var d = t("c2", "验证闸门用的一次性用例", state: .failed)
+        d.discardedAt = Date()
+        d.discardReason = "手动取消"
+        let out = ProgressLog.render(repo: "/r", tasks: [d])
+        XCTAssertFalse(out.contains("卡着的"), "被丢弃的任务不该出现在卡住名单里")
+    }
+
+    /// 表格不能被任务描述里的竖线或换行撑塌。
+    func testTableIsNotBrokenByPipesOrNewlines() {
+        let out = ProgressLog.render(repo: "/r", tasks: [t("d", "改 a|b\n第二行")])
+        let row = out.split(separator: "\n").first { $0.contains("改 a") }
+        XCTAssertNotNil(row)
+        XCTAssertEqual(row?.filter { $0 == "|" }.count, 5, "一行五根竖线，多了就是塌了")
+    }
+
+    /// 改了好几个文件却没留说明的，要标出来 —— 缺口本身必须可见。
+    func testUndocumentedChangeIsFlagged() {
+        let out = ProgressLog.render(repo: "/r", tasks: [t("e", "大改", files: 7)],
+                                     needsNote: ["e"])
+        XCTAssertTrue(out.contains("说明待补"))
+    }
+}
