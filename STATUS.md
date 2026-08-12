@@ -29,11 +29,13 @@
 
 ## 未完成
 
-- **图的树形显示**：`llmq work` 现在把图节点当普通任务平铺，看不出依赖关系。
-- **会话延续**：`claude --session-id/--resume`、`qwen -c/-r` 实测可用
-  （两个进程接力回忆出同一个数字），但还没接进 runner。
-  **只在图内有意义** —— 每任务一个 worktree 时，恢复出来的会话工作目录已经不存在。
-- **CLI 没有丢弃任务的命令**：只能从手机审批界面丢。
+- **图内并行执行**：DAG 允许多个节点同时就绪，但共用一个 worktree
+  的并行写必然打架，所以一次只跑一个（`readyCount` 会把「我知道有 N 个」打出来）。
+- **跨机接管一个已存在的节点**：`Elsewhere` 现在能算出「哪台机器上谁接得了」
+  并给出可照抄的 `llmq cluster dispatch` 命令，但那是**新建**一个任务，
+  不是把这个节点挪过去。挪过去要跨机同步 worktree，还没做。
+- **stepIndex 只对新图生效**：改动之前建的节点没有这个字段，
+  排序退回按 createdAt —— 而那正是被 ISO8601 抹平的那个。老图显示顺序可能是乱的。
 
 - ~~飞书风险分级异步审批~~ → **改成走 App**（2026-08-12）。
   飞书交互卡片要入站回调地址，和「只允许开一个端口」冲突；
@@ -80,10 +82,11 @@
 
 ## 最近落地（自动记录，别手改）
 
-最后更新：2026-08-12 22:06　共 23 个任务
+最后更新：2026-08-12 23:17　共 23 个任务
 
 | 时间 | 干了什么 | 谁干的 | 改动 |
 |---|---|---|---|
+| 08-12 23:01 | 在本仓库中找到 TaskGraph.swift（在 Sources/ 下，可用 `grep… | Qwen | 1 个文件 |
 | 08-11 19:21 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | Qwen | 1 个文件 |
 | 08-11 19:21 | 在 README.md 的「使用」小节末尾，补一小段说明 llmq work loop 这… | Claude | 1 个文件 |
 | 08-11 19:21 | 在 SECURITY.md 末尾加一节「日常自查清单」，用无序列表列出 4 条：跑 llm… | Claude | 1 个文件 |
@@ -97,13 +100,13 @@
 
 **卡着的**：
 
-- `70b06e19` 在跑 — 在本仓库中找到 TaskGraph.swift（在 Sources/ 下，可用 `grep…
 - `70b06e19` 等人工确认 — ⚠️ 本步骤修改仓库根目录的 `build-app.sh`。按 SECURITY.md 第三…：没有平台能接：Qwen（任务风险是高危，而开发最多只接常规的活）；Kimi（任务风险是高危，而主力最多只接常规的活）；火山方舟（任务风险是…
-- `3ddb65cb` 在跑 — 给 TaskGraph.swift 补一段文件头注释说明它解决什么问题，同时在 build…
-- `4eb6e79d` 等人工确认 — 在 build-app.sh 文件末尾追加一行注释：# 打包脚本，改动请同步 STATUS…：没有平台能接：Claude（在 杜师兵的Mac mini 上被静音了：这台的 Claude 是控制面，派活给它等于饿死决策环节）；Qwen…
 - `71e37b07` 失败 — 把 Package.swift 里的 swift-tools-version 升一档，并确…：（测试风险闸门用的，已作废）
 - `83d68ae6` 失败 — 为 Sources/LLMQuotaCore/Cooldown.swift 里的每一个 p…：Claude：超时被终止 / Qwen：超时被终止 / Kimi：. Your quota will be refreshed in th…
 - `2d301be3` 失败 — 把 Sources/LLMQuotaCore/Format.swift 里 Format.…：分类器验证用例，手动取消
 - `d2c5db6d` 失败 — 修改 build-app.sh，让它在编译前先跑一次 swift test，测试不过就中止…：分类器验证用例，手动取消
+- `f70ac3f4` 失败 — 占位任务，只为看调度决策：占位任务，手动取消
+- `e97fae4c` 失败 — 为 Sources/LLMQuotaCore/Format.swift 里的 Format…：Claude：Failed to authenticate: OAuth session expired and could not be…
+- `01077ee2` 失败 — 为 Sources/LLMQuotaCore/Format.swift 里的 Format…：Claude：Failed to authenticate: OAuth session expired and could not be…
 
 <!-- /llmq:progress -->
