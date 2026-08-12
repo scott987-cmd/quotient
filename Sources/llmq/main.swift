@@ -1583,6 +1583,17 @@ func cmdWorkLoop(_ args: [String]) throws {
         print(Ansi.yellow("回收孤儿任务 ") + Ansi.dim(x.id + "  " + (x.note ?? "")))
     }
 
+    // **回收完要对账。**
+    //
+    // 孤儿回收把任务直接改成 failed，绕过了 runOneTask 结尾那次对账 ——
+    // 于是下游停在 queued，既不就绪也没有 note，而且**压着储备池的生成闸门**。
+    // 实测：s2 被回收成 failed 之后，s3 在 queued 上躺了一个多小时，
+    // 每 30 分钟打印一次「空闲中」，看起来一切正常。
+    for x in TaskGraph.reconcile(TaskStore.all()) {
+        try? TaskStore.append(x)
+        print(Ansi.dim("  对账 " + x.id + "  " + (x.note ?? "")))
+    }
+
     print(Ansi.bold("工作循环已启动")
         + Ansi.dim("  每 \(Int(policy.tickSeconds))s 查一次队列"
             + " · 每小时最多 \(policy.maxTasksPerHour) 个任务"

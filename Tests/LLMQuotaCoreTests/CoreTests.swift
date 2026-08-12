@@ -4485,3 +4485,45 @@ final class SelfYieldTests: XCTestCase {
         XCTAssertFalse(ranByUs)
     }
 }
+
+// MARK: - 超时清理不能杀掉自己
+
+final class TimeoutKillTests: XCTestCase {
+
+    /// **`kill(-0, SIGKILL)` 会杀掉调用者所在进程组的全部进程。**
+    ///
+    /// 原来超时清理写的是 `kill(-p.processIdentifier, SIGKILL)`，
+    /// 而 `processIdentifier` 在进程已退出时是 0 —— 于是那句话变成
+    /// 「杀掉我自己所在的整个进程组」。worker 就是这么反复自杀的：
+    /// 任务跑到一半「worker 重启时它正在执行」，launchctl 状态 -9，
+    /// 而我并没有发布。
+    ///
+    /// 这条测试只钉住语义边界：**负数 pid 是进程组，0 是自己那一组**。
+    func testNegativeZeroMeansOwnProcessGroup() {
+        // kill(0, 0) 是对自己所在进程组做存在性检查 —— 必然成功。
+        // 也就是说 `kill(-0, SIGKILL)` 打得中自己。
+        XCTAssertEqual(kill(0, 0), 0, "0 指向调用者自己的进程组")
+    }
+
+    /// 超时清理必须只针对那一个子进程，而且 pid 必须是正数。
+    func testOnlyPositivePidIsKillable() {
+        let me = ProcessInfo.processInfo.processIdentifier
+        XCTAssertGreaterThan(me, 0)
+        XCTAssertEqual(kill(me, 0), 0, "正数 pid 指向那一个进程")
+    }
+
+    /// 超时的进程要被真的杀掉，而且要报 timedOut。
+    func testTimeoutKillsChildAndReports() {
+        let r = Proc.run("/bin/sleep", ["30"], cwd: "/tmp", env: [:], timeout: 1)
+        XCTAssertTrue(r.timedOut, "超时事实要报出来")
+        XCTAssertNotEqual(r.exitCode, 0)
+    }
+
+    /// 正常结束的进程不该被标成超时。
+    func testFastProcessIsNotMarkedTimedOut() {
+        let r = Proc.run("/bin/echo", ["ok"], cwd: "/tmp", env: [:], timeout: 30)
+        XCTAssertFalse(r.timedOut)
+        XCTAssertEqual(r.exitCode, 0)
+        XCTAssertTrue(r.stdout.contains("ok"))
+    }
+}

@@ -899,8 +899,25 @@ public enum Proc {
         }
         if p.isRunning {
             timedOut = true
-            // 杀整个进程组，避免留下孤儿。
-            kill(-p.processIdentifier, SIGKILL)
+            // **不能 `kill(-pid)`。**
+            //
+            // 那句原本想「杀整个进程组，避免留下孤儿」，但有两个致命问题：
+            //
+            // 1. Foundation **不会**把子进程放进新的进程组，所以它继承的是
+            //    调用者的组 —— `-childPid` 指向的那个组多半根本不存在，
+            //    「杀掉整组」这个意图本来就落空了。
+            // 2. 更要命的是 `processIdentifier` 在进程已经退出时会是 **0**，
+            //    而 `kill(-0, SIGKILL)` 在 POSIX 里的含义是
+            //    **杀掉调用者所在进程组的所有进程** —— worker 把自己杀了。
+            //
+            // 这正好解释了那串查不出原因的现象：任务跑到一半「worker 重启时
+            // 它正在执行」，worker 的 launchctl 状态是 -9（被 SIGKILL），
+            // 而我并没有发布。一个为了清理孤儿写的兜底，
+            // 变成了每次超时就自杀一次。
+            //
+            // 只杀这一个子进程，而且先确认 pid 是正数。
+            let pid = p.processIdentifier
+            if pid > 0 { kill(pid, SIGKILL) }
             p.terminate()
         }
         p.waitUntilExit()
