@@ -505,6 +505,55 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.dim("  解冻 " + x.id + "  " + (x.note ?? "")))
         }
 
+    case "discard":
+        // 丢弃原来只能从手机的审批界面走 —— 而那个界面只覆盖
+        // 「跑完了、碰到高危路径、在等你点」这一种情况。
+        // 队列里一个还没跑的任务、一个失败后不想再试的任务，
+        // 在命令行里都没有办法处理，只能去手改 tasks.jsonl。
+        guard let id = rest.first else {
+            print("用法：llmq work discard <任务id|图id> [理由]"); exit(2)
+        }
+        let reason = rest.count > 1 ? rest[1...].joined(separator: " ") : "人工丢弃"
+        let allD = TaskStore.all()
+
+        // 图按整张丢。**半张图没有意义** —— 留下的那几步既落不了地
+        //（review 要求整张图终态），也没人会去跑（上游被丢了）。
+        let inGraph = allD.filter { $0.graphID == id }
+        let targets = inGraph.isEmpty
+            ? allD.filter { $0.id == id || $0.id.hasSuffix(id) }
+            : inGraph
+        guard !targets.isEmpty else {
+            print(Ansi.red("找不到任务或图 " + id)); exit(1)
+        }
+        if !inGraph.isEmpty {
+            print(Ansi.yellow("这是一张图，整张丢（\(inGraph.count) 步）"))
+        }
+
+        var wipedWorktrees: Set<String> = []
+        for var t in targets {
+            // 正在跑的不能丢：进程还在写那个工作区，
+            // 这时候删掉它等于把一个活着的 agent 的 cwd 抽走。
+            if t.state == .running, let pid = t.runnerPID, pid > 0, kill(pid, 0) == 0 {
+                print(Ansi.red("跳过 \(t.id)：还在跑（进程 \(pid)）。"
+                               + "要停它先 kill，再 discard。"))
+                continue
+            }
+            if let b = t.branch, !wipedWorktrees.contains(b) {
+                wipedWorktrees.insert(b)
+                Review.discard(repo: t.repo, branch: b, reason: reason)
+            }
+            t.state = .failed
+            t.discardedAt = Date()
+            t.discardReason = reason
+            t.frozenBy = nil
+            t.note = "人工丢弃：" + reason
+            try TaskStore.append(t)
+            print(Ansi.green("已丢弃 ") + t.id + Ansi.dim("  " + (t.stepTitle ?? "")))
+        }
+        if let g = targets.first?.graphID { GraphSession.forgetGraph(g) }
+        // 丢完要对账：被它冻住的下游现在该跟着变了。
+        for x in TaskGraph.reconcile(TaskStore.all()) { try? TaskStore.append(x) }
+
     case "log":
         // 进度是自动算出来的，不靠谁记得去写 —— 任务库里本来就有全部素材。
         var repo = FileManager.default.currentDirectoryPath
@@ -848,7 +897,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|approve|retry|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|approve|retry|discard|log]")
         exit(2)
     }
 }
@@ -1104,7 +1153,15 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             && task.askRounds < Ask.Policy.maxRounds
             && resumedAnswer == nil
         if mayAsk { effectivePrompt += AskContract.clause(askFile: askFile.path) }
-        let cmd = pick.runner.command(prompt: effectivePrompt, cwd: ws.path)
+        // 图内接力复用同一个会话：后续步骤不用把仓库重读一遍。
+        // 只在图内做 —— 普通任务各有各的 worktree，恢复出来的会话
+        // 工作目录已经不存在了。
+        let session = GraphSession.mode(graphID: task.graphID, platform: pick.platform)
+        if case .resume(let id) = session {
+            print(Ansi.dim("  接上会话 " + String(id.prefix(8)) + "（省去重读仓库）"))
+        }
+        let cmd = pick.runner.command(prompt: effectivePrompt, cwd: ws.path,
+                                      session: session)
         let attemptTimeoutPreview = ProcessInfo.processInfo.environment["LLMQ_ATTEMPT_TIMEOUT"]
             .flatMap(Double.init) ?? task.profile?.timeout ?? perAttemptTimeout
         print(Ansi.dim(String(format: "  执行中…（单次上限 %.0f 秒）", attemptTimeoutPreview)))
@@ -1361,6 +1418,23 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 }
             }
         }
+        // 会话记录的维护。
+        //
+        // 建成功了要记下来，否则下一轮又走 create，而 CLI 会报
+        // 「session id 已被占用」直接失败 —— 一个优化把任务弄挂了。
+        //
+        // 失败了就忘掉：会话可能被 CLI 自己清了、或者机器换了。
+        // 不忘的话每一轮都拿同一个不存在的 id 去 resume，**永远失败**。
+        // 宁可下次从零开始（只是多烧一点探索），也不能卡死。
+        if task.state == .done {
+            if case .create(let id) = session {
+                GraphSession.remember(graphID: task.graphID, platform: pick.platform, id: id)
+            }
+        } else if case .resume = session {
+            GraphSession.forget(graphID: task.graphID, platform: pick.platform)
+            print(Ansi.dim("  这一轮用的是恢复会话且没成 —— 已丢弃会话记录，下次从零开始"))
+        }
+
         // 跑通了就把这个平台的冷却清掉，连续失败计数归零。
         if task.state == .done { CooldownLedger.clear(pick.platform) }
 

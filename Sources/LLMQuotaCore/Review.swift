@@ -199,6 +199,8 @@ public enum Review {
             if let path = worktreePath(repo: repo, branch: branch) {
                 GitWorkspace.cleanup(repo: repo, path: path, graphFinished: true)
             }
+            // 图没了，它名下的会话记录也没用了 —— 不清的话这个文件只增不减。
+            GraphSession.forgetGraph(String(branch.dropFirst("agent/graph/".count)))
         }
         // 落地即记账。挂在这里而不是任务完成时：任务完成时干活的人还在自己的
         // 分支里，几个分支各写各的进度，合过来每次都冲突在同一段。

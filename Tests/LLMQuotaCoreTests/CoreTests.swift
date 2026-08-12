@@ -3936,3 +3936,117 @@ final class ElsewhereTests: XCTestCase {
         XCTAssertFalse(h.contains("\n加一行"), "换行会把命令截断，必须压成一行")
     }
 }
+
+// MARK: - 图内会话延续
+
+final class GraphSessionTests: XCTestCase {
+
+    override func setUp() {
+        GraphSession.fileOverride = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("gs-\(UUID().uuidString).json")
+    }
+    override func tearDown() {
+        if let f = GraphSession.fileOverride { try? FileManager.default.removeItem(at: f) }
+        GraphSession.fileOverride = nil
+    }
+
+    /// **不是图内节点就不复用会话。**
+    ///
+    /// 普通任务各有各的 worktree，恢复出来的会话工作目录已经不存在了 ——
+    /// agent 会在一个空目录里找「上一步的改动」，然后报告说找不到。
+    func testPlainTaskGetsFreshSession() {
+        XCTAssertEqual(GraphSession.mode(graphID: nil, platform: .claude), .fresh)
+    }
+
+    /// 第一次是 create，记下之后变 resume。
+    ///
+    /// 两者用的是**不同的 CLI 参数**（--session-id vs --resume），
+    /// 实测过：第二次还用 --session-id 会报「already in use」直接失败。
+    func testFirstCreateThenResume() {
+        guard case .create(let id) = GraphSession.mode(graphID: "g", platform: .claude)
+        else { return XCTFail("首次该是 create") }
+        GraphSession.remember(graphID: "g", platform: .claude, id: id)
+        XCTAssertEqual(GraphSession.mode(graphID: "g", platform: .claude), .resume(id))
+    }
+
+    /// 不同平台各有各的会话 —— 它们是不同厂商的不同进程，串不到一起。
+    func testSessionsArePerPlatform() {
+        GraphSession.remember(graphID: "g", platform: .claude, id: "A")
+        guard case .create = GraphSession.mode(graphID: "g", platform: .qwen)
+        else { return XCTFail("qwen 该有自己的会话") }
+    }
+
+    /// 不同图各有各的会话。
+    func testSessionsArePerGraph() {
+        GraphSession.remember(graphID: "g1", platform: .claude, id: "A")
+        guard case .create = GraphSession.mode(graphID: "g2", platform: .claude)
+        else { return XCTFail("另一张图不该接到 g1 的会话上") }
+    }
+
+    /// **恢复失败要能忘掉。**
+    ///
+    /// 会话可能被 CLI 自己清了、或者机器换了。不忘的话每一轮都拿同一个
+    /// 不存在的 id 去 resume，永远失败 —— 一个为了省额度加的优化，
+    /// 变成让任务再也跑不成的单点故障。
+    func testForgetFallsBackToCreate() {
+        GraphSession.remember(graphID: "g", platform: .claude, id: "A")
+        GraphSession.forget(graphID: "g", platform: .claude)
+        guard case .create = GraphSession.mode(graphID: "g", platform: .claude)
+        else { return XCTFail("忘掉之后该重新创建") }
+    }
+
+    /// 图跑完清掉它名下所有会话，别让这个文件只增不减。
+    func testForgetGraphClearsAllPlatforms() {
+        GraphSession.remember(graphID: "g", platform: .claude, id: "A")
+        GraphSession.remember(graphID: "g", platform: .qwen, id: "B")
+        GraphSession.remember(graphID: "other", platform: .claude, id: "C")
+        GraphSession.forgetGraph("g")
+        guard case .create = GraphSession.mode(graphID: "g", platform: .claude)
+        else { return XCTFail("g 的会话该没了") }
+        XCTAssertEqual(GraphSession.mode(graphID: "other", platform: .claude), .resume("C"),
+                       "别的图不能被误伤")
+    }
+
+    // MARK: 执行器参数
+
+    /// claude：首次 --session-id，后续 --resume。参数用错会直接失败。
+    func testClaudeUsesTheRightFlagForEachPhase() {
+        let r = ClaudeRunner()
+        let create = r.command(prompt: "p", cwd: "/tmp", session: .create("U1"))
+        XCTAssertTrue(create.args.contains("--session-id"))
+        XCTAssertTrue(create.args.contains("U1"))
+        XCTAssertFalse(create.args.contains("--resume"))
+
+        let resume = r.command(prompt: "p", cwd: "/tmp", session: .resume("U1"))
+        XCTAssertTrue(resume.args.contains("--resume"))
+        XCTAssertFalse(resume.args.contains("--session-id"),
+                       "第二次还用 --session-id 会报 already in use")
+    }
+
+    /// fresh 时一个会话参数都不能带。
+    func testFreshCarriesNoSessionFlags() {
+        let a = ClaudeRunner().command(prompt: "p", cwd: "/tmp", session: .fresh).args
+        XCTAssertFalse(a.contains("--session-id"))
+        XCTAssertFalse(a.contains("--resume"))
+        XCTAssertFalse(QwenRunner().command(prompt: "p", cwd: "/tmp", session: .fresh)
+            .args.contains("-c"))
+    }
+
+    /// qwen 不能自选 id，只能 -c；而且只在 resume 时加。
+    func testQwenUsesContinueOnlyWhenResuming() {
+        let a = QwenRunner().command(prompt: "p", cwd: "/tmp", session: .resume("忽略")).args
+        XCTAssertTrue(a.contains("-c"))
+        XCTAssertFalse(a.contains("忽略"), "qwen 的会话 id 是它自己生成的，我们塞不进去")
+    }
+
+    /// **不支持会话的执行器必须原样忽略。**
+    /// 给一个不认识 --resume 的 CLI 塞这个参数，它会报参数错误 ——
+    /// 而那看起来像任务失败。
+    func testRunnersWithoutSupportIgnoreSession() {
+        for r in RunnerRegistry.all where !(r is ClaudeRunner) && !(r is QwenRunner) {
+            let a = r.command(prompt: "p", cwd: "/tmp", session: .resume("U1")).args
+            XCTAssertFalse(a.contains("U1"), "\(r.binaryName) 不该收到会话 id")
+            XCTAssertFalse(a.contains("--resume"), "\(r.binaryName) 不该收到 --resume")
+        }
+    }
+}

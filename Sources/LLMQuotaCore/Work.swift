@@ -566,9 +566,21 @@ public protocol AgentRunner: Sendable {
     var canEdit: Bool { get }
     /// 无头执行。cwd 是独立 worktree，不是用户的工作区。
     func command(prompt: String, cwd: String) -> (launchPath: String, args: [String], env: [String: String])
+
+    /// 带会话延续的版本。默认实现忽略 session —— 不支持的执行器不用改。
+    func command(prompt: String, cwd: String, session: GraphSession.Mode)
+        -> (launchPath: String, args: [String], env: [String: String])
 }
 
 public extension AgentRunner {
+    /// 默认忽略会话延续。**只有真支持的执行器才覆盖它** ——
+    /// 给一个不认识 --resume 的 CLI 塞这个参数，它会直接报参数错误，
+    /// 而那看起来像任务失败。
+    func command(prompt: String, cwd: String, session: GraphSession.Mode)
+        -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd)
+    }
+
     /// 绝大多数执行器都是能改文件的编码 agent。
     var canEdit: Bool { true }
     var binaryPath: String? { Proc.which(binaryName) }
@@ -583,8 +595,26 @@ public struct ClaudeRunner: AgentRunner {
     public func command(
         prompt: String, cwd: String
     ) -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd, session: .fresh)
+    }
+
+    /// 实测过的语义（别照文档猜）：
+    ///
+    ///   `--session-id <uuid>`  第一次**创建**。再用同一个会报
+    ///                          「Session ID … is already in use」直接失败。
+    ///   `--resume <uuid>`      恢复，上一轮的上下文还在。
+    ///
+    /// 所以首轮和后续用的是**两个不同的参数**，不能只记一个 id 就完事。
+    public func command(
+        prompt: String, cwd: String, session: GraphSession.Mode
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
         var extra: [String] = []
         if let m = RunnerConfigStore.load().model(for: platform) { extra += ["--model", m] }
+        switch session {
+        case .fresh: break
+        case .create(let id): extra += ["--session-id", id]
+        case .resume(let id): extra += ["--resume", id]
+        }
         return (
             binaryPath ?? "claude",
             [
@@ -614,7 +644,19 @@ public struct QwenRunner: AgentRunner {
     public func command(
         prompt: String, cwd: String
     ) -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd, session: .fresh)
+    }
+
+    /// qwen 不让我们自选会话 id（`-r` 要的是它自己生成的那个），
+    /// 只能用 `-c`＝「恢复**当前项目**的最近会话」。
+    /// 这在图里成立、在普通任务里不成立：图内节点共用一个 worktree，
+    /// 路径稳定；而普通任务各有各的 worktree，恢复出来的会话
+    /// 工作目录已经不存在了。
+    public func command(
+        prompt: String, cwd: String, session: GraphSession.Mode
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
         var args = ["-p", prompt, "--approval-mode", "yolo"]
+        if case .resume = session { args.insert("-c", at: 0) }
         // 模型偏好来自账号级配置，不写死在代码里 —— 同一个 CLI 能选十几个模型，
         // 选哪个取决于买了什么档，跟代码无关。
         if let m = RunnerConfigStore.load().model(for: platform) {
