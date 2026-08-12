@@ -20,12 +20,15 @@
 | **上限学习器** | `LimitLearner.swift` | `llmq learn` 输出反解表（官方百分比反解 + 下限估计） |
 | **储备任务池** | `ReservePool.swift` | `llmq work reserve` 列出扫到的结构化事实 |
 | **评审落地闸门** | `Review.swift` | `llmq work review --auto` 在临时 worktree 里验证合并结果 |
-| 飞书通知 | `Work.swift:974` `Notifier.feishu` | worker 日志里有「飞书通知未发出/已发出」 |
+| **高危路径闸** | `Work.swift` `riskyPathsTouched` | 改到 `*.sh`/`Package.swift`/`Tools/**` 不提交、转人工 |
+| **高危改动审批** | `Approval.swift` | `llmq work approve <id>`；手机上点按钮走同一函数 |
+| 飞书通知 | `Work.swift` `Notifier.feishu` | 只做单向通知，审批不走它（要入站回调，和「只开一个端口」冲突） |
 
 ## 未完成
 
-- **飞书风险分级异步审批**：只有单向通知（`Notifier.feishu`），
-  没有「高危改动 → 推卡片 → 等人点同意 → 继续」这条回路。
+- ~~飞书风险分级异步审批~~ → **改成走 App**（2026-08-12）。
+  飞书交互卡片要入站回调地址，和「只允许开一个端口」冲突；
+  Ask 通道走 iCloud，零入站端口，App 已经能渲染成按钮。
 - **上限学习结果自动写回配置**：`llmq learn --apply` 存在，但当前拟合
   离散度 28.5%（阈值 15%），判为不可信、不会写入。需要更多官方百分比样本。
 - **MiniMax 的媒体能力**：`mmx` 能生图/视频/音乐/语音，调度器只把它当分诊器用。
