@@ -134,7 +134,32 @@ public enum RepoRegistry {
 
     public static func save(_ list: [RepoAlias]) throws {
         try Paths.ensureDirectories()
-        let data = try SnapshotCoding.prettyEncoder().encode(list)
+        // **保住老版本不认识的字段。**
+        //
+        // 这份配置在 iCloud 上被多台机器共享，而各台的二进制版本不一定同步。
+        // 旧版本读进来（合成解码器丢掉它不认识的键）、改一个字段、再写回去 ——
+        // 新字段就被静默洗掉了，两边都不会有任何报错。
+        //
+        // 实际发生过：一台机器用旧二进制跑了 `llmq repo verify`，
+        // 把刚写进去的 pathByMachine 整个抹掉，于是跨机派活又开始把
+        // 本机路径发给对端。查了一圈才发现是「版本落后的客户端写了共享配置」。
+        //
+        // 做法是**按 alias 合并**：磁盘上那份里存在、而内存这份里为空的
+        // 未知字段，原样保留。这里只能保护已知字段，真正彻底的做法是
+        // 存原始 JSON 做深合并 —— 但那要引入一层通用容器，
+        // 对一份十来行的配置不值得。至少把最容易丢的这个保住。
+        var merged = list
+        if let old = try? Data(contentsOf: file),
+           let prev = try? SnapshotCoding.decoder().decode([RepoAlias].self, from: old) {
+            let byAlias = Dictionary(prev.map { ($0.alias, $0) }, uniquingKeysWith: { a, _ in a })
+            for i in merged.indices {
+                guard let p = byAlias[merged[i].alias] else { continue }
+                for (machine, path) in p.pathByMachine where merged[i].pathByMachine[machine] == nil {
+                    merged[i].pathByMachine[machine] = path
+                }
+            }
+        }
+        let data = try SnapshotCoding.prettyEncoder().encode(merged)
         try data.write(to: file, options: .atomic)
     }
 
