@@ -546,6 +546,16 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
     /// 而且两台设备各算各的会得出不同的数。
     public var idleWindows: [WasteMeter.Report]
 
+    /// 这个平台正在冷却吗，为什么，到什么时候。
+    ///
+    /// **不发这个的话，空窗数会撒谎。**
+    /// 实测：Kimi 连续空了 19 个 5 小时窗 —— 看起来是「我们没在用它」，
+    /// 真相是它**额度用尽被限流**，我们试过、被拒了、退避了。
+    /// 那是订阅被用满，正好是浪费的反面。
+    /// 把它显示成「在漏的」，会让人去给一个正在限流的平台塞更多活。
+    public var cooldownUntil: Date?
+    public var cooldownReason: String?
+
     public var id: String { platform.rawValue }
 
     /// 装了却一直没用 —— 在所有平台里，这是最该考虑退订的那种。
@@ -578,7 +588,9 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         last30dBillableTokens: Int,
         last7dRequests: Int,
         topModels: [ModelUsage],
-        idleWindows: [WasteMeter.Report] = []
+        idleWindows: [WasteMeter.Report] = [],
+        cooldownUntil: Date? = nil,
+        cooldownReason: String? = nil
     ) {
         self.platform = platform
         self.planName = planName
@@ -601,6 +613,8 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         self.last7dRequests = last7dRequests
         self.topModels = topModels
         self.idleWindows = idleWindows
+        self.cooldownUntil = cooldownUntil
+        self.cooldownReason = cooldownReason
     }
 }
 

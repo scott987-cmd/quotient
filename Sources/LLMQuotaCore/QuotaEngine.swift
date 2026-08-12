@@ -126,6 +126,7 @@ public struct QuotaEngine: Sendable {
             .filter { $0.lane != .headless && ($0.requests > 0 || $0.prompts > 0) }
             .map(\.start).max()
 
+        let cooling = CooldownLedger.active(now: now)[plan.platform]
         let req30 = b30.reduce(0) { $0 + $1.requests }
         let tok30 = b30.reduce(0) { $0 + $1.billableTokens }
         let req7 = b7.reduce(0) { $0 + $1.requests }
@@ -159,7 +160,15 @@ public struct QuotaEngine: Sendable {
                 buckets: allBuckets,
                 windows: plan.limits.map(\.windowMinutes),
                 since: snapshots.map(\.retentionStart).min() ?? now.addingTimeInterval(-30 * 86400),
-                now: now)
+                now: now),
+            // 冷却状态要跟着发出去 —— 手机上看不到它的话，
+            // 「连续空 19 个窗口」会被当成「快去塞活」，
+            // 而真相是这个平台正被限流，塞了也进不去。
+            cooldownUntil: cooling?.until,
+            cooldownReason: cooling.map {
+                $0.cause.displayName
+                    + ($0.strikes > 1 ? "（连续第 \($0.strikes) 次）" : "")
+            }
         )
     }
 
