@@ -2807,6 +2807,8 @@ func usage() {
       llmq status              一行摘要（菜单栏/脚本用）
       llmq doctor              探测本机有哪些数据源、哪些采集器已验证
       llmq plan [edit]         查看/编辑各平台的套餐额度配置
+      llmq learn [--apply]     从真实用量反解各平台的额度上限
+      llmq security            暴露面自查（凭据权限、对外监听）
       llmq install-agent [秒]  安装 launchd 定时采集（默认 900 秒）
       llmq work <子命令>       任务队列与执行
       llmq cluster <子命令>    局域网跨机派活（双向 mTLS）
