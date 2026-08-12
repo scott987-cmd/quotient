@@ -266,13 +266,50 @@ public struct PlansConfig: Codable, Sendable {
                 limits: [QuotaLimit(id: "daily", label: "每日", windowMinutes: 1440,
                                     kind: .periodic, metric: .requests, hint: h)]
             ),
+            // Kimi 官方**不公布**可换算的数字（2026-08 查过帮助中心
+            // kimi.com/zh-cn/help/kimi-code/benefits）：只说存在「每 5 小时的
+            // 滚动频率窗口」和「以订阅日为起点每 7 天刷新」的额度，
+            // 各档具体多少要看自己的订阅页。第三方评测给的是 300–1200 次/5h
+            // 这种区间，不能当上限用。
+            //
+            // 好消息是它超限时的报错**自带重置时间**（"refreshed in the next
+            // cycle"，我们的探针已经据此算出冷却），所以即使没有上限值，
+            // 「什么时候能再用」这件事仍然是准的。
             PlatformPlan(
                 platform: .kimi, planName: "Kimi", currency: "CNY",
-                limits: [fiveHour(.requests, hint: h), monthly(.billableTokens, hint: h)]
+                limits: [
+                    fiveHour(.requests,
+                             hint: "官方不公布具体数字，只说有 5 小时滚动窗口。"
+                                 + "网上流传的 300–1200 次/5h 是第三方区间，不是上限。"),
+                    monthly(.billableTokens, hint: h),
+                ]
             ),
+            // GLM 是**唯一公布了确切数字、但我们仍然填不进去**的一家。
+            //
+            // 官方文档（docs.bigmodel.cn/cn/coding-plan/overview，2026-08 查）：
+            //   Lite  5 小时 2,000 积分 / 每周 10,000 积分
+            //   Pro   5 小时 12,000    / 每周 60,000
+            //   Max   5 小时 28,000    / 每周 140,000
+            //
+            // 单位是**积分**，不是次数也不是 token：积分按 token 消耗折算，
+            // 而且工作日 14:00–18:00（UTC+8）按 3 倍系数扣。
+            // 把 2000 填进 `.requests` 或 `.billableTokens` 都是错的 ——
+            // 那正是 Claude「225」那个教训的翻版：一个来源可靠、口径对不上的
+            // 数字，比没有数字更危险，因为它看起来像已经配好了。
+            //
+            // 要真正支持它，得先有 credits 口径 + 折算规则（含高峰系数），
+            // 或者找到官方回报已用积分的接口（像 Codex 那样）。在那之前留空。
             PlatformPlan(
                 platform: .glm, planName: "GLM Coding Plan", currency: "CNY",
-                limits: [fiveHour(.requests, hint: h), monthly(.billableTokens, hint: h)]
+                limits: [
+                    fiveHour(.requests,
+                             hint: "官方按「积分」计：Lite 2,000/5h、Pro 12,000、Max 28,000。"
+                                 + "积分按 token 折算且工作日 14–18 点 3 倍，"
+                                 + "和这里的「次数」口径对不上，别直接填那个数。"),
+                    monthly(.billableTokens,
+                            hint: "官方是每 7 天刷新的周积分：Lite 10,000、Pro 60,000、Max 140,000。"
+                                + "同样是积分口径。"),
+                ]
             ),
             PlatformPlan(
                 platform: .minimax, planName: "MiniMax", currency: "CNY",
