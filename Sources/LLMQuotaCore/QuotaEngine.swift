@@ -83,6 +83,23 @@ public struct QuotaEngine: Sendable {
         for limit in plan.limits {
             // 官方已经给了同长度窗口的真实数字，就不再用本地推算的那份覆盖它。
             if coveredWindows.contains(limit.windowMinutes) { continue }
+            // **窗口长度对不上，也不要再摆一条「未配置上限」。**
+            //
+            // 只按分钟数精确匹配是不够的：MiniMax 报的区间长度会变
+            // （实测出现过 300 和 240 分钟），于是模板里写死的「5 小时」
+            // 永远匹配不上官方的「4 小时」，两条并排显示 ——
+            // 一条是真实数字，另一条写着「未配置上限」。
+            //
+            // 用户看到的是同一个东西的两行自相矛盾的说法，
+            // 而那条空行不提供任何信息：官方已经直接告诉我们用了多少，
+            // 本地根本不需要上限就能算。
+            let isShortWindow = limit.windowMinutes < 24 * 60
+            if plan.preferOfficialQuota, limit.limit == nil,
+               liveOfficial.contains(where: {
+                   ($0.windowMinutes < 24 * 60) == isShortWindow
+               }) {
+                continue
+            }
             statuses.append(localStatus(
                 limit: limit, plan: plan,
                 buckets: allBuckets, byMachine: byMachineBuckets, now: now

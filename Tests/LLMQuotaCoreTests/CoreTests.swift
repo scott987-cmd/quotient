@@ -2909,3 +2909,61 @@ final class ToolPathTests: XCTestCase {
         }
     }
 }
+
+// MARK: - 官方额度与本地模板并存时的显示
+
+final class OfficialQuotaOverlapTests: XCTestCase {
+
+    private func plan(windows: [Int]) -> PlatformPlan {
+        PlatformPlan(
+            platform: .minimax, planName: "MiniMax",
+            limits: windows.map {
+                QuotaLimit(id: "w\($0)", label: "\($0)分钟", windowMinutes: $0,
+                           kind: .periodic, metric: .percent, limit: nil)
+            },
+            preferOfficialQuota: true)
+    }
+
+    private func snapshot(official: [OfficialQuota]) -> MachineSnapshot {
+        MachineSnapshot(
+            machineID: "m", machineName: "测试机", generatedAt: Date(),
+            retentionStart: Date(timeIntervalSince1970: 0),
+            platforms: [PlatformSnapshot(
+                platform: .minimax, detected: true, officialQuotas: official)])
+    }
+
+    private func official(_ id: String, minutes: Int, used: Double) -> OfficialQuota {
+        OfficialQuota(id: id, label: id, usedPercent: used, windowMinutes: minutes,
+                      resetsAt: Date().addingTimeInterval(3600),
+                      planType: "MiniMax", observedAt: Date())
+    }
+
+    /// **窗口长度对不上，也不该再摆一条「未配置上限」。**
+    ///
+    /// MiniMax 报的区间长度会变（实测出现过 300 和 240 分钟），
+    /// 而模板里写死 5 小时 —— 只按分钟数精确匹配的话，两条会并排显示：
+    /// 一条是官方真实数字，另一条写着「未配置上限」。
+    /// 同一件事的两行自相矛盾的说法，比只显示一行更糟。
+    func testMismatchedWindowLengthDoesNotProduceAnEmptyDuplicate() {
+        let e = QuotaEngine(config: PlansConfig(plans: [plan(windows: [300, 10080])]))
+        let d = e.buildDashboard(snapshots: [snapshot(official: [
+            official("interval", minutes: 240, used: 1),
+            official("weekly", minutes: 10080, used: 5),
+        ])])
+        let st = d.reports.first { $0.platform == .minimax }?.statuses ?? []
+        XCTAssertEqual(st.count, 2, "官方两条就该只显示两条，不该多出未配置的模板行")
+        XCTAssertTrue(st.allSatisfy { $0.isOfficial })
+    }
+
+    /// 但官方**没**覆盖到的那一类窗口，本地行必须留着 ——
+    /// 否则等于把一个真实存在的额度窗口从界面上抹掉了。
+    func testUncoveredWindowClassStillShows() {
+        let e = QuotaEngine(config: PlansConfig(plans: [plan(windows: [300, 10080])]))
+        let d = e.buildDashboard(snapshots: [snapshot(official: [
+            official("interval", minutes: 240, used: 1),   // 只有短窗
+        ])])
+        let st = d.reports.first { $0.platform == .minimax }?.statuses ?? []
+        XCTAssertTrue(st.contains { !$0.isOfficial && $0.limitID == "w10080" },
+                      "官方没报周额度，本地那条周窗口不能被顺手删掉")
+    }
+}
