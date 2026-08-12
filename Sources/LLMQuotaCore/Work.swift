@@ -796,6 +796,51 @@ public enum GitWorkspace {
     }
 
     /// 推送前扫密钥。命中就拒绝提交 —— agent 可能把凭据写进代码或日志。
+    /// 这次改动碰到的**高危路径**。空数组表示没碰。
+    ///
+    /// ## 为什么必须按实际改动判，而不是按任务描述
+    ///
+    /// 派活前的风险分级（`TaskProfile.Risk`）是**猜**的 —— 它读的是任务描述。
+    /// 而 agent 实际改了什么，只有跑完才知道：一句「补个文档注释」完全可能
+    /// 顺手动了 Package.swift。SECURITY.md 承诺的是「改到这些路径一律转人工」，
+    /// 承诺的对象是**改动**，不是描述。
+    ///
+    /// 这道闸门之前**根本不存在**：文档里写着，代码里没有。
+    /// 提交前只扫了密钥和跑了构建验证。一个「补文档」的任务改掉 CI 配置，
+    /// 会一路通过所有检查直接进分支。文档承诺一道不存在的防线，
+    /// 比没有这道防线更糟 —— 它让人以为已经被保护了。
+    ///
+    /// 名单和 SECURITY.md 第三节第 4 条逐字对应，改一处要改两处。
+    public static func riskyPathsTouched(in dir: String) -> [String] {
+        let out = git(["status", "--porcelain"], in: dir).stdout
+        var hits: [String] = []
+        for line in out.split(separator: "\n") {
+            // porcelain 格式：前两列是状态，第 4 列起是路径。
+            // 重命名是 "R  old -> new"，两边都要看。
+            let body = line.count > 3 ? String(line.dropFirst(3)) : ""
+            for path in body.components(separatedBy: " -> ") where !path.isEmpty {
+                let f = path.trimmingCharacters(in: .whitespaces)
+                if isRiskyPath(f) { hits.append(f) }
+            }
+        }
+        return Array(Set(hits)).sorted()
+    }
+
+    /// 单条路径算不算高危。
+    static func isRiskyPath(_ path: String) -> Bool {
+        let name = (path as NSString).lastPathComponent
+        if name.hasSuffix(".pbxproj") || name == "Package.swift" { return true }
+        if name.hasSuffix(".sh") { return true }
+        // 目录前缀。注意要匹配「以此开头」而不是「包含」——
+        // 包含的话 vendor/Tools/x 也会中，那不是我们要护的东西。
+        for prefix in ["Tools/", ".github/", "Scripts/", "fastlane/"] {
+            if path.hasPrefix(prefix) { return true }
+        }
+        // 项目文件是目录形式（Xcode），单独判一次。
+        if path.contains(".xcodeproj/") { return true }
+        return false
+    }
+
     public static func scanForSecrets(in dir: String) -> [String] {
         let r = git(["diff", "--cached", "--", "."], in: dir)
         let diff = r.stdout.isEmpty ? git(["diff"], in: dir).stdout : r.stdout

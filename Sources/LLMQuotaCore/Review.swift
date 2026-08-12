@@ -307,7 +307,7 @@ public enum Review {
             }
     }
 
-    static func worktreePath(repo: String, branch: String) -> String? {
+    public static func worktreePath(repo: String, branch: String) -> String? {
         let lines = GitWorkspace.git(["worktree", "list", "--porcelain"], in: repo)
             .stdout.split(separator: "\n").map(String.init)
         var current: String?

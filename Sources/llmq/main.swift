@@ -522,6 +522,33 @@ func cmdWork(_ args: [String]) throws {
         }
         print("\n" + Ansi.green("生成了 \(made) 个储备任务"))
 
+    // llmq work approve <任务id> —— 放行一个卡在高危路径闸上的任务
+    case "approve":
+        let id = rest.dropFirst().first ?? ""
+        guard !id.isEmpty, var t = TaskStore.all().first(where: { $0.id.hasPrefix(id) }) else {
+            print(Ansi.red("要给任务 id：llmq work approve <id>")); exit(2)
+        }
+        guard t.state == .blocked else {
+            print(Ansi.yellow("任务 \(t.id) 现在是 \(t.state)，不是等确认的状态")); exit(1)
+        }
+        let ws = Review.worktreePath(repo: t.repo, branch: t.branch ?? "")
+        guard let wsPath = ws else {
+            print(Ansi.red("找不到它的工作区，改动可能已经被清掉了")); exit(1)
+        }
+        let commit = GitWorkspace.git(["add", "-A"], in: wsPath)
+        guard commit.exitCode == 0,
+              GitWorkspace.git(["commit", "-m",
+                                "agent(\(t.platform?.rawValue ?? "?")): \(t.prompt.prefix(60))"
+                                    + "\n\n人工确认放行（碰到高危路径）"],
+                               in: wsPath).exitCode == 0 else {
+            print(Ansi.red("提交失败")); exit(1)
+        }
+        t.state = .done
+        t.note = "碰高危路径，人工确认后提交"
+        try TaskStore.append(t)
+        print(Ansi.green("已放行并提交到 ") + (t.branch ?? "?"))
+        print(Ansi.dim("接下来：llmq work review --auto 走验证合并"))
+
     case "cooldowns":
         let active = CooldownLedger.active()
         if active.isEmpty { print(Ansi.dim("没有平台处于冷却中。")); return }
@@ -695,7 +722,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|approve]")
         exit(2)
     }
 }
@@ -1065,9 +1092,32 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             task.branch = nil
         } else {
             let leaks = GitWorkspace.scanForSecrets(in: ws.path)
+            // 高危路径闸。SECURITY.md 第三节第 4 条承诺了它，但代码里一直没有 ——
+            // 提交前只扫密钥、跑构建。一个「补文档」的任务顺手改掉 Package.swift
+            // 或 CI 配置，会一路通过所有检查直接进分支。
+            //
+            // 判据是**实际改到的文件**，不是任务描述里的风险分级 ——
+            // 后者是派活前猜的，而 agent 真改了什么只有跑完才知道。
+            let risky = GitWorkspace.riskyPathsTouched(in: ws.path)
             if !leaks.isEmpty {
                 task.state = .failed
                 task.note = "改动里疑似含凭据（\(leaks.joined(separator: "、"))），已拒绝提交"
+            } else if !risky.isEmpty {
+                // 不提交、**保留工作区** —— 改动可能完全正确，只是需要你看一眼。
+                // 直接丢掉的话，一个正确的改动就白跑了。
+                task.state = .blocked
+                task.note = "碰到高危路径（\(risky.prefix(3).joined(separator: "、"))"
+                    + (risky.count > 3 ? " 等 \(risky.count) 个" : "") + "），等你确认"
+                print(Ansi.yellow("  ⚠︎ 碰到高危路径，没提交，等人确认：")
+                    + risky.prefix(5).joined(separator: "、"))
+                print(Ansi.dim("  改动留在 " + ws.path))
+                _ = Notifier.feishu(
+                    "任务 \(task.id) 改到了高危路径，等你确认：\n"
+                    + risky.prefix(8).joined(separator: "\n")
+                    + "\n\n看改动：cd \(ws.path) && git diff"
+                    + "\n放行：llmq work approve \(task.id)"
+                    + "\n丢弃：llmq work review --discard \(ws.branch)",
+                    subject: "高危改动待确认")
             } else {
                 // 提交前先验一次。**在提交之前**是刻意的：提交完再验的话，
                 // 坏代码已经落在分支上，还得再回滚一次；而且 work review

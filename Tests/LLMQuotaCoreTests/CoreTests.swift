@@ -2248,3 +2248,79 @@ final class ReservePoolTests: XCTestCase {
         XCTAssertTrue(facts.contains { $0.rule == .noTestReference && $0.symbol == "Undocumented" })
     }
 }
+
+// MARK: - 高危路径闸
+
+final class RiskyPathGateTests: XCTestCase {
+
+    /// 名单里的路径必须全部命中。
+    ///
+    /// 这道闸门属于「写错了不会报错、只会静默失去保护」那一类：
+    /// 漏判一条，一个「补文档」的任务就能顺手改掉 Package.swift 或 CI 配置，
+    /// 一路通过密钥扫描和构建验证直接进分支。
+    /// 名单和 SECURITY.md 第三节第 4 条逐字对应。
+    func testRiskyPathsAreAllCaught() {
+        let mustCatch = [
+            "Package.swift",
+            "build-app.sh",
+            "Scripts/release.sh",
+            "Tools/gen.py",
+            ".github/workflows/ci.yml",
+            "MyApp.xcodeproj/project.pbxproj",
+            "fastlane/Fastfile",
+            "Sources/deep/nested/thing.sh",
+        ]
+        for p in mustCatch {
+            XCTAssertTrue(GitWorkspace.isRiskyPath(p), "该拦却没拦：\(p)")
+        }
+    }
+
+    /// 普通路径不能误伤 —— 误报会让每个任务都卡住等人，等于关掉自动化。
+    func testOrdinaryPathsAreNotFlagged() {
+        let mustPass = [
+            "README.md",
+            "Sources/LLMQuotaCore/Work.swift",
+            "Tests/LLMQuotaCoreTests/CoreTests.swift",
+            "docs/design.md",
+            // 「包含 Tools/」但不是以它开头 —— 第三方目录里的同名子目录不该中。
+            "vendor/Tools/helper.swift",
+            // 名字里带 sh 但不是脚本
+            "Sources/Shell.swift",
+            "Sources/wash.swiftx",
+        ]
+        for p in mustPass {
+            XCTAssertFalse(GitWorkspace.isRiskyPath(p), "误伤了：\(p)")
+        }
+    }
+
+    /// 真的从 git 工作区里读出改动，而不是只测那个纯函数。
+    ///
+    /// 纯函数测过了不代表接线是对的 —— porcelain 的格式解析（前三列是状态、
+    /// 重命名是 "old -> new"）写错的话，闸门照样形同虚设。
+    func testGateReadsRealWorktreeChanges() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("risky-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let dir = tmp.path
+
+        XCTAssertEqual(GitWorkspace.git(["init", "-q"], in: dir).exitCode, 0)
+        try "hi".write(to: tmp.appendingPathComponent("README.md"),
+                       atomically: true, encoding: .utf8)
+        _ = GitWorkspace.git(["add", "-A"], in: dir)
+        _ = GitWorkspace.git(["-c", "user.email=t@t", "-c", "user.name=t",
+                              "commit", "-qm", "init"], in: dir)
+
+        // 只改普通文件 —— 不该报。
+        try "hi there".write(to: tmp.appendingPathComponent("README.md"),
+                             atomically: true, encoding: .utf8)
+        XCTAssertTrue(GitWorkspace.riskyPathsTouched(in: dir).isEmpty,
+                      "只改 README 不该触发")
+
+        // 新增一个脚本 —— 必须报。
+        try "#!/bin/sh\necho hi\n".write(to: tmp.appendingPathComponent("deploy.sh"),
+                                         atomically: true, encoding: .utf8)
+        let hits = GitWorkspace.riskyPathsTouched(in: dir)
+        XCTAssertTrue(hits.contains("deploy.sh"), "新增脚本没被拦：\(hits)")
+    }
+}
