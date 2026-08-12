@@ -4251,3 +4251,32 @@ final class DecomposeTriggerTests: XCTestCase {
         XCTAssertTrue(TaskDecomposer.shouldDecompose(task("改配置", risk: .sensitive)))
     }
 }
+
+// MARK: - 发布不能杀掉正在跑的活
+
+final class InFlightGuardTests: XCTestCase {
+
+    /// **判据必须是「进程还活着」，不能只看状态。**
+    ///
+    /// 亲身踩到：一个跑了 334 秒的任务被一次 `llmq release publish`
+    /// 干掉 —— agent 是 worker 的子进程，踢 worker 就把它一起杀了。
+    /// 那 334 秒的额度纯粹烧掉，图的后续步骤跟着停摆。
+    ///
+    /// 但只看 `state == .running` 又会矫枉过正：孤儿任务（进程早没了）
+    /// 也是 running，那会让 worker 永远不敢重启，新版本永远装不上。
+    func testOnlyLiveProcessesCountAsInFlight() {
+        var live = WorkTask(id: "a", prompt: "p", repo: "/r")
+        live.state = .running
+        live.runnerPID = ProcessInfo.processInfo.processIdentifier
+        XCTAssertEqual(kill(live.runnerPID!, 0), 0, "自己的进程活着")
+
+        var orphan = WorkTask(id: "b", prompt: "p", repo: "/r")
+        orphan.state = .running
+        orphan.runnerPID = 999_999
+        XCTAssertNotEqual(kill(orphan.runnerPID!, 0), 0, "孤儿的进程早没了")
+
+        var noPID = WorkTask(id: "c", prompt: "p", repo: "/r")
+        noPID.state = .running
+        XCTAssertNil(noPID.runnerPID, "老记录没有 pid，按孤儿处理")
+    }
+}

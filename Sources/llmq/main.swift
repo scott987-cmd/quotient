@@ -3222,8 +3222,30 @@ func cmdUpdate(_ rest: [String]) throws {
 func restartResidentServices() -> [String] {
     let listed = Proc.run("/bin/launchctl", ["list"], cwd: "/tmp", env: [:], timeout: 15)
     var done: [String] = []
+
+    // **有活正在跑就别重启 worker。**
+    //
+    // agent 是 worker 的子进程，踢一下 worker 就把它一起杀了。
+    // 亲身踩到：一个跑了 334 秒的任务被一次 `llmq release publish`
+    // 干掉，孤儿回收把它标成失败 —— 那 334 秒的额度纯粹烧掉了，
+    // 而且图的后续步骤跟着停摆。
+    //
+    // 换二进制本来就不急：worker 每 30 秒取一次任务，
+    // 手上这件干完、下一次自然重启时就换过来了。
+    // 为了早几分钟用上新版本而弄死一个正在跑的任务，是亏的。
+    let inFlight = TaskStore.all().filter {
+        $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? false)
+    }
+
     for label in ["com.llmquotabar.cluster", "com.llmquotabar.worker"] {
         guard listed.stdout.contains(label) else { continue }
+        if label == "com.llmquotabar.worker", let busy = inFlight.first {
+            let ran = busy.startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
+            print(Ansi.yellow("没重启 worker：") + Ansi.dim(
+                "\(busy.id) 正在跑（已 \(ran) 秒，\(busy.platform?.displayName ?? "?")）。"
+                + "踢它会把这个 agent 一起杀掉。新二进制等它干完自然生效。"))
+            continue
+        }
         let r = Proc.run("/bin/launchctl",
                          ["kickstart", "-k", "gui/\(getuid())/\(label)"],
                          cwd: "/tmp", env: [:], timeout: 30)
