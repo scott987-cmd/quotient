@@ -1573,6 +1573,26 @@ func cmdRunner(_ args: [String]) throws {
                 r.mutedOn.removeAll { $0 == me }
                 if r.mutedOn.isEmpty { r.muteReason = nil }
             }
+            // 留白比例：调度最多能吃掉这个平台额度的多少，剩下的归你自己用。
+            // 收百分数（20）而不是小数（0.2）—— 命令行里输 0.2 太容易写成 2，
+            // 而 2 会被当成 200% 直接把这个平台永久排除，且不报错。
+            if let v = opt("--reserve") {
+                if v == "default" {
+                    r.reserveFraction = nil
+                } else if let pct = Double(v.replacingOccurrences(of: "%", with: "")),
+                          pct >= 0, pct <= 100 {
+                    r.reserveFraction = pct / 100
+                } else {
+                    print(Ansi.red("--reserve 要一个 0–100 的百分数，或者 default")); exit(2)
+                }
+            }
+            // 指挥：和静音一样按机器。
+            if rest.contains("--dispatcher-here") {
+                if !r.dispatcherOn.contains(me) { r.dispatcherOn.append(me) }
+            }
+            if rest.contains("--no-dispatcher-here") {
+                r.dispatcherOn.removeAll { $0 == me }
+            }
             all[pf] = r
             try AgentRoles.save(Array(all.values))
             print(Ansi.green("已更新 ") + pf.displayName)
@@ -1581,7 +1601,7 @@ func cmdRunner(_ args: [String]) throws {
         let dash = LLMQuota.dashboard()
         let history = TaskStore.all()
         print(Ansi.bold(pad("岗位", 12) + pad("agent", 24) + pad("最高风险", 12)
-            + pad("难度上限", 12) + "偏好"))
+            + pad("难度上限", 12) + pad("留白", 8) + "偏好"))
         for p in Platform.allCases {
             guard let rep = dash.reports.first(where: { $0.platform == p }),
                   rep.enabled, rep.detected || rep.installed else { continue }
@@ -1592,8 +1612,15 @@ func cmdRunner(_ args: [String]) throws {
                 ? Ansi.dim(tier.displayName + "（学的）") : tier.displayName
             let muted = AgentRoles.isMuted(p)
             let name = muted ? Ansi.dim(rep.agentName + "（本机静音）") : rep.agentName
-            print(pad(role.title, 12) + pad(name, 24)
+            // 留白要显示出来 —— 配了看不见等于没配，
+            // 而「为什么这个平台老是不被选中」正是最难查的那类问题。
+            let resv = role.reserveFraction.map { Format.percent($0) }
+                ?? Ansi.dim(Format.percent(WorkScheduler().humanReserve) + "*")
+            let dispatcher = AgentRoles.isDispatcher(p)
+            let name2 = dispatcher ? Ansi.cyan(rep.agentName + "（指挥）") : name
+            print(pad(role.title, 12) + pad(name2, 24)
                 + pad(role.maxRisk.displayName, 12) + pad(tierMark, 12)
+                + pad(resv, 8)
                 + Ansi.dim(role.prefers.map(\.displayName).joined(separator: "/")))
             if muted, let why = role.muteReason {
                 print(Ansi.yellow("            本机不派活给它：") + Ansi.dim(why))

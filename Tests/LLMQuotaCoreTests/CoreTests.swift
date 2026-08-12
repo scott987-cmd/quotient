@@ -3485,3 +3485,71 @@ final class OrphanReclaimTests: XCTestCase {
         XCTAssertEqual(back.runnerPID, 4242)
     }
 }
+
+// MARK: - 按平台配额度留白
+
+final class ReserveFractionTests: XCTestCase {
+
+    private func withRoles(_ roles: [AgentRole], _ body: () -> Void) {
+        let f = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("roles-\(UUID().uuidString).json")
+        let data = try? SnapshotCoding.prettyEncoder().encode(roles)
+        try? data?.write(to: f)
+        AgentRoles.fileOverride = f
+        defer { AgentRoles.fileOverride = nil; try? FileManager.default.removeItem(at: f) }
+        body()
+    }
+
+    /// 没配就沿用全局默认 —— **不能给一个非 nil 的默认值**，
+    /// 那等于把所有平台一次性钉死在某个数上，全局默认将来调整时它们不会跟着动。
+    func testUnsetFallsBackToGlobalDefault() {
+        withRoles([AgentRole(platform: .kimi, title: "主力", maxRisk: .normal)]) {
+            XCTAssertEqual(AgentRoles.reserve(for: .kimi, default: 0.25), 0.25)
+        }
+    }
+
+    /// 配了就用配的：MiniMax 留 20%，Qwen 一点不留。
+    func testPerPlatformValuesAreHonoured() {
+        withRoles([
+            AgentRole(platform: .minimax, title: "媒体", maxRisk: .safe, reserveFraction: 0.20),
+            AgentRole(platform: .qwen, title: "开发", maxRisk: .normal, reserveFraction: 0),
+        ]) {
+            XCTAssertEqual(AgentRoles.reserve(for: .minimax, default: 0.25), 0.20)
+            XCTAssertEqual(AgentRoles.reserve(for: .qwen, default: 0.25), 0)
+        }
+    }
+
+    /// **越界的值当没配。**
+    ///
+    /// 手写 roles.json 里填了 1.5 或 -0.2，照单全收的后果是：
+    /// 前者让这个平台永远被排除（1 - used > 1.5 恒假），
+    /// 后者让调度把额度吃光。两种都不会报错，只会表现成
+    /// 「这个平台怎么老是不干活」或者「我的额度怎么没了」。
+    func testOutOfRangeValuesAreIgnored() throws {
+        for bad in ["1.5", "-0.2", "99"] {
+            let r = try SnapshotCoding.decoder().decode(AgentRole.self, from: Data("""
+            {"platform":"kimi","title":"主力","maxRisk":"normal","reserveFraction":\(bad)}
+            """.utf8))
+            XCTAssertNil(r.reserveFraction, "\(bad) 越界，应该当没配")
+        }
+    }
+
+    /// 边界值 0 和 1 是合法的：0 = 随便用光，1 = 一点都不许自动化用。
+    func testBoundaryValuesAreValid() throws {
+        for good in ["0", "1", "0.2"] {
+            let r = try SnapshotCoding.decoder().decode(AgentRole.self, from: Data("""
+            {"platform":"kimi","title":"主力","maxRisk":"normal","reserveFraction":\(good)}
+            """.utf8))
+            XCTAssertNotNil(r.reserveFraction, "\(good) 是合法值")
+        }
+    }
+
+    /// 编码要往返 —— 只改解码侧的话配置存不下去，重启就没了。
+    func testRoundTrips() throws {
+        let r = AgentRole(platform: .minimax, title: "媒体", maxRisk: .safe,
+                          reserveFraction: 0.2)
+        let back = try SnapshotCoding.decoder()
+            .decode(AgentRole.self, from: SnapshotCoding.encoder().encode(r))
+        XCTAssertEqual(back.reserveFraction, 0.2)
+    }
+}

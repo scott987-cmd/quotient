@@ -49,6 +49,21 @@ public struct AgentRole: Codable, Sendable {
     public var mutedOn: [String]
     public var muteReason: String?
 
+    /// 调度器最多能吃掉这个平台额度的多少 —— 剩下的留给你自己用。
+    ///
+    /// 存的是**留白比例**：0.20 表示至少留 20% 不动，调度最多用到 80%。
+    /// 0 表示随便用光，1 表示一点都不许自动化用。
+    ///
+    /// 为什么按平台而不是一个全局值：不同订阅的处境完全不同。
+    /// MiniMax 那份额度你还要拿去生图、跑别的程序，吃光了自己就没得用；
+    /// 而 Qwen 的日额度本来就是不用即作废，留白反而是浪费。
+    /// 一个全局 25% 同时把这两种情况都照顾错了。
+    ///
+    /// nil = 沿用全局默认（`WorkScheduler.humanReserve`，当前 0.25）。
+    /// **不能给它一个非 nil 的默认值** —— 那等于把所有平台一次性钉死在某个数上，
+    /// 而全局默认将来调整时它们不会跟着动。
+    public var reserveFraction: Double?
+
     /// 在这些机器上，这个平台是**指挥**（控制面），不是干活的。
     ///
     /// ## 为什么不能继续用 mutedOn 表达
@@ -71,7 +86,7 @@ public struct AgentRole: Codable, Sendable {
                 maxTier: TaskProfile.Tier? = nil,
                 prefers: [TaskProfile.Tier] = [], note: String = "",
                 mutedOn: [String] = [], muteReason: String? = nil,
-                dispatcherOn: [String] = []) {
+                dispatcherOn: [String] = [], reserveFraction: Double? = nil) {
         self.platform = platform
         self.title = title
         self.maxRisk = maxRisk
@@ -81,6 +96,7 @@ public struct AgentRole: Codable, Sendable {
         self.mutedOn = mutedOn
         self.muteReason = muteReason
         self.dispatcherOn = dispatcherOn
+        self.reserveFraction = reserveFraction
     }
 
     /// 和另一个角色是不是等价。用来判断「这条要不要存」。
@@ -89,6 +105,7 @@ public struct AgentRole: Codable, Sendable {
             && prefers == o.prefers && note == o.note
             && Set(mutedOn) == Set(o.mutedOn) && muteReason == o.muteReason
             && Set(dispatcherOn) == Set(o.dispatcherOn)
+            && reserveFraction == o.reserveFraction
     }
 
     public init(from decoder: Decoder) throws {
@@ -102,6 +119,12 @@ public struct AgentRole: Codable, Sendable {
         mutedOn = try c.decodeIfPresent([String].self, forKey: .mutedOn) ?? []
         muteReason = try c.decodeIfPresent(String.self, forKey: .muteReason)
         dispatcherOn = try c.decodeIfPresent([String].self, forKey: .dispatcherOn) ?? []
+        // 越界的值当没配。写了 1.5 或 -0.2 的话，照单全收会让调度要么
+        // 一个平台都挑不出来、要么把额度吃光 —— 而两者都不会报错。
+        if let r = try c.decodeIfPresent(Double.self, forKey: .reserveFraction),
+           r >= 0, r <= 1 {
+            reserveFraction = r
+        }
 
         // **一次性迁移：控制面原来是用 mute 表达的。**
         //
@@ -238,6 +261,11 @@ public enum AgentRoles {
     /// 这个平台在**本机**是不是被静音了。
     public static func isMuted(_ p: Platform, machine: String = Paths.machineName()) -> Bool {
         role(for: p).mutedOn.contains(machine)
+    }
+
+    /// 这个平台的留白比例。没配就用全局默认。
+    public static func reserve(for p: Platform, default fallback: Double) -> Double {
+        role(for: p).reserveFraction ?? fallback
     }
 
     /// 这个平台在**本机**是不是指挥。

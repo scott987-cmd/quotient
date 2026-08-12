@@ -434,11 +434,15 @@ public struct WorkScheduler: Sendable {
             }
             if let tightest = configured.max(by: { $0.1 < $1.1 }) {
                 let headroom = 1 - tightest.1
-                guard headroom > humanReserve else {
+                // 留白比例按平台取，没配才用全局默认。
+                // MiniMax 那份额度你还要拿去生图，吃光了自己没得用；
+                // 而 Qwen 的日额度不用即作废，留白反而是浪费。
+                let reserve = AgentRoles.reserve(for: p, default: humanReserve)
+                guard headroom > reserve else {
                     rejected.append(Rejection(
                         platform: p,
                         reason: "\(tightest.0.label)已用 \(Format.percent(tightest.1))"
-                            + "，剩余不足给人类预留的 \(Format.percent(humanReserve))"))
+                            + "，剩余不足为它预留的 \(Format.percent(reserve))"))
                     continue
                 }
                 candidates.append((Pick(
