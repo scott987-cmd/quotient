@@ -2608,10 +2608,24 @@ func cmdRelease(_ rest: [String]) throws {
         defer { try? FileManager.default.removeItem(at: tar.deletingLastPathComponent()) }
 
         let m = try ReleaseChannel.publish(tarball: tar, notes: notes, by: node)
-        // 主机自己也标记成已装，否则它会检测到"有更新"再装一遍自己刚发的东西。
-        ReleaseChannel.markInstalled(m.sha256)
         print(Ansi.green("已发布 ") + m.sha256.prefix(12) + Ansi.dim("  " + m.file))
         if !notes.isEmpty { print(Ansi.dim("  " + notes)) }
+
+        // **主机自己也要真装一遍。**
+        //
+        // 这里原来只调 markInstalled，注释说「否则它会检测到有更新、
+        // 再装一遍自己刚发的东西」—— 前提是错的：刚编出来的东西在
+        // `.build/release` 里，`~/.local/bin/llmq` 一个字节都没变。
+        // 结果是发布机永远跑旧代码，而 `llmq update` 一直回「已是最新」，
+        // 因为标记已经被盖上了。
+        //
+        // 这种「三件事都做了、问题一点没变」正是这个文件 2770 行那段注释
+        // 警告过的：换了二进制不等于换了正在跑的进程 —— 而这次连二进制
+        // 都没换。
+        try ReleaseChannel.install(m, payload: tar)
+        print(Ansi.green("本机已装上 ") + m.sha256.prefix(12))
+        let restarted = restartResidentServices()
+        if !restarted.isEmpty { print(Ansi.dim("  重启：" + restarted.joined(separator: " "))) }
         print(Ansi.dim("从机会在下次检查时自动更新，或者立刻跑：llmq update"))
         print(Ansi.dim("从机上的 llmq 太老、连 update 命令都没有时："
                        + "llmq release bootstrap 打印一段可粘贴的引导脚本"))
