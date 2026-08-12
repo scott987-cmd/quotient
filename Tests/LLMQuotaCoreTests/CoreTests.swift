@@ -4280,3 +4280,57 @@ final class InFlightGuardTests: XCTestCase {
         XCTAssertNil(noPID.runnerPID, "老记录没有 pid，按孤儿处理")
     }
 }
+
+// MARK: - 重试时分支已存在
+
+final class BranchReuseTests: XCTestCase {
+
+    private func repo() throws -> String {
+        let d = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("br-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        for a in [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                  ["config", "user.name", "t"]] { _ = GitWorkspace.git(a, in: d.path) }
+        try Data("x".utf8).write(to: d.appendingPathComponent("a.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: d.path)
+        _ = GitWorkspace.git(["commit", "-qm", "init"], in: d.path)
+        return d.path
+    }
+
+    /// **重试一个图节点时，分支往往已经存在。**
+    ///
+    /// 上一次跑到一半被杀，worktree 目录没了但分支还在，
+    /// 里面可能还装着前面几步的提交。这时候 `worktree add -b` 会因为
+    /// 重名失败 —— 而正确的动作是**接上那条分支**，
+    /// 不是新建一条，更不是删掉重来（那会丢掉前面几步的产出）。
+    func testRetryReusesExistingBranchWithItsCommits() throws {
+        let sandbox = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("br-as-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer { Paths.appSupportOverride = nil
+                try? FileManager.default.removeItem(at: sandbox) }
+
+        let r = try repo()
+        defer { try? FileManager.default.removeItem(atPath: r) }
+
+        // 第一次：建 worktree，提交一步
+        let w1 = try GitWorkspace.prepare(repo: r, taskID: "n1", platform: .glm, graphID: "gx")
+        try Data("第一步".utf8).write(to: URL(fileURLWithPath: w1.path)
+            .appendingPathComponent("step1.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: w1.path)
+        _ = GitWorkspace.git(["commit", "-qm", "step1"], in: w1.path)
+
+        // 模拟「被杀」：worktree 目录没了，分支还在
+        _ = GitWorkspace.git(["worktree", "remove", "--force", w1.path], in: r)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: w1.path))
+        XCTAssertTrue(GitWorkspace.branchExists("agent/graph/gx", in: r))
+
+        // 重试：必须成功，而且看得见第一步的提交
+        let w2 = try GitWorkspace.prepare(repo: r, taskID: "n1", platform: .glm, graphID: "gx")
+        XCTAssertEqual(w2.branch, "agent/graph/gx")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: w2.path).appendingPathComponent("step1.txt").path),
+            "接上分支之后，前面几步的提交必须还在")
+    }
+}

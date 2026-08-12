@@ -976,6 +976,12 @@ public enum GitWorkspace {
         Proc.run("/usr/bin/git", hardening + args, cwd: dir, env: hardEnv, timeout: timeout)
     }
 
+    /// 这条分支在不在。
+    static func branchExists(_ branch: String, in repo: String) -> Bool {
+        git(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
+            in: repo).exitCode == 0
+    }
+
     public static func isRepo(_ path: String) -> Bool {
         git(["rev-parse", "--git-dir"], in: path).exitCode == 0
     }
@@ -1015,7 +1021,18 @@ public enum GitWorkspace {
         _ = git(["worktree", "remove", "--force", path], in: repo)
         try? FileManager.default.removeItem(atPath: path)
 
-        let r = git(["worktree", "add", "-b", branch, path, "HEAD"], in: repo)
+        var r = git(["worktree", "add", "-b", branch, path, "HEAD"], in: repo)
+
+        // **分支已经存在时要接着用，不能报错退出。**
+        //
+        // 图节点重试就会走到这里：上一次跑到一半被杀，worktree 目录没了
+        // 但分支还在（里面可能还装着前面几步的提交）。
+        // 这时候 `-b` 会因为重名失败 —— 而正确的动作恰恰是**接上那条分支**，
+        // 不是新建一条，更不是把它删掉重来（那会丢掉前面几步）。
+        if r.exitCode != 0, branchExists(branch, in: repo) {
+            r = git(["worktree", "add", path, branch], in: repo)
+        }
+
         guard r.exitCode == 0 else {
             // 把**能定位问题的东西**都带上，不只是 git 的输出。
             //
