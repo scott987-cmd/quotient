@@ -365,7 +365,7 @@ public enum ClusterNet {
         }
 
         /// 钥匙串用不了时的退路。放在 CA 目录里，跟着它的 0700 走。
-        static func fallbackFile(node: String) -> URL {
+        public static func fallbackFile(node: String) -> URL {
             ClusterCA.dir.appendingPathComponent("\(node).pass")
         }
 

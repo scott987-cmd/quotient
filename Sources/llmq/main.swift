@@ -1679,8 +1679,20 @@ func cmdDoctor() throws {
         print(Ansi.yellow("⚠ 集群口令在磁盘上：") + onDisk.joined(separator: " "))
         print(Ansi.dim("  钥匙串写不进去时的退路（0600）。弱在：拿到 "
                        + "Application Support 备份的人就拿到了可用身份。"))
-        print(Ansi.dim("  想收回去，在那台机器上**本地**跑一次 "
-                       + "llmq cluster import —— SSH 会话里登录钥匙串是锁着的，修不了。"))
+        print(Ansi.dim("  想收回钥匙串，在那台机器上**本地**跑（SSH 里不行，"
+                       + "登录钥匙串是锁着的）："))
+        // **把完整命令打出来，别让人自己拼。**
+        //
+        // 原来只说「跑一次 llmq cluster import」，路径要靠人现想 ——
+        // 而这条命令曾经会在「源路径等于目标路径」时把身份文件删掉，
+        // 真的删过两次。那个坑已经填了，但让工具自己吐出正确的一行仍然更稳：
+        // 少一次抄错的机会，也少一次替人拼错的机会。
+        for n in onDisk {
+            let p12 = ClusterCA.dir.appendingPathComponent("\(n).p12").path
+            print("    llmq cluster import \(n) '\(p12)' '\(ClusterCA.caCert.path)'")
+            print(Ansi.dim("    （口令：cat '"
+                           + ClusterNet.Passphrase.fallbackFile(node: n).path + "'）"))
+        }
         print("")
     }
     print(Ansi.bold("数据源探测"))
