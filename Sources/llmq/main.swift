@@ -429,9 +429,46 @@ func cmdWork(_ args: [String]) throws {
                 prompt: prompt, repo: repo,
                 history: TaskStore.all(), dashboard: LLMQuota.dashboard())
         }
-        try TaskStore.append(t)
-        print(Ansi.green("已入队 ") + t.id + Ansi.dim("  仓库 " + repo))
-        printProfile(t.profile)
+        // 复杂档或判为高危的，交给指挥拆成图。
+        //
+        // 只拆这两类不是省事，是安全网：其余任务走今天完全一样的路，
+        // 图那套东西一旦有 bug，爆炸半径限制在少数任务上。
+        // 拆不成（指挥没配、额度耗尽、输出不是 JSON、成环）一律退回单节点 ——
+        // **新增的能力不该变成新的单点故障。**
+        var graphNodes: [WorkTask]?
+        if !args.contains("--no-split"), TaskDecomposer.shouldDecompose(t) {
+            print(Ansi.dim("交给指挥拆解…"))
+            graphNodes = TaskDecomposer.plan(t, dashboard: LLMQuota.dashboard())
+            if graphNodes == nil { print(Ansi.dim("  没拆成，按单个任务处理")) }
+        }
+
+        if var nodes = graphNodes, nodes.count > 1 {
+            // **每个节点单独分诊。**
+            //
+            // 这正是拆图的全部意义：整包判高危会让所有角色都够不着，
+            // 而逐节点判之后，只有真碰构建脚本的那一步转人工，其余照跑。
+            // 分诊跑在 MiniMax 上（最闲、额度正在作废），顺手也把它用起来了。
+            print(Ansi.dim("逐节点分诊 \(nodes.count) 步…"))
+            let dash = LLMQuota.dashboard()
+            let hist = TaskStore.all()
+            for i in nodes.indices {
+                nodes[i].profile = TaskClassifier.classify(
+                    prompt: nodes[i].prompt, repo: repo, history: hist, dashboard: dash)
+            }
+            for n in nodes { try TaskStore.append(n) }
+            print(Ansi.green("已拆成 \(nodes.count) 步 ") + Ansi.dim("图 " + t.id))
+            for n in nodes {
+                let dep = n.dependsOn.isEmpty ? "可立即开始"
+                    : "依赖 " + n.dependsOn.map { String($0.suffix(2)) }.joined(separator: "、")
+                print("  " + Ansi.bold(String(n.id.suffix(2))) + " "
+                      + (n.stepTitle ?? "") + Ansi.dim("  \(dep)")
+                      + Ansi.dim(n.profile.map { "  [\($0.risk.displayName)]" } ?? ""))
+            }
+        } else {
+            try TaskStore.append(t)
+            print(Ansi.green("已入队 ") + t.id + Ansi.dim("  仓库 " + repo))
+            printProfile(t.profile)
+        }
 
     case "log":
         // 进度是自动算出来的，不靠谁记得去写 —— 任务库里本来就有全部素材。

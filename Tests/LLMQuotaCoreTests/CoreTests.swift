@@ -3276,3 +3276,117 @@ final class GraphWorktreeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: w.path), "说了图完了才删")
     }
 }
+
+// MARK: - 任务拆解
+
+final class TaskDecomposerTests: XCTestCase {
+
+    private func task(_ tier: TaskProfile.Tier, _ risk: TaskProfile.Risk) -> WorkTask {
+        var t = WorkTask(id: "abc12345", prompt: "重构调度器", repo: "/r")
+        t.profile = TaskProfile(tier: tier, risk: risk, estimatedMinutes: 10,
+                                isSelfContained: true, rationale: "测试")
+        return t
+    }
+
+    /// **只拆复杂档或高危的。** 这是安全网：其余任务走今天完全一样的路，
+    /// 图有 bug 也波及不到它们。
+    func testOnlyComplexOrSensitiveGetsDecomposed() {
+        XCTAssertTrue(TaskDecomposer.shouldDecompose(task(.complex, .safe)))
+        XCTAssertTrue(TaskDecomposer.shouldDecompose(task(.trivial, .sensitive)))
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(task(.standard, .normal)))
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(task(.trivial, .safe)))
+    }
+
+    /// 没分诊过（profile 为 nil）就不拆 —— 不知道难度和风险时，
+    /// 拆解只是在猜，而猜错的代价是多烧一次指挥的额度。
+    func testNoProfileMeansNoDecomposition() {
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(
+            WorkTask(id: "a", prompt: "x", repo: "/r")))
+    }
+
+    /// 模型爱在 JSON 外面套一句话或者 ``` 围栏。
+    /// 直接 JSONDecoder 一把梭会在**完全正常的输出**上失败，
+    /// 然后静默退回单节点，没人知道为什么。
+    func testParseSurvivesPreambleAndFences() {
+        let raw = """
+        好的，这是拆解结果：
+        ```json
+        {"steps":[{"id":"s1","title":"改代码","prompt":"改 A","dependsOn":[]},
+                  {"id":"s2","title":"补测试","prompt":"测 A","dependsOn":["s1"]}]}
+        ```
+        希望有帮助！
+        """
+        let steps = TaskDecomposer.parse(raw)
+        XCTAssertEqual(steps?.count, 2)
+        XCTAssertEqual(steps?[1].dependsOn, ["s1"])
+    }
+
+    /// 不是 JSON 就返回 nil，让调用方退回单节点。
+    func testParseRejectsGarbage() {
+        XCTAssertNil(TaskDecomposer.parse("我觉得这个任务应该分三步走。"))
+        XCTAssertNil(TaskDecomposer.parse(""))
+    }
+
+    /// **局部 id 必须映射成真实任务 id。**
+    ///
+    /// 不映射的话两次拆解都会产出 s1/s2，而任务库是按 id 覆盖的 ——
+    /// 后一张图会把前一张悄悄改写掉，两个任务的节点混成一团。
+    func testLocalIdsAreMappedAndEdgesPreserved() throws {
+        let steps = TaskDecomposer.parse("""
+        {"steps":[{"id":"s1","title":"一","prompt":"p1","dependsOn":[]},
+                  {"id":"s2","title":"二","prompt":"p2","dependsOn":["s1"]}]}
+        """)!
+        let nodes = TaskDecomposer.build(steps, from: task(.complex, .safe),
+                                         planner: .claude, now: Date())
+        let n = try XCTUnwrap(nodes)
+        XCTAssertEqual(n.count, 2)
+        XCTAssertFalse(n.contains { $0.id == "s1" || $0.id == "s2" }, "不能沿用局部 id")
+        XCTAssertEqual(n[1].dependsOn, [n[0].id], "边要跟着映射走")
+        XCTAssertTrue(n.allSatisfy { $0.graphID == "abc12345" })
+    }
+
+    /// 引用了不存在的步骤 → 整张作废。
+    /// 悬空边会让节点永远不就绪，而图看起来完全正常。
+    func testUnknownDependencyVoidsTheWholePlan() {
+        let steps = TaskDecomposer.parse("""
+        {"steps":[{"id":"s1","title":"一","prompt":"p","dependsOn":["幽灵"]}]}
+        """)!
+        XCTAssertNil(TaskDecomposer.build(steps, from: task(.complex, .safe),
+                                          planner: .claude, now: Date()))
+    }
+
+    /// 成环 → 整张作废。有环不报错，只会让整张图静默不动。
+    func testCyclicPlanIsRejected() {
+        let steps = TaskDecomposer.parse("""
+        {"steps":[{"id":"s1","title":"一","prompt":"p","dependsOn":["s2"]},
+                  {"id":"s2","title":"二","prompt":"p","dependsOn":["s1"]}]}
+        """)!
+        XCTAssertNil(TaskDecomposer.build(steps, from: task(.complex, .safe),
+                                          planner: .claude, now: Date()))
+    }
+
+    /// 超过步数上限 → 作废。一次跑飞的输出能生成几十个节点，
+    /// 而每个都要单独分诊、单独占一轮调度，额度会被一次失控的拆解吃光。
+    func testTooManyStepsIsRejected() {
+        let many = (1...TaskDecomposer.maxSteps + 1).map {
+            "{\"id\":\"s\($0)\",\"title\":\"t\",\"prompt\":\"p\",\"dependsOn\":[]}"
+        }.joined(separator: ",")
+        let steps = TaskDecomposer.parse("{\"steps\":[\(many)]}")!
+        XCTAssertNil(TaskDecomposer.build(steps, from: task(.complex, .safe),
+                                          planner: .claude, now: Date()))
+    }
+
+    /// 节点顺序要稳定 —— 调度按 createdAt 取就绪节点，
+    /// 顺序乱了会让「第一步」变成随机的哪一步。
+    func testNodeOrderIsStable() throws {
+        let steps = TaskDecomposer.parse("""
+        {"steps":[{"id":"a","title":"一","prompt":"p","dependsOn":[]},
+                  {"id":"b","title":"二","prompt":"p","dependsOn":[]},
+                  {"id":"c","title":"三","prompt":"p","dependsOn":[]}]}
+        """)!
+        let n = try XCTUnwrap(TaskDecomposer.build(steps, from: task(.complex, .safe),
+                                                   planner: .claude, now: Date()))
+        XCTAssertEqual(n.map { $0.stepTitle }, ["一", "二", "三"])
+        XCTAssertEqual(TaskGraph.nextReady(n)?.stepTitle, "一")
+    }
+}
