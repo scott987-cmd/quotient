@@ -531,25 +531,62 @@ func cmdWork(_ args: [String]) throws {
         if tasks.isEmpty { print(Ansi.dim("任务队列是空的。llmq work add \"...\" 加一个。")); return }
         print(Ansi.dim(pad("ID", 10) + pad("状态", 8) + pad("档次", 6)
             + pad("平台", 10) + pad("耗时", 9) + pad("改动", 7) + "任务"))
-        for t in tasks {
-            let color: (String) -> String = {
-                switch t.state {
-                case .done: return Ansi.green
-                case .failed: return Ansi.red
-                case .running: return Ansi.yellow
-                case .queued: return Ansi.dim
-                case .blocked: return Ansi.cyan
+
+        func stateColor(_ st: WorkTask.State) -> (String) -> String {
+            switch st {
+            case .done: return Ansi.green
+            case .failed: return Ansi.red
+            case .running: return Ansi.yellow
+            case .queued: return Ansi.dim
+            case .blocked: return Ansi.cyan
+            }
+        }
+
+        /// 一行任务。`indent` 用来把图内节点缩进到图标题下面。
+        func row(_ t: WorkTask, indent: String = "", all: [WorkTask]) {
+            var title = indent + (t.stepTitle ?? String(t.prompt.prefix(46)))
+            // 依赖关系直接写在标题后面。**看不出先后的图等于没有图** ——
+            // 一个 queued 的节点到底是「马上要跑」还是「在等第三步」，
+            // 平铺列表里完全看不出来，而这两者的处理方式完全不同。
+            if !t.dependsOn.isEmpty {
+                let names = t.dependsOn.map { d -> String in
+                    let up = all.first { $0.id == d }
+                    let ok = up?.state == .done
+                    return (ok ? "✓" : "·") + (up?.stepTitle.map { String($0.prefix(10)) }
+                                               ?? String(d.suffix(2)))
                 }
-            }()
+                title += Ansi.dim("  ← " + names.joined(separator: " "))
+            }
             print(pad(t.id, 10)
-                + pad(color(t.state.rawValue), 8)
+                + pad(stateColor(t.state)(t.state.rawValue), 8)
                 + pad(t.profile?.tier.displayName ?? "—", 6)
                 + pad(t.platform?.displayName ?? "—", 10)
                 + pad(t.duration.map { String(format: "%.0fs", $0) } ?? "—", 9)
                 + pad(t.changedFiles.map { "\($0)" } ?? "—", 7)
-                + String(t.prompt.prefix(46)))
-            if let n = t.note { print(Ansi.dim("          " + n)) }
-            if let b = t.branch { print(Ansi.dim("          分支 " + b)) }
+                + title)
+            if let n = t.note {
+                print(Ansi.dim("          " + indent + n.replacingOccurrences(
+                    of: "\n", with: "\n          " + indent)))
+            }
+            if let b = t.branch { print(Ansi.dim("          " + indent + "分支 " + b)) }
+        }
+
+        // 图内节点归到一起，按 stepIndex 排；散任务按原顺序。
+        var printedGraphs: Set<String> = []
+        for t in tasks {
+            guard let g = t.graphID else { row(t, all: tasks); continue }
+            if printedGraphs.contains(g) { continue }
+            printedGraphs.insert(g)
+
+            let nodes = tasks.filter { $0.graphID == g }
+                .sorted { ($0.stepIndex ?? 0, $0.createdAt) < ($1.stepIndex ?? 0, $1.createdAt) }
+            let done = nodes.filter { $0.state == .done }.count
+            let left = TaskGraph.remaining(graphID: g, in: tasks)
+            let head = TaskGraph.isComplete(graphID: g, in: tasks)
+                ? Ansi.green("跑完了，等审")
+                : (left > 0 ? Ansi.dim("还差 \(left) 步") : Ansi.red("全都没成"))
+            print(Ansi.bold("图 " + g) + Ansi.dim("  \(done)/\(nodes.count) 步完成  ") + head)
+            for n in nodes { row(n, indent: "  ", all: tasks) }
         }
 
     case "run":
