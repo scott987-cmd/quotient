@@ -18,6 +18,11 @@ public struct Cooldown: Codable, Sendable {
         /// 退避重试对它毫无意义，只是每隔几小时白烧一次。
         case permanentlyUnsupported
 
+        /// 冷却原因的中文展示名。
+        ///
+        /// 在 `Work.decide()` 里拼成 "额度用尽，2h后重试" 这样的拒绝理由；
+        /// 在 `llmq work cooldowns` 里作为表格列；在 `QuotaEngine.report` 里
+        /// 写入 `PlatformReport.cooldownReason`；任务失败时打印到终端并记入 OfficeEvent。
         public var displayName: String {
             switch self {
             case .quotaExhausted: return "额度用尽"
@@ -28,6 +33,11 @@ public struct Cooldown: Codable, Sendable {
         }
 
         /// 需要人介入才可能恢复，别再自动重试。
+        ///
+        /// `record()` 据此把冷却时长直接设为 30 天而不是走退避梯度 --
+        /// 反正自己不会好，每隔几小时重试只是白烧额度。
+        /// `llmq work cooldowns` 据此把剩余时间列显示成红色的"需人工处理"而非倒计时，
+        /// 提醒用户去改账号或换工具，处理完用 `llmq work resume <平台>` 手动解除。
         public var needsHumanFix: Bool { self == .permanentlyUnsupported }
     }
 
@@ -39,7 +49,14 @@ public struct Cooldown: Codable, Sendable {
     public var strikes: Int
     public var detail: String
 
+    /// 冷却是否尚未过期。`CooldownLedger.active()` 用它过滤掉已过期的条目；
+    /// `record()` 用它判断上一次失败是否还在冷却期内 -- 在期内则算连续失败，
+    /// strikes +1；不在则说明中间恢复过，strikes 归 1 重新计数。
     public func isActive(now: Date = Date()) -> Bool { now < until }
+
+    /// 距离冷却结束还有多久。调度器把它写进拒绝理由（"2h后重试"），
+    /// CLI 和任务失败提示用它告诉用户多久后才会再给这个平台派活，
+    /// OfficeEvent 也记一份用于办公室可视化。
     public var remaining: TimeInterval { max(0, until.timeIntervalSinceNow) }
 }
 
@@ -60,6 +77,11 @@ public enum CooldownLedger {
         12 * 3600,    // 12 小时
     ]
 
+    /// 从 `cooldowns.json` 读出全部冷却记录，按平台索引成字典。
+    ///
+    /// 文件在 iCloud 配置目录下（跨机器同步），读不到或解析失败时返回空字典 --
+    /// 首次运行或文件损坏时不阻塞调度，只是没有冷却保护而已。
+    /// `active()`、`record()`、`resume()`、`clear()` 都先调它拿到当前账本再改。
     public static func load() -> [Platform: Cooldown] {
         guard let data = try? Data(contentsOf: file),
               let list = try? SnapshotCoding.decoder().decode([Cooldown].self, from: data)
@@ -76,11 +98,22 @@ public enum CooldownLedger {
     }
 
     /// 当前处于冷却中的平台。
+    ///
+    /// 加载全部记录后用 `isActive()` 过滤掉已过期的。三处调用：
+    /// - `Work.decide()` 拿它决定调度时跳过哪些平台（撞过的墙不再撞）；
+    /// - `QuotaEngine.report()` 拿它在额度报告里标注 `cooldownUntil` / `cooldownReason`，
+    ///   否则冷却中的平台会显示成"连续空闲"让人误以为只是没派活；
+    /// - `llmq work cooldowns` 拿它给用户列出当前冷却表。
     public static func active(now: Date = Date()) -> [Platform: Cooldown] {
         load().filter { $0.value.isActive(now: now) }
     }
 
-    /// 记一次失败。返回这次定下的冷却。
+    /// 记一次失败，返回这次定下的冷却。
+    ///
+    /// 由 `runOneTask()` 和 `probePlatforms()` 在 `classify()` 判定属于平台侧问题后调用。
+    /// 连续失败（上一次冷却未过期或原因相同）则 strikes 递增、退避梯度加长；
+    /// 中间恢复过则 strikes 归 1。平台报了确切的重置时间就直接采信，比退避猜得准。
+    /// 永久性故障（`needsHumanFix`）直接冷却 30 天，等人工处理后用 `resume()` 解除。
     @discardableResult
     public static func record(
         platform: Platform, cause: Cooldown.Cause, detail: String,
@@ -114,6 +147,10 @@ public enum CooldownLedger {
     }
 
     /// 手动解除冷却。永久性故障处理完之后用。
+    ///
+    /// 由 `llmq work resume <平台>` 调用。永久性故障被 `record()` 冷却 30 天，
+    /// 退避不会让它提前结束 -- 用户改了账号或换了工具之后，手动调这里把条目删掉，
+    /// 调度器下一轮就能重新选这个平台。返回 false 说明本来就没在冷却中。
     public static func resume(_ platform: Platform) -> Bool {
         var map = load()
         guard map.removeValue(forKey: platform) != nil else { return false }
@@ -122,6 +159,9 @@ public enum CooldownLedger {
     }
 
     /// 跑成功了就清掉，让计数从头开始。
+    ///
+    /// `probePlatforms()` 探测成功时调它清掉旧冷却；`runOneTask()` 任务状态为 `.done`
+    /// 时也调它 -- 一次成功就证明平台恢复了，连续失败计数归零，下次失败从第一档退避重新开始。
     public static func clear(_ platform: Platform) {
         var map = load()
         guard map[platform] != nil else { return }
@@ -131,8 +171,12 @@ public enum CooldownLedger {
 
     /// 从 agent 的报错文本里判断该不该进冷却、进哪种。
     ///
-    /// 只认平台侧的问题。agent 自己把任务干砸了不该让整个平台停摆 ——
+    /// 只认平台侧的问题。agent 自己把任务干砸了不该让整个平台停摆 --
     /// 那是任务的问题，换个平台大概率一样砸。
+    ///
+    /// 由 `runOneTask()` 和 `probePlatforms()` 调用，传入 agent 的 stdout+stderr。
+    /// 返回 nil 表示不是平台的问题，不进冷却。注意永久性故障要先于环境故障检查 --
+    /// "no longer supported" 里也含 "not found"，顺序反了会把永久故障降级成临时故障。
     public static func classify(_ text: String) -> Cooldown.Cause? {
         let t = text.lowercased()
         let quota = ["quota", "rate limit", "429", "usage limit", "insufficient",
