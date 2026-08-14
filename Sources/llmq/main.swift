@@ -617,12 +617,23 @@ func cmdWork(_ args: [String]) throws {
         // 入队流程收口在 TaskIntake —— 手机放行计划任务走的也是它。
         // 两个入口共用一份流程，才不会漂移出「一边过查重一边不过」这种事。
         if !args.contains("--no-classify") { print(Ansi.dim("分诊中…")) }
+        // --platform <名>：点名谁干（优先不是命令，闸门照常生效）。
+        var preferred: Platform?
+        if let i = rest.firstIndex(of: "--platform"), i + 1 < rest.count {
+            preferred = Platform(rawValue: rest[i + 1].lowercased())
+            if preferred == nil {
+                print(Ansi.red("不认识的平台「\(rest[i + 1])」；可选：")
+                    + Platform.allCases.map(\.rawValue).joined(separator: " "))
+                exit(2)
+            }
+        }
         let outcome = try TaskIntake.enqueue(
             prompt: prompt, repo: repo,
             classify: !args.contains("--no-classify"),
             split: !args.contains("--no-split"),
             force: true,   // 上面已经查过重（带打印），这里别查第二遍
-            origin: nil)
+            origin: nil,
+            preferredPlatform: preferred)
         switch outcome {
         case .graph(let nodes):
             print(Ansi.green("已拆成 \(nodes.count) 步 ")
