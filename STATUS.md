@@ -25,9 +25,20 @@
 | **指挥角色** | `AgentRole.dispatcherOn` | `llmq work run` 输出里有「指挥 Claude 本机控制面，不参与竞选」一行 |
 | **任务图** | `TaskGraph.swift` | 依赖/就绪/环检测/阻塞传播/产物传递，`llmq work` 里图节点 id 形如 `<图id>s1` |
 | **拆解器** | `TaskDecomposer.swift` | `llmq work add` 一个碰 `*.sh` 的任务，会打印「已拆成 N 步」 |
+| **按平台留白** | `AgentRole.reserveFraction`、`Work.swift:482` | `llmq runner roles` 的「留白」列；拒绝理由里出现「剩余不足为它预留的 X%」 |
+| **手机改留白** | `ConfigIntent.swift` | 往 iCloud `config-intents/` 扔个 json，下一轮 `work loop` 打「配置 xxxx  MiniMax 留白 默认 → 20%」，文件进 `processed/` |
 | 飞书通知 | `Work.swift` `Notifier.feishu` | 只做单向通知，审批不走它（要入站回调，和「只开一个端口」冲突） |
 
 ## 未完成
+
+- **手机上的留白入口**（2026-08-13）：Mac 侧两头都通了 —— 看板里每个平台带
+  `role.reserveFraction`（**生效值**，不是配置里那个「nil 表示继承」的覆盖值）
+  加 `reserveIsDefault` 说明这个数是不是默认来的；反向的 `config-intents/`
+  也在 `work loop` 里每轮摄入。**缺的是 iOS App 里的界面**（另一个仓库
+  `LLMQuotaApp`，另一个人做）。在那之前只能用「文件」App 手写那份 json。
+- **意图只有 reserve 一种**：`ConfigIntent.kind` 特意存字符串而不是枚举，
+  就是为了让老 Mac 遇到新类型时报「不认识的意图类型」而不是「格式错误」——
+  后者是句假话，会把人往错方向带。加新类型只需在 `apply` 里加一个分支。
 
 - **图内并行执行**：DAG 允许多个节点同时就绪，但共用一个 worktree
   的并行写必然打架，所以一次只跑一个（`readyCount` 会把「我知道有 N 个」打出来）。

@@ -80,6 +80,15 @@ func cmdCollect(verbose: Bool) throws {
                 .replacingOccurrences(of: home, with: "~") ?? "")))
     case .unavailable:
         print(Ansi.yellow("  未检测到 iCloud Drive，快照只存在本地，其他电脑看不到"))
+    case .stalled(let why):
+        // 这条要显眼。iCloud 卡住不是「同步慢一点」，是它有能力把
+        // `llmq work loop` 整个冻住 —— 实测发生过，四次重启四次停在同一行。
+        print(Ansi.red("  iCloud 写入卡住了：") + why)
+        print(Ansi.dim("  不是慢，是不返回。看门狗已经放行，不会拖住后面的流程。"))
+        print(Ansi.dim("  常见原因：跑它的是 launchd 常驻进程，"
+            + "而 iCloud Drive 和 ~/Documents 一样受访问授权闸门保护 ——"))
+        print(Ansi.dim("  待决的授权是**无限期阻塞**，不是报错，所以看起来就像卡死。"
+            + "跑 llmq doctor 看那条检查。"))
     case .permissionDenied:
         print(Ansi.yellow("  iCloud 同步被系统拒绝 —— 多机汇总暂未启用"))
         for line in LLMQuota.fullDiskAccessHint.split(separator: "\n") {
@@ -421,6 +430,32 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.red("\(repo) 不是 git 仓库。agent 需要在 worktree 里干活。"))
             exit(1)
         }
+        // **查重：这活是不是已经有人在做、或者刚做完。**
+        //
+        // 这个工具的全部理由是「一分不浪费」，而它自己一直没有查重。
+        // 实测代价（同一晚）：b6aa5e7f 和 42266d0fs1 两条任务提示词几乎一样，
+        // 都跑到 done，改的是同样四个文件 —— 两份额度、两份实现，
+        // 最后还得有人挑一个丢一个。
+        //
+        // **拦下来问，不是替你决定。** 误判会拦住真活，
+        // 所以给出证据、给出放行开关，判断权留给人。
+        if !rest.contains("--force") {
+            let dups = DuplicateGuard.matches(prompt: prompt, repo: repo, in: TaskStore.all())
+            if !dups.isEmpty {
+                print(Ansi.yellow("⚠ 这活可能已经有人在做了"))
+                for d in dups.prefix(3) {
+                    let mark = d.state == .done
+                        ? Ansi.dim("刚做完") : Ansi.cyan(d.state.rawValue)
+                    print("  \(mark)  \(d.taskID)  " + Ansi.dim(d.why))
+                    print(Ansi.dim("      " + d.prompt.replacingOccurrences(of: "\n", with: " ")
+                        .prefix(72)))
+                }
+                print(Ansi.dim("  看它改了什么：git diff main...<分支>"))
+                print(Ansi.dim("  确认不是同一件事就加 --force 再来一次"))
+                exit(3)
+            }
+        }
+
         var t = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(),
                          prompt: prompt, repo: repo)
         if !args.contains("--no-classify") {
@@ -1173,10 +1208,20 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let attemptTimeout = ProcessInfo.processInfo.environment["LLMQ_ATTEMPT_TIMEOUT"]
             .flatMap(Double.init)
             ?? task.profile?.timeout ?? perAttemptTimeout
+        // **跑之前记一个基准。**
+        //
+        // 下面那些计数全是相对 `main` 算的**累计量** —— 接力场景里它们包含
+        // 前面 agent 的成果。实测：火山方舟接手一个 Qwen 十一小时前做完的活，
+        // 自己一行没动，却报「改了 1 个文件（1 个提交是 agent 自己打的）」。
+        // 有了这个基准才能把「这一轮它自己干的」单独算出来。
+        let headBefore = GitWorkspace.headSHA(in: ws.path)
         let r = Proc.run(cmd.launchPath, cmd.args, cwd: ws.path, env: cmd.env,
                          timeout: attemptTimeout)
         let elapsed = Date().timeIntervalSince(started)
         let changed = GitWorkspace.changedFileCount(in: ws.path)
+        // 这一轮**这个 agent 自己**动了多少。base 用它开工时的 HEAD。
+        let mine = headBefore.map { GitWorkspace.changedFileCount(in: ws.path, base: $0) }
+        let myCommits = headBefore.map { GitWorkspace.commitsAhead(in: ws.path, base: $0) } ?? 0
 
         // 无论成败都留完整日志。超时那次尤其需要 —— 不然根本不知道它卡在哪。
         if let logURL = RunLog.write(
@@ -1422,13 +1467,29 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
 
                 if c.exitCode == 0 {
                     task.state = .done
-                    task.note = "改了 \(changed) 个文件"
-                        + (v.ran ? "，\(v.summary)" : "")
-                        + "，已提交到 \(ws.branch)"
-                        + (!stillDirty && alreadyCommitted > 0
-                           ? "（\(alreadyCommitted) 个提交是 agent 自己打的）" : "")
+                    // **把「这一轮谁干的」和「分支上一共有什么」分开说。**
+                    //
+                    // 合并成一句「改了 N 个文件」会稳定地把前人的成果记到
+                    // 最后一棒头上 —— 而多 agent 接力里，事后最想回答的问题
+                    // 恰恰是「这段代码谁写的」。
+                    let didSomething = (mine ?? changed) > 0
+                    if didSomething {
+                        task.note = "改了 \(mine ?? changed) 个文件"
+                            + (v.ran ? "，\(v.summary)" : "")
+                            + "，已提交到 \(ws.branch)"
+                            + (myCommits > 0 ? "（\(myCommits) 个提交是它自己打的）" : "")
+                    } else {
+                        // 接手时活就已经干完了。说实话比凑一句好看的强。
+                        task.note = "它自己没有产生改动"
+                            + (v.ran ? "，但\(v.summary)" : "")
+                            + "，分支 \(ws.branch) 上已有的成果判定为完成"
+                    }
+                    if changed != (mine ?? changed) {
+                        task.note! += "（分支相对 main 一共 \(changed) 个文件"
+                            + "、\(alreadyCommitted) 个提交，含前面几棒的）"
+                    }
                     if let h = handoff {
-                        task.note! += "（接手 \(h.fromPlatform.displayName) 的进度完成）"
+                        task.note! += "（接手 \(h.fromPlatform.displayName)）"
                     }
                 } else {
                     task.state = .failed
@@ -1572,13 +1633,64 @@ func cmdWorkLoop(_ args: [String]) throws {
             print(Ansi.dim("跳过 " + t.id + "：进程 \(pid) 还在跑，不是孤儿"))
             continue
         }
-        var x = t
-        x.state = .failed
-        x.endedAt = Date()
+        // **被打断 ≠ 失败，默认重新入队而不是判死。**
+        //
+        // 这件事已经真金白银发生过两次：一次毁掉 334 秒的 Qwen 产出，
+        // 一次毁掉 1586 秒（26 分钟）的图节点 s2。两次都是 worker 被重启，
+        // 任务正跑到一半，然后被回收成 `failed` 躺在那儿等人手动 retry ——
+        // 而人（我）当时正忙着查别的问题，根本没注意到。
+        //
+        // `restartResidentServices()` 里有在飞守卫，但 `launchctl kickstart -k`
+        // 从外面绕过去了，而且 launchd 自己的 KeepAlive 重启也绕过去。
+        // 靠「下次小心点」是防不住的，得让它自动接上。
+        //
+        // 上限 2 次：真的每次跑到一半就死的任务（比如必然 OOM），
+        // 不能让它无限重排把整条队列拖住。到顶了才判失败。
         let ran = t.startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
-        x.note = "worker 重启时它正在执行（已跑 \(ran) 秒），进程随之被杀 —— "
-            + "记录回收成失败，可以重新入队。"
-            + (t.graphID != nil ? "图内节点：不回收的话下游会永远等在这里。" : "")
+        var x = t
+        x.endedAt = Date()
+        x.runnerPID = nil
+        let interrupted = (t.interruptedCount ?? 0) + 1
+        x.interruptedCount = interrupted
+        if interrupted <= 2 {
+            x.state = .queued
+            // **别把 startedAt 抹掉。**
+            //
+            // 第一版这里写了 `x.startedAt = nil`，理由是「排队中的任务不该
+            // 显示一个已经跑了 11 天的时长」。但那件事发看板时已经单独处理了
+            // （TaskBoard 对 queued 一律不发 startedAt）——
+            // 而这里抹掉它，抹掉的是**防自锁所依赖的证据**。
+            //
+            // 调度器判「人在用这个平台，让开」时，会把落在**我们自己执行窗口**
+            // 里的用量排除掉，判据正是任务的 startedAt / endedAt。
+            // 窗口没了，它就认不出那笔用量是自己烧的：
+            //
+            //   [23:15] 派给 Qwen 跑 s2 → 被打断 → startedAt 抹掉
+            //   [23:21] 排除 Qwen「你 6 分钟前还在用它，先让着你」
+            //
+            // 于是唯一可用的平台被自己锁死 20 分钟。**我加的修复引入的回归。**
+            // **把平台从「试过并失败」里摘掉。**
+            //
+            // `triedPlatforms` 是**派活那一刻**就加进去的，不是失败之后 ——
+            // 所以一次中断会让那个平台永久背上「本任务已在该平台失败过」。
+            //
+            // 今天的实际后果：图节点 s2 被 TCC 闸门、发布重启、机器崩了十小时
+            // 轮流打断七次，Qwen 和 Kimi 双双被拉黑，最后调度报
+            // 「没有平台能接」把它冻住 —— 而没有任何一次是 agent 真的干不了。
+            // 基础设施故障不该记成平台的能力问题。
+            if let p = t.platform {
+                x.triedPlatforms.removeAll { $0 == p }
+            }
+            x.note = "worker 重启时它正在执行（已跑 \(ran) 秒），进程随之被杀。"
+                + "**被打断不算失败**，已自动重新入队（第 \(interrupted) 次）"
+                + (t.platform != nil ? "，\(t.platform!.displayName) 不算试过" : "")
+                + "。"
+        } else {
+            x.state = .failed
+            x.note = "已经被打断 \(interrupted) 次（这次跑了 \(ran) 秒），不再自动重排 —— "
+                + "反复跑到一半就死，多半是任务本身的问题，需要人看一眼。"
+                + (t.graphID != nil ? "图内节点：下游会冻住等它。" : "")
+        }
         try? TaskStore.append(x)
         print(Ansi.yellow("回收孤儿任务 ") + Ansi.dim(x.id + "  " + (x.note ?? "")))
     }
@@ -1605,20 +1717,45 @@ func cmdWorkLoop(_ args: [String]) throws {
     var lastHeartbeat = Date()
     var ranTotal = 0
 
+    // **每个阶段都关进看门狗，而不是每个 I/O 调用。**
+    //
+    // 我先按调用点包了三轮，冻住了三次，每次都是一个我没想到的地方：
+    //   1. `collect → publishDashboard` 的 `Data.write(.atomic)` 卡在 rename
+    //   2. 包完 collect 之后 → `runOneTask → OfficeLog.publish`，另一条路径
+    //   3. 又包完写操作之后 → `AskIngest.run → contentsOfDirectory`，**读也会挂**
+    //
+    // 每一轮我都觉得「这次扫干净了」。**手工枚举 I/O 调用点这件事，
+    // 我连着三次都漏。** 而 iCloud 上的任何一次读或写都可能永久阻塞，
+    // 调用点还会随着功能增加不断变多。
+    //
+    // 所以改在这一层：循环的每个阶段是一个整体，里面无论哪一行卡住，
+    // 代价上限就是这个阶段的超时。新增的 I/O 自动被覆盖，不需要谁记得去包。
+    // 底下 ICloudSafe 那层保留 —— 它给的 key 更细，跳过时更精准。
+    func phase(_ name: String, _ seconds: TimeInterval, _ body: @escaping () -> Void) {
+        let r = Watchdog.run("loop." + name, timeout: seconds, body)
+        if r.stalled {
+            print(Ansi.red("  ⚠︎ \(name) 卡住了") + Ansi.dim(
+                "（超过 \(Int(seconds)) 秒没返回，本轮跳过它继续跑）"))
+        }
+    }
+
     while !stopping {
         if Date().timeIntervalSince(lastCollect) >= policy.collectSeconds {
-            _ = try? LLMQuota.collect()
+            phase("采集", 45) { _ = try? LLMQuota.collect() }
             lastCollect = Date()
         }
 
         // 先看看手机往 iCloud 收件箱里丢了什么。
         // 先收答复再取任务：答复会把 blocked 的任务放回 queued，
         // 这一轮就能立刻接上，不用再等一个 tick。
-        for r in AskIngest.run(
-            machineID: Paths.machineID(),
-            load: { TaskStore.all() },
-            save: { try TaskStore.append($0) }
-        ) {
+        var answers: [AskIngest.Result] = []
+        phase("收答复", 20) {
+            answers = AskIngest.run(
+                machineID: Paths.machineID(),
+                load: { TaskStore.all() },
+                save: { try TaskStore.append($0) })
+        }
+        for r in answers {
             let mark = r.accepted ? Ansi.green("  ✓ ") : Ansi.yellow("  ⚠︎ ")
             print(mark + "答复 " + r.taskID + Ansi.dim("  " + r.note))
             if r.accepted {
@@ -1634,7 +1771,21 @@ func cmdWorkLoop(_ args: [String]) throws {
             }
         }
 
-        for got in Inbox.ingest() {
+        // 手机改的配置（目前只有留白比例）。
+        //
+        // 放在派活**之前**：这一轮就按新的留白判，而不是等下一轮。
+        // 「我把 MiniMax 调到 40% 了，它怎么还在被派活」是个很自然的疑问，
+        // 而答案如果是「你再等 30 秒」，那这个设置看起来就是坏的。
+        var intents: [ConfigIntentIngest.Result] = []
+        phase("收配置意图", 20) { intents = ConfigIntentIngest.run() }
+        for r in intents {
+            let mark = r.accepted ? Ansi.green("  ✓ ") : Ansi.yellow("  ⚠︎ ")
+            print(mark + "配置 " + Ansi.dim(String(r.id.prefix(8))) + "  " + r.note)
+        }
+
+        var incoming: [Inbox.Ingested] = []
+        phase("收远程任务", 20) { incoming = Inbox.ingest() }
+        for got in incoming {
             print("[\(Format.dateTime(Date()))] " + Ansi.green("收到远程任务 ")
                 + got.taskID + Ansi.dim("  来自 " + got.source))
         }
@@ -2016,7 +2167,21 @@ func cmdSecurity() throws {
     if crit > 0 { exit(1) }
 }
 
-func cmdDoctor() throws {
+func cmdDoctor(tidy: Bool = false) throws {
+    if tidy {
+        let d = Debris.scan(root: Inbox.root)
+        guard !d.isEmpty else { print(Ansi.green("iCloud 上没有半成品文件")); return }
+        print("要删 \(d.files.count) 个半成品文件（\(d.sizeText)）…")
+        let r = Debris.remove(d.files)
+        print(Ansi.green("删了 \(r.removed) 个")
+            + (r.failed > 0 ? Ansi.yellow("，\(r.failed) 个没删掉（iCloud 没响应，下次再试）") : ""))
+        // 删完复查 —— 「执行了」不等于「删掉了」。
+        let after = Debris.scan(root: Inbox.root)
+        print(after.isEmpty ? Ansi.dim("  复查：干净了")
+                            : Ansi.yellow("  复查：还剩 \(after.files.count) 个"))
+        return
+    }
+
     // 降级过的安全设置要**主动报**，不能等人去翻文件。
     // 一个静默变弱的系统，看起来和没变弱的一模一样。
     let onDisk = ClusterNet.Passphrase.nodesWithPassphraseOnDisk()
@@ -2040,6 +2205,158 @@ func cmdDoctor() throws {
         }
         print("")
     }
+    // 常驻 worker 够不够得着这些仓库。
+    //
+    // 这一条是拿六小时换来的。`~/Documents`、`~/Desktop`、`~/Downloads`
+    // 在 macOS 上有访问闸门，而 launchd 起的常驻进程没有终端的授权上下文。
+    // 关键在于**它不报错，它挂起**：git 100% 的采样停在
+    // `init_git → strbuf_getcwd → open()`，连命令都没分发，直到被超时杀掉。
+    // 于是现象是「同一个二进制、同一个仓库，我手敲 7 毫秒，worker 跑满 45 秒」，
+    // 而我在 shell 里怎么复现都复现不出来 —— 终端早就有授权了。
+    // 判定实验：把仓库换到 ~/dev 下，同一个 worker 90 秒内跑完并提交。
+    //
+    // 拒绝会立刻返回 EPERM，待决的同意才是无限期阻塞 ——
+    // 「权限看起来是给了的」不能用来排除它。
+    let guarded = ["Documents", "Desktop", "Downloads"]
+    let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+    let workerInstalled = FileManager.default.fileExists(
+        atPath: homeDir + "/Library/LaunchAgents/com.llmquotabar.worker.plist")
+    if workerInstalled {
+        // 用 `localPath` 而不是 `path`。
+        //
+        // 路径是按机器记的，全局那个 `path` 只是别的机器留下的兜底。
+        // 第一版这里读了 `path`，结果**恰好漏掉了本机真正出事的那个仓库**，
+        // 只报了另一个 —— 一条查了但查错地方的检查，比没有这条检查更糟，
+        // 因为它给的是假的安心。
+        let risky = RepoRegistry.all().filter { e in
+            let p = URL(fileURLWithPath: e.localPath).standardizedFileURL.path
+            return guarded.contains { p.hasPrefix(homeDir + "/" + $0 + "/") }
+        }
+        if !risky.isEmpty {
+            print(Ansi.yellow("⚠ 常驻 worker 可能够不着这些仓库"))
+            for e in risky { print(Ansi.dim("    \(e.alias)  \(e.localPath)")) }
+            print(Ansi.dim("  它们在受保护目录下（Documents / Desktop / Downloads），"
+                + "而 worker 是 launchd 起的、没有你终端的授权上下文。"))
+            print(Ansi.dim("  症状不是报错而是**卡住**：任务停在「建 worktree 失败：超时」。"))
+            print(Ansi.dim("  两条路，任选其一："))
+            print(Ansi.dim("    1) 把仓库挪到不受保护的位置，比如 ~/dev/"))
+            print(Ansi.dim("    2) 系统设置 → 隐私与安全性 → 完全磁盘访问权限，"
+                + "把下面这个可执行文件加进去，然后重启 worker："))
+            // 印**解析后的绝对路径**。要人去系统设置里「添加这个文件」，
+            // 结果给一个 argv[0]（很可能就是裸的 "llmq"）等于什么都没说。
+            let argv0 = CommandLine.arguments.first ?? "llmq"
+            let exePath: String = {
+                if argv0.hasPrefix("/") { return argv0 }
+                let which = Proc.run("/usr/bin/which", ["llmq"], cwd: homeDir,
+                                     env: [:], timeout: 5)
+                    .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !which.isEmpty { return which }
+                return homeDir + "/.local/bin/llmq"
+            }()
+            // 符号链接要跟到底 —— 授权认的是真实文件，不是链接。
+            let real = (try? FileManager.default
+                .destinationOfSymbolicLink(atPath: exePath)) ?? exePath
+            let resolved = real.hasPrefix("/") ? real
+                : URL(fileURLWithPath: exePath).deletingLastPathComponent()
+                    .appendingPathComponent(real).standardizedFileURL.path
+            print("       " + resolved)
+            print("       launchctl kickstart -k gui/$(id -u)/com.llmquotabar.worker")
+            print("")
+        }
+    }
+
+    // **我们自己留在 iCloud 上的半成品。**
+    //
+    // 原子写是「写临时文件 + rename」，而 iCloud 上的 rename 可以永久阻塞 ——
+    // 于是临时文件留下、rename 永不返回。一天攒了 166 个、21MB，一直同步到手机。
+    // 阻塞那个根因已经用看门狗兜住，这条检查留着是为了证伪「理论上不该再有」。
+    let debris = Debris.scan(root: Inbox.root)
+    if !debris.isEmpty {
+        print(Ansi.yellow("⚠ iCloud 上有 \(debris.files.count) 个半成品文件（\(debris.sizeText)）"))
+        print(Ansi.dim("  这是原子写卡在 rename 留下的，不是你的数据，删掉安全。"))
+        if let n = debris.newest {
+            let mins = Int(Date().timeIntervalSince(n) / 60)
+            print(Ansi.dim("  最新的一个是 \(mins) 分钟前留下的"
+                + (mins < 60 ? " —— **还在产生新的，说明阻塞还在发生**" : "（已经不再增加）")))
+        }
+        print(Ansi.dim("  清掉：llmq doctor --tidy"))
+        print("")
+    }
+    if debris.incomplete {
+        print(Ansi.yellow("⚠ 扫半成品时有目录读不动（iCloud 没响应），上面的数字可能不全"))
+        print("")
+    }
+
+    // **把「自动调度不跨机器」这条规则明写出来。**
+    //
+    // 它一直是这样的，但从来没在任何地方说过 —— 于是每次有人问
+    // 「会不会派到另一台去」都得去翻代码。而这条规则撑着一个很实际的
+    // 好处：每台机器的开发目录可以放在它自己喜欢的地方
+    //（`RepoAlias.pathByMachine` 就是干这个的）。
+    // 一旦自动调度跨机，路径就必须两边一致，这个自由立刻没了。
+    let peers = ClusterPresenceStore.all().filter { $0.machineID != Paths.machineID() }
+    // **损坏的任务记录要报出来。**
+    //
+    // tasks.jsonl 是 append-only，而写它的进程今天被杀过很多次
+    //（超时、发布重启、机器崩了十小时）。写到一半被杀就留下半行，
+    // 那条任务从此不存在 —— 而它的下游会永远等一个不会到来的上游，
+    // 从外面看是「图卡住了」，查不出任何原因。
+    let all = TaskStore.all()
+    if TaskStore.skippedLines > 0 {
+        print(Ansi.red("⚠ 任务记录里有 \(TaskStore.skippedLines) 行解不出来"))
+        print(Ansi.dim("  这些任务已经不存在了。如果某张图卡住、下游一直等着，多半就是它。"))
+        print(Ansi.dim("  文件：" + TaskStore.file.path))
+        print(Ansi.dim("  半行通常来自「写到一半进程被杀」，多数情况下删掉那几行就行。"))
+        print("")
+    }
+    _ = all
+
+    // **worker 跑的是不是你刚发布的那份二进制。**
+    //
+    // 今天真出过：我把 worker 的 plist 指向 app bundle 里的一份 llmq，
+    // 而 `llmq release publish` 只更新 ~/.local/bin/llmq —— 两份从此分道扬镳。
+    // worker 安静地跑了几小时旧代码（我一直以为发布生效了），
+    // 最后那个文件不见了，它直接以 EX_CONFIG(78) 退出，队列停了 80 分钟。
+    //
+    // 症状是最难查的那种：**发布成功、测试全绿、worker「在跑」，但行为是旧的。**
+    if let plist = try? Data(contentsOf: FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/LaunchAgents/com.llmquotabar.worker.plist")),
+       let obj = try? PropertyListSerialization.propertyList(from: plist, format: nil)
+        as? [String: Any],
+       let args = obj["ProgramArguments"] as? [String], let exe = args.first {
+        let installed = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/llmq").path
+        if !FileManager.default.fileExists(atPath: exe) {
+            print(Ansi.red("⚠ worker 要跑的二进制不存在：") + exe)
+            print(Ansi.dim("  launchd 会以 EX_CONFIG(78) 退出，而且**不写任何日志** ——"))
+            print(Ansi.dim("  从外面看就是「队列不动了」。改回：" + installed))
+            print("")
+        } else if exe != installed {
+            print(Ansi.yellow("⚠ worker 跑的不是发布装上的那份二进制"))
+            print(Ansi.dim("  它在跑：" + exe))
+            print(Ansi.dim("  发布装的：" + installed))
+            print(Ansi.dim("  llmq release publish 只更新后者 —— 前者会一直是旧代码，"
+                + "而且没有任何提示。"))
+            print("")
+        }
+    }
+
+    print(Ansi.bold("调度范围"))
+    print("  自动调度" + Ansi.green("只在本机") + "选平台，"
+        + Ansi.dim("从不把任务派到别的机器"))
+    print(Ansi.dim("  所以每台机器的仓库可以各放各的位置（别名按机器解析成本地路径）"))
+    if peers.isEmpty {
+        print(Ansi.dim("  跨机要手动：llmq cluster dispatch <对方节点> \"<任务>\""))
+    } else {
+        print(Ansi.dim("  跨机要手动，比如："))
+        for p in peers.prefix(2) {
+            print(Ansi.dim("    llmq cluster dispatch \(p.nodeName ?? p.machineName) \"<任务>\""))
+        }
+        print(Ansi.dim("  它在对面按**别名**重新解析路径，不会把本机路径发过去"))
+    }
+    print("")
+
     print(Ansi.bold("数据源探测"))
     print(Ansi.dim(pad("采集器", 34) + pad("平台", 12) + pad("状态", 16)
         + pad("已验证", 10) + "路径"))
@@ -2231,6 +2548,20 @@ func cmdInstallLoop() throws {
     // KeepAlive 让它挂了自动拉起；ThrottleInterval 防止启动失败时疯狂重启。
     // LimitLoadToSessionType=Aqua 是必须的：agent 要访问 Keychain 里的平台凭据，
     // 后台会话（Background）拿不到 GUI 会话的 Keychain 上下文。
+    //
+    // **AssociatedBundleIdentifiers 决定这个 job 的隐私授权算在谁头上。**
+    //
+    // 这是 Apple DTS（Quinn）对 launchd job 的明确建议：不设的话，系统
+    // 「归属」不到一个有 bundle 身份的程序上，授权就没有稳定的落点 ——
+    // 裸的命令行二进制没有 Info.plist，TCC 很难为它建立跨版本的身份。
+    //
+    // 而 Aqua + 归属不清的组合，症状不是报错而是**永久挂起**：
+    // 内核把线程 park 在 `__WAITING_ON_APPROVAL_FROM_SANDBOXD__` 上等一个
+    // 永远不会弹出来的对话框。Quinn 说过这条分界 ——
+    // **没有 GUI session 就直接 EPERM，归属到 GUI app 才会一直等**，
+    // 而我们恰好写了 Aqua，落在「一直等」那一支。
+    // 实测就是这样：worker 卡死几小时，内核每 5 秒打一条
+    // `watchdog expired for approval entry`，tccd 那边一条记录都没有。
     let plist = """
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
@@ -2248,6 +2579,8 @@ func cmdInstallLoop() throws {
       <key>KeepAlive</key><true/>
       <key>ThrottleInterval</key><integer>60</integer>
       <key>LimitLoadToSessionType</key><string>Aqua</string>
+      <key>AssociatedBundleIdentifiers</key>
+      <array><string>com.llmquotabar.menubar</string></array>
       <key>StandardOutPath</key>
       <string>\(Paths.appSupport.path)/worker.log</string>
       <key>StandardErrorPath</key>
@@ -2301,6 +2634,9 @@ func cmdInstallAgent(interval: Int) throws {
         <string>\(exe)</string>
         <string>collect</string>
       </array>
+      <!-- 隐私授权的归属落点。见 worker plist 上的长注释。 -->
+      <key>AssociatedBundleIdentifiers</key>
+      <array><string>com.llmquotabar.menubar</string></array>
       <key>StartInterval</key><integer>\(interval)</integer>
       <key>RunAtLoad</key><true/>
       <key>StandardOutPath</key>
@@ -2639,6 +2975,9 @@ func cmdCluster(_ rest: [String]) throws {
           <key>KeepAlive</key><true/>
           <key>ThrottleInterval</key><integer>30</integer>
           <key>LimitLoadToSessionType</key><string>Aqua</string>
+          <!-- 隐私授权的归属落点。见 worker 那个 plist 上的长注释。 -->
+          <key>AssociatedBundleIdentifiers</key>
+          <array><string>com.llmquotabar.menubar</string></array>
           <key>StandardOutPath</key><string>\(log)</string>
           <key>StandardErrorPath</key><string>\(log)</string>
         </dict>
@@ -3023,6 +3362,44 @@ func relativeTime(_ d: Date) -> String {
 func cmdRelease(_ rest: [String]) throws {
     switch rest.first ?? "status" {
 
+    // llmq release sign-with "<证书名>" —— 配一个跨重建稳定的签名身份。
+    //
+    // 身份存本机，**不进仓库也不进 iCloud**：证书名里带邮箱和 Team ID，
+    // 而这个项目要开源。别人不配就是现在的 adhoc 行为，什么都不受影响。
+    case "sign-with":
+        let want = rest.dropFirst().first
+        guard let id = want, !id.isEmpty else {
+            print("用法：llmq release sign-with \"<证书名>\"   （或 --none 关掉）")
+            let list = CodeSigning.available()
+            if list.isEmpty {
+                print(Ansi.yellow("本机没有可用于代码签名的证书"))
+            } else {
+                print(Ansi.dim("本机可用的："))
+                for i in list { print("    " + i) }
+            }
+            if let cur = CodeSigning.identity() {
+                print(Ansi.dim("当前配置：") + cur)
+            } else {
+                print(Ansi.dim("当前：没配（adhoc，授权会在每次发布后失效）"))
+            }
+            return
+        }
+        if id == "--none" {
+            CodeSigning.clearIdentity()
+            print(Ansi.yellow("已关掉签名 —— 授权会在每次发布后失效"))
+            return
+        }
+        guard CodeSigning.available().contains(id) else {
+            print(Ansi.red("本机没有这张证书：") + id)
+            print(Ansi.dim("可用的：")); for i in CodeSigning.available() { print("    " + i) }
+            exit(1)
+        }
+        try CodeSigning.setIdentity(id)
+        print(Ansi.green("签名身份已配置 ") + Ansi.dim(CodeSigning.configFile.path))
+        print(Ansi.dim("下次 llmq release publish 会用它签名。"))
+        print(Ansi.dim("签完需要你**重新授权一次**（系统认的是新身份），之后就不会再失效。"))
+        return
+
     // llmq release publish [--notes "..."]
     case "publish":
         var notes = ""
@@ -3044,6 +3421,25 @@ func cmdRelease(_ rest: [String]) throws {
             ["swift", "build", "-c", "release", "--arch", "arm64", "--arch", "x86_64",
              "--show-bin-path"], cwd: repo, env: [:], timeout: 300)
         let binDir = pathOut.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // **打包之前先签名。**
+        //
+        // adhoc 签名的二进制在 TCC 眼里每次重建都是一个新程序，于是
+        // 「发布一次 = 把用户给的完全磁盘访问作废一次」。详见 CodeSigning。
+        // 没配身份就跳过，行为和以前一样 —— 开源用户不受影响。
+        for exe in ["llmq"] {
+            let p = binDir + "/" + exe
+            guard FileManager.default.fileExists(atPath: p) else { continue }
+            let s = CodeSigning.sign(p)
+            print((s.signed ? Ansi.green("  ✓ ") : Ansi.yellow("  ⚠︎ ")) + s.detail)
+            if s.signed {
+                let d = CodeSigning.describe(p)
+                print(Ansi.dim("    身份 \(d.identifier ?? "?") / team \(d.team ?? "无")"
+                    + (d.team == nil
+                       ? "  ← 没有 team，授权还是会随重建失效"
+                       : "  ← 跨重建稳定，授权不会再被发布踩掉")))
+            }
+        }
 
         print(Ansi.dim("打包…"))
         let tar = try ReleasePacker.pack(binDir: binDir)
@@ -3449,7 +3845,7 @@ do {
     case "status":
         try cmdStatus()
     case "doctor":
-        try cmdDoctor()
+        try cmdDoctor(tidy: rest.contains("--tidy"))
     case "debug-parse":
         try cmdDebugParse(rest)
     case "dashboard":
