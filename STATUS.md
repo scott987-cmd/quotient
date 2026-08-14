@@ -128,27 +128,21 @@
 
 ## 最近落地（自动记录，别手改）
 
-最后更新：2026-08-14 08:49　共 17 个任务
+最后更新：2026-08-14 15:42　共 17 个任务
 
 | 时间 | 干了什么 | 谁干的 | 改动 |
 |---|---|---|---|
+| 08-14 15:42 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | 火山方舟 | 1 个文件 |
+| 08-14 11:23 | 给 TaskGraph.swift 补一段文件头注释说明它解决什么问题，同时在 build… | Qwen | 2 个文件 |
+| 08-14 08:50 | 为上一步新增的 llmq waste 命令的取数逻辑补单元测试。  改哪里：Tests/L… | Qwen | 3 个文件 |
+| 08-14 08:50 | 在 README.md 的命令列表里补一行 llmq waste 的说明。  先做什么：读… | 火山方舟 | 4 个文件 |
 | 08-14 08:36 | 把 Tools/make-icon.swift 里的配色改成单色版本，另外导出一份 102… | Qwen | 1 个文件 |
 | 08-14 08:27 | 为 LLMQuotaCore 里已有的 WasteMeter 增加一个命令行入口 llmq… | — | — |
-| 08-14 00:00 | 在 README.md 的命令列表里补一行 llmq waste 的说明。  先做什么：读… | 火山方舟 | 4 个文件 |
-| 08-13 23:55 | 为上一步新增的 llmq waste 命令的取数逻辑补单元测试。  改哪里：Tests/L… | Qwen | 3 个文件 |
-| 08-13 23:09 | 为 LLMQuotaCore 里已有的 WasteMeter 增加一个命令行入口 llmq… | Qwen | 5 个文件 |
 | 08-13 21:39 | 为 Sources/LLMQuotaCore/Cooldown.swift 里的每一个 p… | 火山方舟 | 1 个文件 |
 | 08-13 21:35 | 把 Sources/LLMQuotaCore/Format.swift 里 Format.… | 火山方舟 | 0 个文件 |
 | 08-13 21:34 | 占位任务，只为看调度决策 | 火山方舟 | 0 个文件 |
 | 08-13 21:33 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | 火山方舟 | 0 个文件 |
 | 08-13 21:28 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | 火山方舟 | 0 个文件 |
 | 08-13 21:24 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | 火山方舟 | 0 个文件 |
-| 08-13 21:20 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | 火山方舟 | 1 个文件 |
-
-**卡着的**：
-
-- `70b06e19` 等人工确认 — ⚠️ 本步骤修改仓库根目录的 `build-app.sh`。按 SECURITY.md 第三…：没有平台能接：Qwen（任务风险是高危，而开发最多只接常规的活）；Kimi（任务风险是高危，而主力最多只接常规的活）；火山方舟（任务风险是…
-- `71e37b07` 等人工确认 — 把 Package.swift 里的 swift-tools-version 升一档，并确…：碰到高危路径（Package.swift），等你确认
-- `d2c5db6d` 等人工确认 — 修改 build-app.sh，让它在编译前先跑一次 swift test，测试不过就中止…：没有平台能接：Qwen（任务风险是高危，而开发最多只接常规的活）；Kimi（任务风险是高危，而主力最多只接常规的活）；火山方舟（任务风险是…
 
 <!-- /llmq:progress -->
