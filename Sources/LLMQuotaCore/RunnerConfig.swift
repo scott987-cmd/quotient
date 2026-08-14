@@ -51,7 +51,10 @@ public enum RunnerConfigStore {
     public static func save(_ cfg: RunnerConfig) throws {
         try Paths.ensureDirectories()
         let data = try SnapshotCoding.prettyEncoder().encode(cfg)
-        try data.write(to: file, options: .atomic)
+        guard ICloudSafe.write(data, to: file) else {
+            throw NSError(domain: "RunnerConfig", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "写运行配置超时（iCloud 没响应）"])
+        }
         cached = cfg
         cachedAt = Date()
     }

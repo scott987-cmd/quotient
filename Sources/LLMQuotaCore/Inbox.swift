@@ -126,7 +126,7 @@ public enum RepoRegistry {
     }
 
     public static func all() -> [RepoAlias] {
-        guard let data = try? Data(contentsOf: file),
+        guard let data = ICloudSafe.read(file),
               let list = try? SnapshotCoding.decoder().decode([RepoAlias].self, from: data)
         else { return [] }
         return list.sorted { $0.alias < $1.alias }
@@ -149,7 +149,7 @@ public enum RepoRegistry {
         // 存原始 JSON 做深合并 —— 但那要引入一层通用容器，
         // 对一份十来行的配置不值得。至少把最容易丢的这个保住。
         var merged = list
-        if let old = try? Data(contentsOf: file),
+        if let old = ICloudSafe.read(file),
            let prev = try? SnapshotCoding.decoder().decode([RepoAlias].self, from: old) {
             let byAlias = Dictionary(prev.map { ($0.alias, $0) }, uniquingKeysWith: { a, _ in a })
             for i in merged.indices {
@@ -160,7 +160,11 @@ public enum RepoRegistry {
             }
         }
         let data = try SnapshotCoding.prettyEncoder().encode(merged)
-        try data.write(to: file, options: .atomic)
+        // `file` 是 iCloud 配置目录（没有才退回本地），所以这里可能永久阻塞。
+        guard ICloudSafe.write(data, to: file) else {
+            throw NSError(domain: "RepoRegistry", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "写仓库清单超时 —— iCloud 没响应，改动没保存"])
+        }
     }
 
     @discardableResult
@@ -320,7 +324,7 @@ public enum Inbox {
             .replacingOccurrences(of: ":", with: "")
         let dest = dir.appendingPathComponent(
             "\(stamp)-\(suffix)-\(url.lastPathComponent)")
-        try? FileManager.default.moveItem(at: url, to: dest)
+        ICloudSafe.move(url, to: dest)
     }
 
     static func requestDownloads(in dir: URL) {
@@ -358,7 +362,7 @@ public enum Inbox {
             platform: platform, branch: branch, changedFiles: changedFiles,
             updatedAt: Date())
         guard let data = try? SnapshotCoding.prettyEncoder().encode(r) else { return }
-        try? data.write(to: outboxDir.appendingPathComponent("\(taskID).json"), options: .atomic)
+        ICloudSafe.write(data, to: outboxDir.appendingPathComponent("\(taskID).json"))
     }
 
     public static func writeResult(for task: WorkTask) {
@@ -377,9 +381,9 @@ public enum Inbox {
         guard let outboxDir else { return }
         ensureDirectories()
         guard let data = try? SnapshotCoding.prettyEncoder().encode(dash) else { return }
-        try? data.write(
-            to: outboxDir.deletingLastPathComponent().appendingPathComponent("dashboard.json"),
-            options: .atomic)
+        ICloudSafe.write(
+            data,
+            to: outboxDir.deletingLastPathComponent().appendingPathComponent("dashboard.json"))
     }
 
     /// 手机端要用的仓库别名清单（去掉本机绝对路径，手机上看着没意义）。
@@ -388,9 +392,9 @@ public enum Inbox {
         struct Item: Codable { var alias: String; var isDefault: Bool }
         let items = RepoRegistry.all().map { Item(alias: $0.alias, isDefault: $0.isDefault) }
         guard let data = try? SnapshotCoding.prettyEncoder().encode(items) else { return }
-        try? data.write(
-            to: outboxDir.deletingLastPathComponent().appendingPathComponent("repos.json"),
-            options: .atomic)
+        ICloudSafe.write(
+            data,
+            to: outboxDir.deletingLastPathComponent().appendingPathComponent("repos.json"))
     }
 
     /// 清掉太旧的结果，别让 outbox 无限膨胀。

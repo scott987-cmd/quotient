@@ -254,7 +254,10 @@ public enum AskStore {
         }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let data = try SnapshotCoding.prettyEncoder().encode(ask)
-        try data.write(to: dir.appendingPathComponent("\(ask.taskID).json"), options: .atomic)
+        guard ICloudSafe.write(data, to: dir.appendingPathComponent("\(ask.taskID).json")) else {
+            throw NSError(domain: "Ask", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "写 iCloud 超时 —— 提问没发出去"])
+        }
     }
 
     /// 本机待回答的问题。

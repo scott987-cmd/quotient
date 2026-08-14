@@ -711,6 +711,6 @@ public final class Collector {
 
     private func saveCache(_ cache: AdapterCache) {
         guard let data = try? SnapshotCoding.encoder().encode(cache) else { return }
-        try? data.write(to: cacheURL(cache.adapterID), options: .atomic)
+        ICloudSafe.write(data, to: cacheURL(cache.adapterID))
     }
 }

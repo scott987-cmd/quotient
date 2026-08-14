@@ -51,7 +51,10 @@ public enum ClusterConfigStore {
         try FileManager.default.createDirectory(
             at: ClusterCA.dir, withIntermediateDirectories: true)
         let data = try SnapshotCoding.prettyEncoder().encode(c)
-        try data.write(to: file, options: .atomic)
+        guard ICloudSafe.write(data, to: file) else {
+            throw NSError(domain: "ClusterProtocol", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "写集群配置超时（iCloud 没响应）"])
+        }
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o600], ofItemAtPath: file.path)
     }

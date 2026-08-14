@@ -215,7 +215,7 @@ public enum ClusterPresenceStore {
                 ? serveLogTail() : nil,
             restartsLastHour: serveRestartCount())
         guard let data = try? SnapshotCoding.prettyEncoder().encode(p) else { return }
-        try? data.write(to: dir.appendingPathComponent("\(p.machineID).json"), options: .atomic)
+        ICloudSafe.write(data, to: dir.appendingPathComponent("\(p.machineID).json"))
     }
 
     static var serveLog: URL {

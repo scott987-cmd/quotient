@@ -146,7 +146,12 @@ public enum ReleaseChannel {
         let manifest = Manifest(sha256: sha, file: name, publishedAt: Date(),
                                 publishedBy: node, notes: notes)
         let mURL = dir.appendingPathComponent("current.json")
-        try SnapshotCoding.prettyEncoder().encode(manifest).write(to: mURL, options: .atomic)
+        guard ICloudSafe.write(
+            try SnapshotCoding.prettyEncoder().encode(manifest), to: mURL, timeout: 20)
+        else {
+            throw NSError(domain: "ReleaseChannel", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "写发布清单超时（iCloud 没响应）"])
+        }
 
         // 签的是 manifest 而不是 tar 包本身：manifest 里已经有包的哈希，
         // 一个签名就覆盖了全部内容，而且 manifest 只有几百字节，验起来快。

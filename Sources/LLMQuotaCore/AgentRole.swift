@@ -64,6 +64,25 @@ public struct AgentRole: Codable, Sendable {
     /// 而全局默认将来调整时它们不会跟着动。
     public var reserveFraction: Double?
 
+    /// 上面那个数是**沿用的全局默认**，还是给这个平台单独设过的。
+    ///
+    /// ## 为什么发给手机时必须多带这一位
+    ///
+    /// 配置里 `reserveFraction == nil` 表示「继承默认」，而看板要显示的是
+    /// **生效值**。把 nil 原样发出去，手机上就是一片空白 ——
+    /// 用户看到的是「一个都没设」，而实际上每个平台都在按 25% 留白。
+    /// 也就是说界面会把一条**正在生效、正在拦调度**的规则显示成「没有规则」。
+    ///
+    /// 所以发布给手机的那一份（`AgentRoles.published`）把 `reserveFraction`
+    /// 换成解析后的生效值，再用这一位说明那个数的来历：
+    /// true = 跟着全局默认走（手机上该弱化显示成「默认 25%」），
+    /// false = 你给这个平台单独设过。
+    ///
+    /// 配置文件里这一位不用人填 —— `AgentRoles.save` 按
+    /// `reserveFraction == nil` 归一化。让人手填两个必须自洽的字段，
+    /// 迟早会出现「明明设了值却标着默认」这种自相矛盾的记录。
+    public var reserveIsDefault: Bool = true
+
     /// 在这些机器上，这个平台是**指挥**（控制面），不是干活的。
     ///
     /// ## 为什么不能继续用 mutedOn 表达
@@ -97,9 +116,16 @@ public struct AgentRole: Codable, Sendable {
         self.muteReason = muteReason
         self.dispatcherOn = dispatcherOn
         self.reserveFraction = reserveFraction
+        // 派生量，不进参数表：让调用方能传一个和 reserveFraction 打架的值，
+        // 就等于给「设了值却标着默认」开了个口子。
+        self.reserveIsDefault = reserveFraction == nil
     }
 
     /// 和另一个角色是不是等价。用来判断「这条要不要存」。
+    ///
+    /// **不比 reserveIsDefault** —— 它是 `reserveFraction == nil` 的派生量，
+    /// 比它等于把同一件事判两遍；而发布给手机的那一份里它被刻意改写过
+    /// （生效值 + 来历），拿那种记录来比会得出「变了」的假结论。
     func sameAs(_ o: AgentRole) -> Bool {
         title == o.title && maxRisk == o.maxRisk && maxTier == o.maxTier
             && prefers == o.prefers && note == o.note
@@ -125,6 +151,16 @@ public struct AgentRole: Codable, Sendable {
            r >= 0, r <= 1 {
             reserveFraction = r
         }
+        // **老记录里没有这个键。** 合成解码器对缺键零容忍，而给属性写默认值
+        // 救不了它 —— 照样抛 keyNotFound，整条角色解不出来，然后被
+        // `all()` 那个逐条跳过的循环静默丢掉：风险闸门和留白一起失效，
+        // 且不报错。这个坑这个项目踩过五次，所以这里手写 decodeIfPresent。
+        //
+        // 缺键时按 reserveFraction 推：那是这一位唯一的真相来源。
+        // 而越界的值上面已经被当成没配了，推出来自然是「用默认」——
+        // 正是想要的：手机上显示「默认 25%」，而不是显示用户写的那个 1.5。
+        reserveIsDefault = try c.decodeIfPresent(Bool.self, forKey: .reserveIsDefault)
+            ?? (reserveFraction == nil)
 
         // **一次性迁移：控制面原来是用 mute 表达的。**
         //
@@ -234,7 +270,7 @@ public enum AgentRoles {
         // 新版本写了旧版本不认识的枚举值），整份配置**静默退回出厂默认** ——
         // 而出厂默认里没有 dispatcherOn，控制面 Claude 随即开始接活。
         // 一次手误换来一个悄悄改变调度行为的系统。
-        if let data = try? Data(contentsOf: file),
+        if let data = ICloudSafe.read(file),
            let rows = try? JSONSerialization.jsonObject(with: data) as? [Any] {
             let dec = SnapshotCoding.decoder()
             var bad = 0
@@ -252,7 +288,7 @@ public enum AgentRoles {
             cached = out; cachedAt = Date()
             return out
         }
-        if let data = try? Data(contentsOf: file),
+        if let data = ICloudSafe.read(file),
            let saved = try? SnapshotCoding.decoder().decode([AgentRole].self, from: data) {
             // 用户配置覆盖默认，但**不删默认里有而配置里没有的** ——
             // 否则新增一个平台之后，老配置文件会让它一个角色都没有，
@@ -283,11 +319,22 @@ public enum AgentRoles {
         let changed = roles.filter { r in
             guard let d = base[r.platform] else { return true }
             return !r.sameAs(d)
+        }.map { r -> AgentRole in
+            // 归一化派生位再落盘。不归一化的话，一份从看板那边回流的记录
+            // （reserveFraction 是生效值、reserveIsDefault 是 true）
+            // 会被原样存进配置，从此这个平台被钉死在当时的默认值上，
+            // 而配置里却写着「用的是默认」—— 两边都不报错。
+            var x = r
+            x.reserveIsDefault = x.reserveFraction == nil
+            return x
         }
         let data = try SnapshotCoding.prettyEncoder().encode(changed.sorted {
             $0.platform.rawValue < $1.platform.rawValue
         })
-        try data.write(to: file, options: .atomic)
+        guard ICloudSafe.write(data, to: file) else {
+            throw NSError(domain: "AgentRole", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "写角色配置超时（iCloud 没响应）"])
+        }
         cached = nil
     }
 
@@ -299,6 +346,22 @@ public enum AgentRoles {
     /// 这个平台的留白比例。没配就用全局默认。
     public static func reserve(for p: Platform, default fallback: Double) -> Double {
         role(for: p).reserveFraction ?? fallback
+    }
+
+    /// 发布给手机看的那一份角色。
+    ///
+    /// 和 `role(for:)` 的唯一区别是 `reserveFraction`：这里放的是
+    /// **解析后的生效值**，不是配置里那个「nil 表示继承」的覆盖值。
+    ///
+    /// 手机上没有 `WorkScheduler`，解析不了「继承」这件事 —— 真让它自己解，
+    /// 就是把全局默认这个数字在两个仓库里各写一遍，改一边忘一边，
+    /// 而症状是手机上显示的留白和 Mac 上实际在拦的留白**不是一个数**。
+    /// 这类分歧不会报错，只会让人以为自己设的值没生效。
+    public static func published(for p: Platform, default fallback: Double) -> AgentRole {
+        var r = role(for: p)
+        r.reserveIsDefault = r.reserveFraction == nil
+        r.reserveFraction = r.reserveFraction ?? fallback
+        return r
     }
 
     /// 这个平台在**本机**是不是指挥。

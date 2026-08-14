@@ -154,11 +154,13 @@ public enum OfficeLog {
         let events = Array(all().suffix(keep))
         guard let out = publishedFile else { return }
         if let d = try? SnapshotCoding.prettyEncoder().encode(events) {
-            try? d.write(to: out, options: .atomic)
+            ICloudSafe.write(d, to: out)
         }
         // 截短。append-only 的文件不管的话会一直长下去。
         if let d = try? SnapshotCoding.encoder().encodeLines(events) {
-            try? d.write(to: localFile, options: .atomic)
+            // 这个是本地文件，ICloudSafe 会识别出来直接写、不进看门狗。
+            // 走同一个函数是为了让规则简单：这个文件里一律用它，不留特例。
+            ICloudSafe.write(d, to: localFile)
         }
     }
 }

@@ -61,7 +61,8 @@ public enum CooldownLedger {
     ]
 
     public static func load() -> [Platform: Cooldown] {
-        guard let data = try? Data(contentsOf: file),
+        // `file` 可能在 iCloud 上。这一行卡死过整个菜单栏 App。
+        guard let data = ICloudSafe.read(file),
               let list = try? SnapshotCoding.decoder().decode([Cooldown].self, from: data)
         else { return [:] }
         return Dictionary(uniqueKeysWithValues: list.map { ($0.platform, $0) })
@@ -72,7 +73,8 @@ public enum CooldownLedger {
         guard let data = try? SnapshotCoding.prettyEncoder()
             .encode(map.values.sorted { $0.platform.sortIndex < $1.platform.sortIndex })
         else { return }
-        try? data.write(to: file, options: .atomic)
+        // 这一行卡死过 worker：跑完任务记冷却时写 iCloud，永久阻塞。
+        ICloudSafe.write(data, to: file)
     }
 
     /// 当前处于冷却中的平台。

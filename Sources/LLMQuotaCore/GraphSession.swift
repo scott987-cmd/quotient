@@ -51,7 +51,7 @@ public enum GraphSession {
 
     static func save(_ m: [String: String]) {
         try? Paths.ensureDirectories()
-        try? JSONEncoder().encode(m).write(to: file, options: .atomic)
+        if let d = try? JSONEncoder().encode(m) { ICloudSafe.write(d, to: file) }
     }
 
     static func key(_ graph: String, _ platform: Platform) -> String {

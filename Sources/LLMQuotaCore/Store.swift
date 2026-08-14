@@ -14,6 +14,12 @@ public enum ICloudSyncStatus: Sendable, Equatable {
     case synced
     case unavailable
     case permissionDenied(String)
+    /// 写进去了没回来 —— iCloud 的写入**可以永久阻塞**，不是慢，是不返回。
+    ///
+    /// 单独一个 case，不能并进 `.unavailable`。「iCloud 没配置」和
+    /// 「iCloud 卡死把整条流水线冻住了」是两件严重程度差着数量级的事，
+    /// 混成一个状态，人看到的就是「哦，没连 iCloud」，然后去查一个没坏的地方。
+    case stalled(String)
 
     public var needsFullDiskAccess: Bool {
         if case .permissionDenied = self { return true }
@@ -32,18 +38,38 @@ public enum SnapshotStore {
         let name = fileName(machineID: snapshot.machineID)
 
         // 本地目录不受 TCC 管，这一步必须成功，失败才算真的采集失败。
-        try data.write(to: Paths.localSnapshotsDir.appendingPathComponent(name), options: .atomic)
+        // 走 ICloudSafe 只是为了统一规矩 —— 它认出这是本地路径就直接写，没有开销。
+        guard ICloudSafe.write(data, to: Paths.localSnapshotsDir
+            .appendingPathComponent(name)) else {
+            throw NSError(domain: "SnapshotStore", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "本地快照写不进去"])
+        }
 
         guard let icloudDir = Paths.iCloudSnapshotsDir else { return .unavailable }
-        do {
-            try FileManager.default.createDirectory(at: icloudDir, withIntermediateDirectories: true)
-            try data.write(to: icloudDir.appendingPathComponent(name), options: .atomic)
-            return .synced
-        } catch {
-            let ns = error as NSError
-            let denied = ns.domain == NSCocoaErrorDomain
-                && (ns.code == NSFileWriteNoPermissionError || ns.code == NSFileReadNoPermissionError)
-            return denied ? .permissionDenied(ns.localizedDescription) : .unavailable
+        // 本地已经落盘了，下面这段是「尽力同步到 iCloud」——
+        // 而 iCloud 的写入可以**永久阻塞**（`do/catch` 只接得住错误，接不住不返回）。
+        // 关进看门狗，见 Watchdog。
+        let outcome = Watchdog.run("snapshot.icloud", timeout: 12) { () -> ICloudSyncStatus in
+            do {
+                try FileManager.default.createDirectory(
+                    at: icloudDir, withIntermediateDirectories: true)
+                guard ICloudSafe.write(
+                    data, to: icloudDir.appendingPathComponent(name)) else {
+                    return .stalled("写 iCloud 快照超时")
+                }
+                return .synced
+            } catch {
+                let ns = error as NSError
+                let denied = ns.domain == NSCocoaErrorDomain
+                    && (ns.code == NSFileWriteNoPermissionError
+                        || ns.code == NSFileReadNoPermissionError)
+                return denied ? .permissionDenied(ns.localizedDescription) : .unavailable
+            }
+        }
+        switch outcome {
+        case .done(let s): return s
+        case .timedOut: return .stalled("写 iCloud 快照 12 秒没返回")
+        case .skipped: return .stalled("上一次写 iCloud 快照还卡着，这轮跳过")
         }
     }
 
@@ -72,7 +98,7 @@ public enum SnapshotStore {
             guard (try? SnapshotCoding.decoder().decode(MachineSnapshot.self, from: data)) != nil
             else { continue }
             let dest = Paths.localSnapshotsDir.appendingPathComponent(name)
-            if (try? data.write(to: dest, options: .atomic)) != nil { mirrored += 1 }
+            if ICloudSafe.write(data, to: dest) { mirrored += 1 }
         }
         return mirrored
     }
@@ -211,7 +237,7 @@ public enum PlansStore {
     public static func save(_ config: PlansConfig, force: Bool = false) throws {
         try Paths.ensureDirectories()
         let data = try SnapshotCoding.prettyEncoder().encode(config)
-        try data.write(to: Paths.plansFile, options: .atomic)   // 本地镜像
+        _ = ICloudSafe.write(data, to: Paths.plansFile)   // 本地镜像
 
         guard canonicalFile != Paths.plansFile else { return }
 
@@ -231,10 +257,10 @@ public enum PlansStore {
         // 覆盖前留一份。上一次真丢了之后发现无处可捞 ——
         // iCloud 的版本历史命令行读不到，Time Machine 也未必开着。
         if let old = try? Data(contentsOf: canonicalFile) {
-            try? old.write(to: canonicalFile.deletingLastPathComponent()
-                .appendingPathComponent("plans.backup.json"), options: .atomic)
+            ICloudSafe.write(old, to: canonicalFile.deletingLastPathComponent()
+                .appendingPathComponent("plans.backup.json"))
         }
-        try? data.write(to: canonicalFile, options: .atomic)     // iCloud 权威副本
+        ICloudSafe.write(data, to: canonicalFile)     // iCloud 权威副本
     }
 
     /// 把 iCloud 上的配置同步到本地镜像，供菜单栏 App 读取。
@@ -244,7 +270,7 @@ public enum PlansStore {
               let data = try? Data(contentsOf: canonicalFile),
               (try? SnapshotCoding.decoder().decode(PlansConfig.self, from: data)) != nil
         else { return false }
-        return (try? data.write(to: Paths.plansFile, options: .atomic)) != nil
+        return ICloudSafe.write(data, to: Paths.plansFile)
     }
 
     /// 首次运行时落一份模板出来给用户填。已存在则不动。
@@ -317,17 +343,27 @@ public enum LLMQuota {
         }
 
         result.iCloudSync = try SnapshotStore.write(result.snapshot)
-        result.mirroredMachines = SnapshotStore.mirrorICloudToLocal(
-            selfMachineID: result.snapshot.machineID
-        )
-        // 顺手把 iCloud 上的配置同步到本地镜像，供菜单栏 App 读取。
-        PlansStore.mirrorFromICloud()
-        // 把算好的看板发布到 iCloud，手机端直接读，不用自己重算。
-        Inbox.publishDashboard(dashboard(now: now))
-        Inbox.publishRepos()
-        // 顺带报一下集群状态：我在哪个 IP、在不在听、防火墙开没开。
-        // 跨机连不上时，这是唯一一条还通着的路 —— iCloud。
-        ClusterPresenceStore.publish()
+
+        // ↓ 下面全是 iCloud 上的事，**每一件都关进看门狗**。
+        //
+        // 采集本身到上面这行就已经完成了（本地快照已落盘）。剩下的都是
+        // 「发布出去给别人看」：镜像别人的快照、同步配置、给手机的看板、
+        // 集群状态。全是尽力而为的事。
+        //
+        // 而实测过它们能干出什么：`publishDashboard` 里的
+        // `Data.write(.atomic)` 卡死在 `rename()`，`llmq work loop` 每一轮都调
+        // `collect`，于是**整条自动化流水线停摆**，进程还活着、日志一个字节不长。
+        // 连续四次重启、四次都停在同一行，iCloud 目录里留下四个孤儿临时文件。
+        //
+        // 一个只是给手机看一眼的写入，不该有能力做到这件事。
+        result.mirroredMachines = Watchdog.run("snapshot.mirror", timeout: 12) {
+            SnapshotStore.mirrorICloudToLocal(selfMachineID: result.snapshot.machineID)
+        }.valueOr(0)
+        Watchdog.run("plans.mirror", timeout: 8) { PlansStore.mirrorFromICloud() }
+        let dash = dashboard(now: now)
+        Watchdog.run("publish.dashboard", timeout: 8) { Inbox.publishDashboard(dash) }
+        Watchdog.run("publish.repos", timeout: 8) { Inbox.publishRepos() }
+        Watchdog.run("presence.publish", timeout: 8) { ClusterPresenceStore.publish() }
         return result
     }
 

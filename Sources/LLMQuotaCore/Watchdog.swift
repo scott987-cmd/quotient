@@ -1,0 +1,181 @@
+import Foundation
+
+/// 把可能**永久阻塞**的操作关进看门狗。
+///
+/// # 为什么需要这个
+///
+/// `llmq work loop` 的每一轮都会调 `LLMQuota.collect`，而它一口气做六件
+/// iCloud 上的读写：写快照、镜像回本地、同步配置、发布看板、发布仓库清单、
+/// 上报集群状态。**这六件事全都没有超时。**
+///
+/// 实测出过什么后果：`Inbox.publishDashboard` 的
+/// `Data.write(to:options:.atomic)` 卡在 `rename()` 上，`sample` 显示
+/// 2633/2633 采样全停在那一帧，工作循环 70 秒零输出 —— 进程活着，
+/// 但整条自动化流水线**永久停摆**。iCloud 目录里还留下四个孤儿临时文件
+/// （`.atomic` 是先写临时文件再 rename），时间戳正好对应四次启动后卡死。
+///
+/// 根因是另一回事（见 doctor 里那条受保护目录的检查），但**无论根因是什么，
+/// 一个只是「给手机看一眼」的写入，都不该有能力冻住整条流水线**。
+/// 这就是这个文件存在的理由：把「尽力而为」的事情降级成真的尽力而为。
+///
+/// # 它做什么、不做什么
+///
+/// 做：在后台线程跑，到点就让调用方继续走。
+/// 不做：它**杀不掉**那个卡住的线程 —— 阻塞在内核 `rename()`/`open()` 里的
+/// 线程没法从用户态取消。所以超时之后那个线程仍然挂着。
+///
+/// 正因为杀不掉，才必须防止线程堆积：同一个 key 上一次还没回来时，
+/// 后面的调用直接跳过，不再派新线程。否则每 30 秒一轮、每轮泄漏一个线程，
+/// 一小时就是 120 个 —— 那四个孤儿临时文件就是这么来的。
+public enum Watchdog {
+    private static let lock = NSLock()
+    private static var inFlight: Set<String> = []
+    private static var skipped: [String: Int] = [:]
+
+    /// 被跳过的次数，按 key。给 doctor 用 —— 「一直在跳过」本身就是要报的故障。
+    public static func skipCounts() -> [String: Int] {
+        lock.lock(); defer { lock.unlock() }
+        return skipped
+    }
+
+    public static func resetForTesting() {
+        lock.lock(); defer { lock.unlock() }
+        inFlight.removeAll(); skipped.removeAll()
+    }
+
+    /// 结果三态。**别把「超时」和「上一次还卡着」合并成一个 nil** ——
+    /// 前者是这次慢，后者是已经病了一段时间了，报给人看时的含义完全不同。
+    public enum Outcome<T> {
+        case done(T)
+        /// 跑了，但超过 `timeout` 还没回来。线程还挂着。
+        case timedOut
+        /// 同一个 key 上一次还没回来，这次直接没派。
+        case skipped
+    }
+
+    /// 在后台线程跑 `body`，最多等 `timeout` 秒。
+    ///
+    /// - Parameter key: 同一个 key 同时只会有一个在飞。用调用点能认出来的名字。
+    @discardableResult
+    public static func run<T>(
+        _ key: String,
+        timeout: TimeInterval = 8,
+        _ body: @escaping () -> T
+    ) -> Outcome<T> {
+        lock.lock()
+        if inFlight.contains(key) {
+            skipped[key, default: 0] += 1
+            lock.unlock()
+            return .skipped
+        }
+        inFlight.insert(key)
+        lock.unlock()
+
+        let sem = DispatchSemaphore(value: 0)
+        // `box` 只在两处被碰：后台线程写一次，主线程在 sem 放行后读一次。
+        // 中间隔着信号量，有 happens-before，所以不需要额外加锁。
+        let box = Box<T>()
+        DispatchQueue.global(qos: .utility).async {
+            let v = body()
+            box.value = v
+            lock.lock(); inFlight.remove(key); lock.unlock()
+            sem.signal()
+        }
+
+        if sem.wait(timeout: .now() + timeout) == .timedOut {
+            // 注意：这里**不能**把 key 从 inFlight 里拿掉。
+            // 那个线程还挂着，拿掉就等于允许下一轮再派一个 —— 正是要防的事。
+            return .timedOut
+        }
+        return box.value.map { Outcome.done($0) } ?? .timedOut
+    }
+
+    private final class Box<T>: @unchecked Sendable {
+        var value: T?
+    }
+}
+
+/// 往 iCloud 上写东西的统一入口。
+///
+/// # 为什么必须是一个收口点，而不是在每个调用点包一层
+///
+/// 第一版我手工把 `collect()` 里那六处 iCloud 操作包进了看门狗，跑起来
+/// 循环确实活了 —— 然后 worker 又冻住了，这次栈是
+/// `runOneTask → OfficeLog.publish → Data.write(.atomic) → rename()`。
+/// 另一条路径，同一个病。**手工枚举调用点这件事，我第一次做就漏了。**
+///
+/// 所以判断放进函数里：目标在 iCloud 下就进看门狗，不在就直接写、零开销。
+/// 以后新增的写入只要走这个函数，就自动是安全的。
+public enum ICloudSafe {
+    /// iCloud Drive 在磁盘上的固定前缀。判路径而不是判调用点，
+    /// 这样漏一个调用点的代价是「没保护」而不是「保护错了对象」。
+    public static func isICloud(_ url: URL) -> Bool {
+        url.standardizedFileURL.path.contains("/Library/Mobile Documents/")
+    }
+
+    /// 原子写。iCloud 上的写入永远不会阻塞调用方超过 `timeout` 秒。
+    ///
+    /// - Returns: 真的写进去了吗。**超时返回 false** ——
+    ///   那个线程可能几小时后才回来，甚至永远不回来，不能当成功。
+    @discardableResult
+    public static func write(_ data: Data, to url: URL, timeout: TimeInterval = 8) -> Bool {
+        guard isICloud(url) else {
+            return (try? data.write(to: url, options: .atomic)) != nil
+        }
+        // key 用完整路径：不同文件互不牵连，同一个文件卡住时后续直接跳过。
+        return Watchdog.run("icloud.write:" + url.path, timeout: timeout) {
+            (try? data.write(to: url, options: .atomic)) != nil
+        }.valueOr(false)
+    }
+
+    /// 带超时的读。
+    ///
+    /// **读和写一样会永久阻塞** —— 这一条我漏过一次，代价是菜单栏 App 整个卡死：
+    /// ```
+    /// QuotaEngine:129 → CooldownLedger.load() → Data(contentsOf:) → open()
+    /// ```
+    /// 当时我刚把所有写操作收进这里，以为扫干净了。
+    /// **阻塞的是「碰这条路径」，不是「往这条路径写」。**
+    public static func read(_ url: URL, timeout: TimeInterval = 8) -> Data? {
+        guard isICloud(url) else { return try? Data(contentsOf: url) }
+        return Watchdog.run("icloud.read:" + url.path, timeout: timeout) {
+            try? Data(contentsOf: url)
+        }.valueOr(nil)
+    }
+
+    /// 带超时的列目录。
+    public static func contentsOfDirectory(
+        _ dir: URL, timeout: TimeInterval = 8
+    ) -> [URL] {
+        let list = { (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])) ?? [] }
+        guard isICloud(dir) else { return list() }
+        return Watchdog.run("icloud.ls:" + dir.path, timeout: timeout, list).valueOr([])
+    }
+
+    /// 带超时的 `moveItem`。iCloud 上 move 同样会挂死（实测栈顶是 `access`）。
+    @discardableResult
+    public static func move(_ from: URL, to dest: URL, timeout: TimeInterval = 8) -> Bool {
+        guard isICloud(from) || isICloud(dest) else {
+            return (try? FileManager.default.moveItem(at: from, to: dest)) != nil
+        }
+        return Watchdog.run("icloud.move:" + dest.path, timeout: timeout) {
+            (try? FileManager.default.moveItem(at: from, to: dest)) != nil
+        }.valueOr(false)
+    }
+}
+
+extension Watchdog.Outcome {
+    /// 超时或跳过时退回一个兜底值。
+    public func valueOr(_ fallback: T) -> T {
+        if case .done(let v) = self { return v }
+        return fallback
+    }
+
+    /// 没正常跑完（超时或被跳过）。
+    public var stalled: Bool {
+        if case .done = self { return false }
+        return true
+    }
+}
