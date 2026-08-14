@@ -575,8 +575,15 @@ func cmdWork(_ args: [String]) throws {
         }
         var repo = FileManager.default.currentDirectoryPath
         if let i = rest.firstIndex(of: "--repo"), i + 1 < rest.count {
-            repo = NSString(string: rest[i + 1]).expandingTildeInPath
+            // 先按别名解析（resolve 认别名也认路径），再退回按路径展开。
+            // 少了这一步的真实翻车：`--repo eap` 在 SSH 会话里被 isRepo
+            // 靠 cwd（家目录）撞对放行、原样存进任务 —— 而 worker 的
+            // cwd 是 `/`，建 worktree 时变成了 `/eap`，秒败。
+            repo = RepoRegistry.resolve(rest[i + 1])
+                ?? NSString(string: rest[i + 1]).expandingTildeInPath
         }
+        // 存绝对路径：相对路径的含义随进程 cwd 漂移，入库前钉死。
+        repo = URL(fileURLWithPath: repo).standardizedFileURL.path
         guard GitWorkspace.isRepo(repo) else {
             print(Ansi.red("\(repo) 不是 git 仓库。agent 需要在 worktree 里干活。"))
             exit(1)
