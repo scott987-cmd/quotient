@@ -16,6 +16,27 @@ import XCTest
 /// 某天有人看到「那台机器的 Kimi 额度还剩很多」，很自然会想
 /// 「那就派给它」—— 那一步就把上面这个自由拆了。
 final class LocalOnlySchedulingTests: XCTestCase {
+    private var sandbox: URL!
+
+    override func setUp() {
+        super.setUp()
+        // 沙箱不是仪式：decide() 会读**真机**的冷却台账和角色配置 ——
+        // 某晚 Qwen/Kimi 真在冷却，测试里的 Stub Qwen 就被真冷却排除，
+        // 三套用例集体假失败。测试的世界必须自己带。
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sched-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(
+            at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+    }
+
+    override func tearDown() {
+        Paths.appSupportOverride = nil
+        try? FileManager.default.removeItem(at: sandbox)
+        super.tearDown()
+    }
+
+
 
     private struct StubRunner: AgentRunner {
         let platform: Platform
@@ -108,6 +129,27 @@ final class LocalOnlySchedulingTests: XCTestCase {
 /// 编码任务派给它必然产出垃圾（它只会调 mmx 生成资产）；
 /// 媒体任务派给编码执行器则白跑一轮。以【媒体】前缀分流。
 final class MediaGateTests: XCTestCase {
+    private var sandbox: URL!
+
+    override func setUp() {
+        super.setUp()
+        // 沙箱不是仪式：decide() 会读**真机**的冷却台账和角色配置 ——
+        // 某晚 Qwen/Kimi 真在冷却，测试里的 Stub Qwen 就被真冷却排除，
+        // 三套用例集体假失败。测试的世界必须自己带。
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sched-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(
+            at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+    }
+
+    override func tearDown() {
+        Paths.appSupportOverride = nil
+        try? FileManager.default.removeItem(at: sandbox)
+        super.tearDown()
+    }
+
+
     private struct CodeRunner: AgentRunner {
         let platform: Platform
         var binaryName: String { "echo" }

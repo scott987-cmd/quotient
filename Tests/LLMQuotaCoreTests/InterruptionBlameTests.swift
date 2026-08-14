@@ -16,6 +16,27 @@ import XCTest
 /// 而**没有任何一次是 agent 真的干不了**。基础设施故障被记成了能力问题，
 /// 一个本来能做完的任务就此永久停摆 —— 这正好是「一分不浪费」的反面。
 final class InterruptionBlameTests: XCTestCase {
+    private var sandbox: URL!
+
+    override func setUp() {
+        super.setUp()
+        // 沙箱不是仪式：decide() 会读**真机**的冷却台账和角色配置 ——
+        // 某晚 Qwen/Kimi 真在冷却，测试里的 Stub Qwen 就被真冷却排除，
+        // 三套用例集体假失败。测试的世界必须自己带。
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sched-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(
+            at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+    }
+
+    override func tearDown() {
+        Paths.appSupportOverride = nil
+        try? FileManager.default.removeItem(at: sandbox)
+        super.tearDown()
+    }
+
+
 
     /// 回收时对一条被打断的任务做的决定。抽出来单独测，
     /// 因为它埋在 CLI 的循环里，而它决定了任务还能不能被派出去。

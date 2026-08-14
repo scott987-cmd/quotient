@@ -1168,72 +1168,87 @@ enum RunOutcome {
 
 @discardableResult
 func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
-    guard var task = TaskStore.nextQueued() else {
+    // **修队头阻塞：不再只看队头。**
+    //
+    // 老版只取 nextQueued() 一个：排头那个没人能接（比如常规风险
+    // 而在场的只剩 safe 档审查员），整条队伍就地冻住 —— 排在后面的
+    // 【媒体】任务明明 MiniMax 闲着也永远轮不到。真实现场：
+    // Qwen/Kimi 双双冷却的晚上，Greed 的媒体批在队里干等了两小时。
+    // 现在按队列顺序逐个试，谁先凑齐候选谁上；
+    // 「没人能接」的照旧标 blocked（顺手也不再堵队了）。
+    let queue = TaskStore.readyQueue()
+    guard !queue.isEmpty else {
         if !quiet { print(Ansi.dim("没有排队中的任务。")) }
         return .noTask
     }
 
     let history = TaskStore.all()
     let dash = LLMQuota.dashboard()
-    let decision = WorkScheduler().decide(
-        dashboard: dash, runners: RunnerRegistry.all,
-        task: task, history: history)
 
-    // 指挥单独一行，而且排在拒绝列表**前面**。
-    // 它不是被排除的候选，是这台机器上发活的那个 ——
-    // 混进「排除」里会让人以为它也接不了。
-    if let d = decision.dispatcher {
-        print(Ansi.dim("  指挥 " + pad(d.displayName, 10) + "本机控制面，不参与竞选"))
-    }
-    for r in decision.rejected {
-        print(Ansi.dim("  排除 " + pad(r.platform.displayName, 10) + r.reason))
-    }
-    guard !decision.candidates.isEmpty else {
-        // **区分「等一等就好」和「等多久都没用」。**
-        //
-        // 原来两者都是「留在队列里」，于是一个所有平台都够不着的任务
-        // 每 5 分钟重试一次、永远派不出去；而储备池又因为
-        // 「队列里还有任务在排」拒绝生成新活 ——
-        // **一个跑不了的任务把整条流水线堵死**，几个平台的额度眼看着作废。
-        // 日志里那句「等冷却过去」还在误导：根本没有冷却。
-        let permanent = !decision.rejected.isEmpty
-            && decision.rejected.allSatisfy { $0.kind == .permanent }
+    var task: WorkTask! = nil
+    var decision: WorkScheduler.Decision! = nil
+    for (idx, candidateTask) in queue.enumerated() {
+        var cand = candidateTask
+        let d = WorkScheduler().decide(
+            dashboard: dash, runners: RunnerRegistry.all,
+            task: cand, history: history)
+        if !d.candidates.isEmpty {
+            if idx > 0, !quiet {
+                print(Ansi.dim("  队头 \(idx) 个任务暂时没人能接，先跑后面这个"))
+            }
+            task = cand
+            decision = d
+            break
+        }
+        // 只对队头打印完整排除清单，后面的压成一行 —— 否则一晚上的日志全是排除表
+        if idx == 0 {
+            if let disp = d.dispatcher {
+                print(Ansi.dim("  指挥 " + pad(disp.displayName, 10) + "本机控制面，不参与竞选"))
+            }
+            for r in d.rejected {
+                print(Ansi.dim("  排除 " + pad(r.platform.displayName, 10) + r.reason))
+            }
+        } else if !quiet {
+            print(Ansi.dim("  跳过 \(cand.id)：暂时没人能接"))
+        }
+        let permanent = !d.rejected.isEmpty
+            && d.rejected.allSatisfy { $0.kind == .permanent }
         if permanent {
-            task.state = .blocked
-            task.endedAt = Date()
-            // 指挥要写进理由里。它是这台机器上**唯一可能够得着**高危活的角色，
-            // 却被指定去做别的事了 —— 不说的话，看到的人会以为
-            // 「这台机器上根本没人能干」，从而去改一个错的地方。
-            let dispatcherNote = decision.dispatcher.map {
+            cand.state = .blocked
+            cand.endedAt = Date()
+            let dispatcherNote = d.dispatcher.map {
                 "。注意 \($0.displayName) 是本机指挥（控制面），"
                     + "按设定不接活 —— 需要的话可以把这一步挪到别的机器"
             } ?? ""
-            // 「可以挪到别的机器」不能只是一句话 —— 要给出能照抄的命令。
-            // 常常答案就在旁边那台：这台的 Claude 是指挥不接活，
-            // 另一台上同一个 Claude 是 maxRisk 高危的架构师，额度还闲着。
             let alias = RepoRegistry.all()
                 .first {
                     NSString(string: $0.localPath).expandingTildeInPath
-                        == NSString(string: task.repo).expandingTildeInPath
+                        == NSString(string: cand.repo).expandingTildeInPath
                 }?.alias
-            let elsewhereHint = task.profile.flatMap {
-                Elsewhere.hint(risk: $0.risk, taskPrompt: task.prompt, repoAlias: alias)
+            let elsewhereHint = cand.profile.flatMap {
+                Elsewhere.hint(risk: $0.risk, taskPrompt: cand.prompt, repoAlias: alias)
             }
-            task.note = "没有平台能接：" + decision.rejected
+            cand.note = "没有平台能接：" + d.rejected
                 .map { "\($0.platform.displayName)（\($0.reason)）" }
                 .joined(separator: "；")
                 + dispatcherNote
                 + "。等下去不会变 —— 要么放宽某个角色的上限，要么人工处理。"
                 + (elsewhereHint.map { "\n" + $0 } ?? "")
-            try? TaskStore.append(task)
+            try? TaskStore.append(cand)
             if !quiet {
-                print(Ansi.yellow("没有平台**能**接这个任务，转人工。") )
-                print(Ansi.dim("  " + (task.note ?? "")))
+                print(Ansi.yellow("没有平台**能**接 \(cand.id)，转人工，继续看下一个。"))
             }
-            return .blocked
         }
+    }
+    guard task != nil, decision != nil else {
         if !quiet { print(Ansi.red("暂时没有可用平台（冷却/额度），任务留在队列里。")) }
         return .noPlatform
+    }
+    if let disp = decision.dispatcher {
+        print(Ansi.dim("  指挥 " + pad(disp.displayName, 10) + "本机控制面，不参与竞选"))
+    }
+    for r in decision.rejected {
+        print(Ansi.dim("  排除 " + pad(r.platform.displayName, 10) + r.reason))
     }
     print(Ansi.bold("候选顺序：") + decision.candidates.enumerated().map {
         "\($0.offset + 1). \($0.element.platform.displayName)"

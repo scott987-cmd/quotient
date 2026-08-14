@@ -266,6 +266,25 @@ public enum TaskStore {
     public static func nextQueued() -> WorkTask? {
         TaskGraph.nextReady(all())
     }
+
+    /// 所有**就绪**的排队任务（图内依赖已满足的才算），按队列顺序。
+    ///
+    /// 给调度循环用：队头没人能接时接着试下一个 ——
+    /// 修「队头阻塞」用（一个没人能接的任务堵死整条队，
+    /// 排在后面的媒体任务明明 MiniMax 闲着也轮不到）。
+    public static func readyQueue() -> [WorkTask] {
+        var out: [WorkTask] = []
+        var pool = all()
+        // nextReady 每次给一个；把它临时标记成非 queued 再要下一个，
+        // 复用图依赖判定逻辑而不是在这里重写一遍。
+        while let t = TaskGraph.nextReady(pool), out.count < 32 {
+            out.append(t)
+            for i in pool.indices where pool[i].id == t.id {
+                pool[i].state = .running
+            }
+        }
+        return out
+    }
 }
 
 // MARK: - 调度
