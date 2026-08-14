@@ -433,6 +433,52 @@ public struct QwenCodeAdapter: UsageAdapter {
 
     public init() {}
 
+    /// 会话 id → 那次会话的工作目录。
+    ///
+    /// # 为什么要这张表
+    ///
+    /// Qwen 落了**两份**记录，而它们各缺一半：
+    /// - `usage/token-usage-*.jsonl`（下面 parse 读的这份）有 token 数，但**没有路径**
+    /// - `usage_record.jsonl` 有 `project`（工作目录），但没有 token 数
+    ///
+    /// 两份都有 `sessionId`。接起来才知道**这笔用量是谁烧的**。
+    ///
+    /// 不接的后果是实测出来的：Qwen 的每一笔用量都被当成「人在用」，
+    /// 于是调度器派 Qwen 跑完一个任务之后，立刻把 Qwen 排除掉 ——
+    ///
+    ///     [23:15] 派给 Qwen 跑 s2
+    ///     [23:21] 排除 Qwen「你 6 分钟前还在用它，先让着你」
+    ///
+    /// 在 Kimi 额度耗尽、Claude 是指挥、火山档次不够的时候，
+    /// 这等于**把自己锁在唯一可用的平台外面 20 分钟**，每跑一个任务锁一次。
+    /// 这跟「一分不浪费」正好相反。
+    static func sessionProjects() -> [String: String] {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        let file = URL(fileURLWithPath:
+            NSString(string: "~/.qwen/usage_record.jsonl").expandingTildeInPath)
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate]
+            as? Date) ?? nil
+        if let cached = cachedProjects, cachedAt == mtime { return cached }
+
+        var map: [String: String] = [:]
+        if let data = try? Data(contentsOf: file) {
+            for line in data.split(separator: UInt8(ascii: "\n")) {
+                guard let obj = JSONHelp.object(Data(line)),
+                      let sid = obj["sessionId"] as? String,
+                      let project = obj["project"] as? String
+                else { continue }
+                map[sid] = project
+            }
+        }
+        cachedProjects = map
+        cachedAt = mtime
+        return map
+    }
+
+    private static let cacheLock = NSLock()
+    private nonisolated(unsafe) static var cachedProjects: [String: String]?
+    private nonisolated(unsafe) static var cachedAt: Date?
+
     public func discoverFiles() -> [URL] {
         var out: [URL] = []
         let fm = FileManager.default
@@ -482,6 +528,13 @@ public struct QwenCodeAdapter: UsageAdapter {
                 platform: endpointMap[model]
                     ?? ModelRouter.platform(forModel: model, fallback: homePlatform),
                 model: model,
+                // **按会话反查工作目录来判 lane。**
+                // 这份记录里没有路径，路径在 usage_record.jsonl 里，
+                // 两边靠 sessionId 对上。判不出来时 LaneRouter 会保守地
+                // 当成「人在用」—— 那是安全的方向（宁可让开，不跟人抢）。
+                lane: LaneRouter.lane(
+                    forEntrypoint: obj["source"] as? String,
+                    cwd: (obj["sessionId"] as? String).flatMap { Self.sessionProjects()[$0] }),
                 inputTokens: uncachedInput,
                 outputTokens: output,
                 cacheReadTokens: cached,
