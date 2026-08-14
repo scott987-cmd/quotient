@@ -98,3 +98,4 @@ else
   echo "安装（推荐，App 和 CLI 一起装，避免版本漂移）："
   echo "  ./build-app.sh --install"
 fi
+# 本脚本用途：将 SwiftPM 产物组装成 macOS .app bundle（含 Info.plist、签名），可选 --install 同时安装 App 和 llmq CLI 并重启常驻服务。
