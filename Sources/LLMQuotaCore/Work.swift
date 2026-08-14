@@ -109,6 +109,14 @@ public struct WorkTask: Codable, Sendable {
     /// 不分开的话，解冻逻辑会把一个**人正在审的**高危任务偷偷放回队列。
     public var frozenBy: String?
 
+    /// 跑到一半被打断过几次（worker 重启、进程被杀）。
+    ///
+    /// **打断和失败是两回事**，但原来的孤儿回收把两者合并成 `failed`，
+    /// 于是被打断的任务躺在那儿等人手动 retry。真实代价：一次 334 秒的
+    /// Qwen 产出、一次 26 分钟的图节点，全都白跑。
+    /// 有了这个计数就能默认重排、又不至于让「每次都跑一半就死」的任务无限循环。
+    public var interruptedCount: Int?
+
     /// 哪个进程正在跑它。
     ///
     /// 存这个是为了让「回收孤儿」从猜变成确定。worker 被重启时（`llmq update`
@@ -181,6 +189,7 @@ public struct WorkTask: Codable, Sendable {
         runnerPID = try c.decodeIfPresent(Int32.self, forKey: .runnerPID)
         frozenBy = try c.decodeIfPresent(String.self, forKey: .frozenBy)
         stepIndex = try c.decodeIfPresent(Int.self, forKey: .stepIndex)
+        interruptedCount = try c.decodeIfPresent(Int.self, forKey: .interruptedCount)
     }
 
     public var duration: TimeInterval? {
@@ -194,18 +203,40 @@ public struct WorkTask: Codable, Sendable {
 /// 没用 Hermes 的 kanban：它自带调度器会去抢着执行，而我需要的是「由额度决定派给谁」。
 /// 两个调度器同时管同一批任务只会打架。Hermes 在这里只负责飞书通道。
 public enum TaskStore {
-    static var file: URL { Paths.appSupport.appendingPathComponent("tasks.jsonl") }
+    public static var file: URL { Paths.appSupport.appendingPathComponent("tasks.jsonl") }
 
     /// 上一次 all() 里有几行没解出来。非 0 说明任务记录有损坏。
     public private(set) static var skippedLines = 0
 
     public static func all() -> [WorkTask] {
         skippedLines = 0
-        guard let data = try? Data(contentsOf: file) else { return [] }
+        // 走 ICloudSafe：这个文件今天在本地（appSupport 不同步、也不受 TCC 管），
+        // 它认出本地路径就直接读、零开销。但**看板现在每次构建都要读它**，
+        // 而看板在工作循环里每轮都构建 —— 万一哪天这条路径挪到 iCloud 下，
+        // 一次不返回的 open() 就足够把整条流水线冻住，和之前那四次一模一样。
+        guard let data = ICloudSafe.read(file) else { return [] }
         let dec = SnapshotCoding.decoder()
         var latest: [String: WorkTask] = [:]
         for line in data.split(separator: UInt8(ascii: "\n")) {
-            guard let t = try? dec.decode(WorkTask.self, from: Data(line)) else { continue }
+            guard let t = try? dec.decode(WorkTask.self, from: Data(line)) else {
+                // **解不出来的行要计数。**
+                //
+                // 这个 `continue` 原来是光秃秃的，而上面那个 `skippedLines`
+                // 的注释写着「上一次 all() 里有几行没解出来」—— 它永远是 0。
+                // 也就是说：损坏的任务记录**静默消失**，没有任何地方会提。
+                //
+                // 后果不是理论上的。这个文件是 append-only 的，
+                // 而写它的进程今天被杀过很多次（超时、发布重启、机器崩了十小时）。
+                // 写到一半被杀就会留下半行。一条任务从此不存在，
+                // 而它的下游节点会永远等一个再也不会到来的上游 ——
+                // 从外面看是「图卡住了」，查不到任何原因。
+                //
+                // 空行不算损坏：文件末尾天然有一个。
+                if !line.allSatisfy({ $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\r") }) {
+                    skippedLines += 1
+                }
+                continue
+            }
             latest[t.id] = t   // 后写的覆盖先写的
         }
         return latest.values.sorted { $0.createdAt < $1.createdAt }
@@ -245,12 +276,20 @@ public enum TaskStore {
 /// 复杂的评分在没有 limit 的情况下会退化成常数。所以先做对两件事 ——
 /// **排除跑不了的**，**在能跑的里面挑最闲的**。
 public struct WorkScheduler: Sendable {
+    /// 没给平台单独配留白时用的那个数。
+    ///
+    /// 提成常量是因为它有第二个读者：看板要把**生效值**发给手机
+    /// （`AgentRoles.published`），而那条路径上没有 scheduler 实例。
+    /// 在那边另写一个 0.25 的话，改这里就会改出「手机上显示 30%、
+    /// Mac 上实际按 25% 拦」——两个数都不报错，只是不一致。
+    public static let defaultHumanReserve: Double = 0.25
+
     /// 给人类留出的额度比例。调度器不能把额度吃光让你自己没得用。
     ///
     /// 这条不是可选项：实测确认 `claude -p` 仍然计入订阅额度
     /// （Anthropic 那个独立信用池在 2026-06-15 被暂停了），
     /// 也就是说调度器和你抢的是同一份配额。
-    public var humanReserve: Double = 0.25
+    public var humanReserve: Double = WorkScheduler.defaultHumanReserve
 
     /// 人停手多久之后才允许调度插进来。
     ///
@@ -258,7 +297,8 @@ public struct WorkScheduler: Sendable {
     /// 长了则整个工作日都不敢派活。20 分钟是「他大概真的走开了」。
     public var humanIdleGrace: TimeInterval = 20 * 60
 
-    public init(humanReserve: Double = 0.25, humanIdleGrace: TimeInterval = 20 * 60) {
+    public init(humanReserve: Double = WorkScheduler.defaultHumanReserve,
+                humanIdleGrace: TimeInterval = 20 * 60) {
         self.humanReserve = humanReserve
         self.humanIdleGrace = humanIdleGrace
     }
@@ -872,11 +912,14 @@ public enum Proc {
         // 表面看像认证问题，其实是它在等一个永远不来的输入。
         p.standardInput = FileHandle.nullDevice
 
-        // **让子进程自成一个进程组。**
+        // 这里**没有** setpgid，子进程和调用者同一个进程组。
         //
-        // 下面超时那里用 `kill(-pid)` 杀整组，而 Foundation 默认**不会**
-        // 把子进程放进新组 —— 那个负号打中的可能是别人，也可能谁都没打中，
-        // 于是「杀掉整组」这个意图静默落空，孤儿进程继续跑。
+        // 原来这个位置有一整段注释在讲「让子进程自成一个进程组」，而下面
+        // 根本没有任何 setpgid —— 全文件都没有。那是个纯虚构的前提，
+        // 后来超时清理照着它写了 `kill(-pid)`，于是 worker 每次超时都把
+        // 自己所在的整组杀掉。**一条描述了不存在行为的注释，比没有注释更贵。**
+        // 真要自成一组得走 posix_spawn + POSIX_SPAWN_SETPGROUP，
+        // Foundation 的 Process 做不到。
         p.qualityOfService = .utility
         do { try p.run() } catch {
             return Result(exitCode: -1, stdout: "", stderr: "\(error)", timedOut: false)
@@ -921,7 +964,19 @@ public enum Proc {
             p.terminate()
         }
         p.waitUntilExit()
-        group.wait()
+        // `group.wait()` 不能无限期等。
+        //
+        // 两个读线程等的是管道 EOF，而 EOF 要等**所有**持有写端的进程都退出。
+        // 子进程如果 fork 出一个后台进程并让它继承了管道（git 的 auto-gc
+        // `gc.autoDetach` 正是这么干的），子进程自己退了、EOF 也不会来 ——
+        // 这一行会永久阻塞，把上面那个 timeout 参数彻底架空。
+        // 超时的意义就是「无论如何都要返回」，所以这里也必须有上限：
+        // 到点就关掉读端，让 read 立刻返回。
+        if group.wait(timeout: .now() + 5) == .timedOut {
+            try? outPipe.fileHandleForReading.close()
+            try? errPipe.fileHandleForReading.close()
+            _ = group.wait(timeout: .now() + 2)
+        }
 
         return Result(
             exitCode: p.terminationStatus,
@@ -1098,14 +1153,49 @@ public enum GitWorkspace {
             if !out.isEmpty {
                 detail += "：" + out.prefix(200)
             } else if r.timedOut {
-                detail += "。git 卡住通常是仓库里有锁（.git/index.lock、"
-                    + "worktrees/*/locked）或者别的 git 进程正占着 —— "
-                    + "`git worktree prune` 和删掉残留的 lock 文件能解开"
+                // 别再把「git 卡住」一律说成锁争用。
+                //
+                // 实测抓到过：git 100% 的采样都停在 `init_git →
+                // strbuf_getcwd → open()`，连命令都还没分发，锁根本没进场；
+                // 而同一条命令在交互 shell 里是 7 毫秒。这种「同一个二进制、
+                // 同一个仓库，换个进程跑就永久挂起」的形状，是**路径访问被
+                // 挂起**（macOS 对 ~/Documents、~/Desktop、~/Downloads 的
+                // 授权闸门：拒绝会立刻返回 EPERM，而待决的同意是无限期阻塞）。
+                // 先用一次带短超时的零成本探针把两者分开，再给建议。
+                let probe = git(["rev-parse", "--git-dir"], in: repo, timeout: 4)
+                if probe.timedOut {
+                    detail += "。**连 `git rev-parse` 都卡住了**（4 秒无响应）"
+                        + "—— 这个命令什么都不做、不碰任何锁，所以问题不在仓库，"
+                        + "而在「这个进程访问 \(repo) 被挂起了」。"
+                        + "常见原因：仓库在 ~/Documents / ~/Desktop / ~/Downloads 下，"
+                        + "而跑它的是 launchd 常驻进程，没拿到这些目录的访问授权。"
+                        + "两条路：把仓库挪到 ~/dev 这类不受保护的位置，"
+                        + "或给 llmq 开「完全磁盘访问权限」后 "
+                        + "`launchctl kickstart -k gui/$(id -u)/com.llmquotabar.worker`"
+                } else {
+                    detail += "。git 能正常访问这个仓库，那多半是真的有锁"
+                        + "（.git/index.lock、worktrees/*/locked）或者别的 git 进程占着"
+                        + " —— `git worktree prune` 和删掉残留 lock 文件能解开"
+                }
             } else {
-                detail += "（git 无任何输出，多半是进程没起来或超时）"
+                detail += "（git 无任何输出）"
                 let exists = FileManager.default.fileExists(atPath: repo)
                 detail += "；仓库 \(repo) " + (exists ? "存在" : "**不存在**")
-                if exists && !isRepo(repo) { detail += "，但不是 git 仓库" }
+                if exists {
+                    // 这里原来直接调 `isRepo(repo)`，而它走的是默认 120 秒超时。
+                    // 探针自己挂住时会被当成非零退出，于是错误信息印出
+                    // 「存在，但不是 git 仓库」这句假话，还白等两分钟。
+                    // tasks.jsonl 里已经留下过这样一条记录。
+                    // 「探测超时」和「不是仓库」必须分开说 —— 混为一谈会把人
+                    // 送去修一个没坏的仓库。
+                    let probe = git(["rev-parse", "--git-dir"], in: repo, timeout: 4)
+                    if probe.timedOut {
+                        detail += "，但探测它的时候 git 也卡住了（4 秒无响应）"
+                            + "—— 不是仓库的问题，是这个进程访问该路径被挂起了"
+                    } else if probe.exitCode != 0 {
+                        detail += "，但不是 git 仓库"
+                    }
+                }
                 detail += "；分支 \(branch)"
             }
             throw NSError(domain: "GitWorkspace", code: 1, userInfo: [
@@ -1156,6 +1246,22 @@ public enum GitWorkspace {
     public static func commitsAhead(in dir: String, base: String = "main") -> Int {
         let r = git(["rev-list", "--count", "\(base)..HEAD"], in: dir)
         return Int(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    /// 当前 HEAD 的 sha。
+    ///
+    /// 用来在**跑 agent 之前**记一个基准。没有它就分不清
+    /// 「这一轮这个 agent 干的」和「接手时就已经在那儿的」。
+    ///
+    /// 实测过后果：火山方舟接手一个 Qwen 十一小时前就做完的活，
+    /// 自己一行没动，记录却写成「改了 1 个文件（1 个提交是 agent 自己打的）
+    /// （接手 Kimi 的进度完成）」—— 文件是 Qwen 改的、提交是 Qwen 打的、
+    /// Kimi 也没留下任何东西。三句话三个错。
+    /// 多 agent 接力里，这种记录会让事后追溯稳定地指向错的那个 agent。
+    public static func headSHA(in dir: String) -> String? {
+        let r = git(["rev-parse", "HEAD"], in: dir)
+        let s = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return r.exitCode == 0 && !s.isEmpty ? s : nil
     }
 
     /// 推送前扫密钥。命中就拒绝提交 —— agent 可能把凭据写进代码或日志。
