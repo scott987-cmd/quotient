@@ -883,9 +883,19 @@ public struct MiniMaxMediaRunner: AgentRunner {
         #    错误直接重定向进临时文件，读回用 $(<file)：zsh 内建，不 exec 任何东西。
         # ③ 管道也不用 —— 截断用 zsh 的 ${var[1,300]} 切片。
         #
-        # mmx 的 shebang 是 `#!/usr/bin/env node`，node 和 mmx 装在同一目录：
-        # 把该目录前置进 PATH；LLMQ_MMX 不是全路径时兜 hermes 的默认位置。
+        # mmx 的 shebang 是 `#!/usr/bin/env node`。在 launchd 的后代进程里
+        # 它连着两次死在 `env: node: No such file`，而同样的 PATH 在终端里
+        # 每次都通 —— 推演三轮都对不上账。所以不再依赖 shebang：
+        # Swift 侧把 node 的绝对路径解析好递进来（LLMQ_NODE），
+        # 内核直接执行 node 二进制，env/PATH/zshenv 全都插不上手。
+        # PATH 前置只留作 LLMQ_NODE 意外为空时的退路。
         export PATH="${LLMQ_MMX:h}:$HOME/.hermes/node/bin:$PATH"
+        run_mmx() {
+          if [ -n "$LLMQ_NODE" ]; then "$LLMQ_NODE" "$LLMQ_MMX" "$@"
+          else "$LLMQ_MMX" "$@"; fi
+        }
+        echo "# PATH=$PATH"
+        echo "# LLMQ_NODE=${LLMQ_NODE-} LLMQ_MMX=$LLMQ_MMX"
         ok=0; bad=0
         tmperr="${TMPDIR:-/tmp}/mmx-err-$$"
         while IFS= read -r line; do
@@ -897,7 +907,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
               path="${parts[1]-}"; ratio="${parts[2]-}"
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${path:h}"     # :h = 目录部分，zsh 内建
-              "$LLMQ_MMX" image generate --prompt "$desc" --out "$path" \
+              run_mmx image generate --prompt "$desc" --out "$path" \
                 ${ratio:+--aspect-ratio "$ratio"} </dev/null >/dev/null 2>"$tmperr"
               if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
@@ -912,7 +922,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
               path="${parts[1]-}"
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${path:h}"
-              "$LLMQ_MMX" music generate --prompt "$desc" --instrumental \
+              run_mmx music generate --prompt "$desc" --instrumental \
                 --out "$path" </dev/null >/dev/null 2>"$tmperr"
               if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
@@ -929,7 +939,11 @@ public struct MiniMaxMediaRunner: AgentRunner {
         return ("/bin/zsh", ["-c", driver],
                 ["LLMQ_MEDIA_SPEC": prompt,
                  // mmx 也不能靠 PATH 找 —— 同一个怪癖会咬它。
-                 "LLMQ_MMX": binaryPath ?? "mmx"])
+                 "LLMQ_MMX": binaryPath ?? "mmx",
+                 // node 在进程内解析成绝对路径（toolDirs 优先），
+                 // 子进程里 shebang/env/PATH 一概不信 —— launchd 后代里
+                 // 它们连着背刺两次。
+                 "LLMQ_NODE": Proc.which("node") ?? ""])
     }
 }
 
