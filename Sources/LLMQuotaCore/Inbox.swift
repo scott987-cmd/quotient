@@ -253,6 +253,30 @@ public enum Inbox {
         /// （比如把高危活交给只接低危的），照样会被拦下来换人 ——
         /// 否则手机上一点就能绕过刚定的所有规则，规则就成了摆设。
         var platform: String?
+        /// 点名哪台机器干（手机端按仓库归属带上）。
+        ///
+        /// 和 platform 不同，这个**是命令**：点名通常因为仓库只在那台
+        /// 机器上有目录，别的机器抢走就是一次注定失败的白跑
+        ///（真踩过：/eap 秒败）。收件箱先抢先得，过滤必须在认领之前。
+        var machineID: String?
+        var machineName: String?
+
+        enum CodingKeys: String, CodingKey {
+            case prompt, repo, platform, machineID, machineName
+        }
+        init(prompt: String, repo: String?, platform: String? = nil,
+             machineID: String? = nil, machineName: String? = nil) {
+            self.prompt = prompt; self.repo = repo; self.platform = platform
+            self.machineID = machineID; self.machineName = machineName
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            prompt = try c.decode(String.self, forKey: .prompt)
+            repo = try c.decodeIfPresent(String.self, forKey: .repo)
+            platform = try c.decodeIfPresent(String.self, forKey: .platform)
+            machineID = try c.decodeIfPresent(String.self, forKey: .machineID)
+            machineName = try c.decodeIfPresent(String.self, forKey: .machineName)
+        }
     }
 
     public struct Ingested: Sendable {
@@ -298,6 +322,17 @@ public enum Inbox {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { park(url, to: doneDir, suffix: "empty"); continue }
                 env = Envelope(prompt: text, repo: nil)
+            }
+
+            // **点名了别的机器就别碰。** 留在收件箱里让目标机器来抢 ——
+            // 既不 park（park 等于替它认领了）也不报错（这不是错）。
+            // 按 machineID 精确匹配，machineName 兜底（老数据只有名字）。
+            if let want = env.machineID, !want.isEmpty, want != Paths.machineID() {
+                continue
+            }
+            if env.machineID == nil, let wantName = env.machineName,
+               !wantName.isEmpty, wantName != Paths.machineName() {
+                continue
             }
 
             guard let repo = RepoRegistry.resolve(env.repo) else {
