@@ -80,3 +80,24 @@ final class CorruptTaskLineTests: XCTestCase {
         XCTAssertEqual(TaskStore.skippedLines, 0)
     }
 }
+
+/// 从 429 报错学重置时间。
+final class ResetTimeParseTests: XCTestCase {
+    func testParsesQwenShortFormat() {
+        let now = ISO8601DateFormatter().date(from: "2026-08-14T15:00:00Z")!
+        let d = CooldownLedger.parseResetTime(
+            "insufficient_quota: 429 Your token-plan 1-week quota has been exhausted. "
+            + "The quota will reset at 08-17 01:36:00 UTC.", now: now)
+        XCTAssertNotNil(d, "Qwen 的无年份格式必须能解析")
+        XCTAssertEqual(ISO8601DateFormatter().string(from: d!), "2026-08-17T01:36:00Z")
+    }
+
+    func testParsesISOAndRejectsPast() {
+        let now = ISO8601DateFormatter().date(from: "2026-08-14T15:00:00Z")!
+        XCTAssertNotNil(CooldownLedger.parseResetTime(
+            "quota resets at 2026-08-15 06:00:00 UTC", now: now))
+        XCTAssertNil(CooldownLedger.parseResetTime("reset was 2020-01-01 00:00:00 UTC",
+                                                   now: now), "过去的时间不能采信")
+        XCTAssertNil(CooldownLedger.parseResetTime("没有时间的普通报错", now: now))
+    }
+}

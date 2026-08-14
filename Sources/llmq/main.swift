@@ -1133,7 +1133,8 @@ func probePlatforms() throws {
             detail = f.describe
             if let cause = CooldownLedger.classify(r.stdout + " " + r.stderr) {
                 let cd = CooldownLedger.record(
-                    platform: runner.platform, cause: cause, detail: f.describe)
+                    platform: runner.platform, cause: cause, detail: f.describe,
+                    knownResetAt: CooldownLedger.parseResetTime(r.stdout + " " + r.stderr))
                 detail += Ansi.dim("  →冷却 " + Format.duration(cd.remaining))
             }
         } else {
@@ -1507,8 +1508,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
 
             // 把平台侧失败记进冷却账本。下次调度直接跳过，不再白建 worktree。
             if let cause = CooldownLedger.classify(r.stdout + " " + r.stderr) {
+                // 报错原文里带确切重置时间就采信（「reset at 08-17 01:36 UTC」），
+                // 别按退避每小时白撞一次撞到周日。
+                let resetAt = CooldownLedger.parseResetTime(r.stdout + " " + r.stderr)
                 let cd = CooldownLedger.record(
-                    platform: pick.platform, cause: cause, detail: failure.describe)
+                    platform: pick.platform, cause: cause, detail: failure.describe,
+                    knownResetAt: resetAt)
                 print(Ansi.yellow("  已记入冷却：" + cd.cause.displayName
                     + "，" + Format.duration(cd.remaining) + "内不再派给它"))
                 OfficeLog.record(OfficeEvent(

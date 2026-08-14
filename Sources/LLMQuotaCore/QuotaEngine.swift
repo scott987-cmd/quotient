@@ -38,6 +38,34 @@ public struct QuotaEngine: Sendable {
             reports.append(buildReport(plan: plan, snapshots: snapshots, now: now))
         }
 
+        // **从 429 学来的「已打空」盖过本地估算。**
+        //
+        // 本地只数得到自己发起的用量；上限没配、或额度跟网页版共用时，
+        // 状态显示「未配上限/正常」—— 而服务端 429 说的才是真话
+        //（用户原话：「qwen 额度用完了，但是还是显示可调度」）。
+        // 冷却台账里 cause=quotaExhausted 且未到期的，注入一条 exhausted
+        // 状态置顶：手机、报表、调度器从此看到同一个事实。
+        let cooling = CooldownLedger.active(now: now)
+        for i in reports.indices {
+            guard let cd = cooling[reports[i].platform],
+                  cd.cause == .quotaExhausted else { continue }
+            reports[i].statuses.insert(QuotaStatus(
+                platform: reports[i].platform,
+                planName: reports[i].planName,
+                limitID: "learned-429",
+                label: "服务端确认打空",
+                metric: .percent,
+                kind: .periodic,
+                used: 100, limit: 100, usedFraction: 1,
+                windowStart: cd.since,
+                resetsAt: cd.until,
+                windowElapsedFraction: 1,
+                projectedUsedFraction: nil, projectedWaste: nil,
+                health: .exhausted,
+                isOfficial: true,
+                sourceNote: "从 429 报错学来：" + String(cd.detail.prefix(80))), at: 0)
+        }
+
         // TaskStore.all() 每个 id 只留最新一条，正是这里要的。
         let board = TaskBoard.build(
             from: tasks ?? TaskStore.all(),

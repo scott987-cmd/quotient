@@ -201,3 +201,66 @@ public enum CooldownLedger {
         return nil
     }
 }
+
+// MARK: - 从错误文本里抠重置时间
+
+extension CooldownLedger {
+    /// 从平台的报错原文里解析「什么时候恢复」。
+    ///
+    /// 429 的原文经常自带答案（Qwen：「The quota will reset at
+    /// 08-17 01:36:00 UTC」），而在此之前**没有任何调用方**把它传给
+    /// `record(knownResetAt:)` —— 于是一个明说了「周日凌晨才恢复」的平台
+    /// 被按 59 分钟退避反复重试，整个周末每小时白撞一次，
+    /// 手机上还一直显示「可调度」。
+    ///
+    /// 只认两种高置信格式，解析不出就返回 nil 走退避 ——
+    /// 宁可退避也别把误解析的时间当真。
+    public static func parseResetTime(_ text: String, now: Date = Date()) -> Date? {
+        // 形态一：ISO8601（带 T 或空格，带不带秒/时区都试）
+        let isoLike = #"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)\s*(UTC|Z)?"#
+        // 形态二：无年份 MM-dd HH:mm:ss UTC（Qwen 的写法）
+        let short = #"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s*UTC"#
+
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+
+        if let m = text.range(of: isoLike, options: .regularExpression) {
+            let s = String(text[m])
+            let fmts = ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss",
+                        "yyyy-MM-dd HH:mm", "yyyy-MM-dd'T'HH:mm"]
+            let cleaned = s.replacingOccurrences(of: "UTC", with: "")
+                .replacingOccurrences(of: "Z", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            for f in fmts {
+                let df = DateFormatter()
+                df.dateFormat = f
+                df.timeZone = TimeZone(identifier: "UTC")
+                df.locale = Locale(identifier: "en_US_POSIX")
+                if let d = df.date(from: cleaned), d > now,
+                   d.timeIntervalSince(now) < 40 * 86400 {
+                    return d
+                }
+            }
+        }
+        if let m = text.range(of: short, options: .regularExpression) {
+            let parts = String(text[m])
+                .replacingOccurrences(of: "UTC", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            let df = DateFormatter()
+            df.dateFormat = "MM-dd HH:mm:ss"
+            df.timeZone = TimeZone(identifier: "UTC")
+            df.locale = Locale(identifier: "en_US_POSIX")
+            if let partial = df.date(from: parts) {
+                // 无年份：套今年，如果算出来在过去就是跨年，加一年。
+                var comps = cal.dateComponents([.month, .day, .hour, .minute, .second],
+                                               from: partial)
+                comps.year = cal.component(.year, from: now)
+                if var d = cal.date(from: comps) {
+                    if d <= now { comps.year! += 1; d = cal.date(from: comps) ?? d }
+                    if d > now, d.timeIntervalSince(now) < 40 * 86400 { return d }
+                }
+            }
+        }
+        return nil
+    }
+}
