@@ -908,8 +908,14 @@ public struct MiniMaxMediaRunner: AgentRunner {
               path="${parts[1]-}"; ratio="${parts[2]-}"
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${path:h}"     # :h = 目录部分，zsh 内建
+              # 比例参数必须走数组展开。zsh 的 ${ratio:+--aspect-ratio "$ratio"}
+              # 不做词切分，整段并成**一个**参数 —— mmx 收到
+              # "--aspect-ratio 1:1"（一个词）当场打用法退出。
+              # 实测：6 张带比例的图秒败、不带比例的音乐独活，就是它。
+              extra=()
+              [ -n "$ratio" ] && extra=(--aspect-ratio "$ratio")
               run_mmx image generate --prompt "$desc" --out "$path" \
-                ${ratio:+--aspect-ratio "$ratio"} </dev/null >"$tmpout" 2>"$tmperr"
+                --timeout 300 "${extra[@]}" </dev/null >"$tmpout" 2>"$tmperr"
               if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
               else
@@ -924,7 +930,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${path:h}"
               run_mmx music generate --prompt "$desc" --instrumental \
-                --out "$path" </dev/null >"$tmpout" 2>"$tmperr"
+                --out "$path" --timeout 300 </dev/null >"$tmpout" 2>"$tmperr"
               if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
               else
