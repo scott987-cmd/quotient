@@ -44,6 +44,12 @@ public struct RepoAlias: Codable, Sendable {
     /// 刚登记还没轮到这台）。
     public var pathByMachine: [String: String] = [:]
 
+    /// 这个仓库的产出**必须人工/指挥终审**，自动落地一律绕行。
+    ///
+    /// 给游戏仓库用的：构建通过 ≠ 可以合入 —— 手感和画面只有
+    /// 模拟器实跑才看得出来（老板原话：「不能做低质量的游戏」）。
+    public var manualReview: Bool = false
+
     /// 本机上的实际路径。
     public var localPath: String {
         pathByMachine[Paths.machineName()] ?? path
@@ -67,6 +73,7 @@ public struct RepoAlias: Codable, Sendable {
         verifyTimeout = try c.decodeIfPresent(Int.self, forKey: .verifyTimeout) ?? 600
         pathByMachine = try c.decodeIfPresent([String: String].self,
                                               forKey: .pathByMachine) ?? [:]
+        manualReview = try c.decodeIfPresent(Bool.self, forKey: .manualReview) ?? false
     }
 }
 

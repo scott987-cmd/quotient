@@ -183,3 +183,17 @@ extension AutoLandTests {
         XCTAssertTrue(reviews.isEmpty, "审查落地不能再生审查：\(reviews.map(\.id))")
     }
 }
+
+/// 登记为「必须人工终审」的仓库（游戏）整个绕过自动落地。
+extension AutoLandTests {
+    func testManualReviewRepoNeverAutoLands() {
+        makeBranch("t30")
+        var entry = RepoAlias(alias: "game", path: repo)
+        entry.manualReview = true
+        try? RepoRegistry.save([entry])
+        let out = Review.autoLand(repo: repo, tasks: [doneTask("t30")])
+        XCTAssertTrue(out.isEmpty, "游戏仓库构建通过≠可合入，必须终审：\(out)")
+        XCTAssertTrue(GitWorkspace.git(["branch", "--list", "agent/qwen/t30"], in: repo)
+            .stdout.contains("t30"), "分支必须原样留给终审")
+    }
+}

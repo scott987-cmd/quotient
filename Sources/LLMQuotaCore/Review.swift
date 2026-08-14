@@ -248,6 +248,16 @@ public enum Review {
             return []
         }
 
+        // 登记为「必须人工终审」的仓库（游戏那两个）整个绕行：
+        // 构建通过 ≠ 可以合入，手感和画面只有实跑才看得出来。
+        let wantPath = URL(fileURLWithPath: repo).standardizedFileURL.path
+        if RepoRegistry.all().contains(where: {
+            URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
+                && $0.manualReview
+        }) {
+            return []
+        }
+
         var outcomes: [AutoLandOutcome] = []
         for item in list(repo: repo, base: base, tasks: tasks) {
             // 按「尝试次数」限流而不是「成功次数」：贵的是验收那一步，
