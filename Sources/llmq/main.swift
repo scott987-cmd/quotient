@@ -1235,8 +1235,13 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 + "。等下去不会变 —— 要么放宽某个角色的上限，要么人工处理。"
                 + (elsewhereHint.map { "\n" + $0 } ?? "")
             try? TaskStore.append(cand)
+            // 卡死弹窗：推一条带按钮的提问到手机（重试/放弃），
+            // 而不是让它安静地在看板上变灰等人巡逻发现。
+            _ = StuckAsk.raise(task: cand, reason: "没有平台能接：" + d.rejected
+                .map { "\($0.platform.displayName)（\($0.reason)）" }
+                .joined(separator: "；"))
             if !quiet {
-                print(Ansi.yellow("没有平台**能**接 \(cand.id)，转人工，继续看下一个。"))
+                print(Ansi.yellow("没有平台**能**接 \(cand.id)，已弹窗问手机，继续看下一个。"))
             }
         }
     }
@@ -1535,6 +1540,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             task.endedAt = Date()
             task.exitCode = r.exitCode
             task.changedFiles = touched.count
+            // 终局失败 = 「等下去不会变」的另一种 —— 弹窗问手机重试还是放弃，
+            // 而不是安静躺平等人巡逻（用户原话：「不应该弹窗找我确认继续吗」）。
+            _ = StuckAsk.raise(task: task,
+                reason: "全部候选都试过仍失败：" + String((task.note ?? "无记录").prefix(160)))
             task.note = attempts.joined(separator: " | ")
             if touched.isEmpty {
                 GitWorkspace.cleanup(repo: task.repo, path: ws.path, branch: ws.branch)

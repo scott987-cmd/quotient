@@ -982,6 +982,23 @@ public struct MiniMaxMediaRunner: AgentRunner {
     }
 }
 
+/// Codex CLI（ChatGPT 订阅）。老板钦点的游戏打磨位之一。
+///
+/// `exec --full-auto`：非交互 + workspace-write 沙箱自动放行 ——
+/// 爆炸半径靠 worktree 隔离收敛，和其他执行器同一套约定。
+/// 不用 --dangerously-bypass：它连沙箱一起关，没必要冒这个险。
+public struct CodexRunner: AgentRunner {
+    public let platform: Platform = .codex
+    public let binaryName = "codex"
+    public let canEdit = true
+    public init() {}
+
+    public func command(prompt: String, cwd: String)
+        -> (launchPath: String, args: [String], env: [String: String]) {
+        (binaryPath ?? "codex", ["exec", "--full-auto", prompt], [:])
+    }
+}
+
 public enum RunnerRegistry {
     /// 只放**本机装了独立 CLI** 的平台。
     ///
@@ -993,8 +1010,8 @@ public enum RunnerRegistry {
     ///（IneligibleTierError，要求迁移到 Antigravity）。留着只会每次调度都白试一遍。
     /// GeminiRunner 的代码保留，哪天换成 Antigravity 或企业版把它加回来即可。
     public static let all: [AgentRunner] = [
-        ClaudeRunner(), QwenRunner(), KimiRunner(), OpenCodeRunner(),
-        MiniMaxMediaRunner()
+        ClaudeRunner(), QwenRunner(), KimiRunner(), CodexRunner(),
+        OpenCodeRunner(), MiniMaxMediaRunner()
     ]
 
     /// 能做纯推理（分类、总结）的执行器，包含改不了文件的那些。

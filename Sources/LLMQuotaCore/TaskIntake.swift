@@ -41,7 +41,18 @@ public enum TaskIntake {
         t.origin = origin
         // 点名平台是**优先**不是命令：过不了岗位/风险/方向闸照样换人。
         t.preferredPlatform = preferredPlatform
-        if classify {
+        // 【媒体】任务档次写死 standard/safe，不进分诊：
+        // 分诊的「复杂档」衡量的是推理难度，而媒体驱动只是逐行执行清单 ——
+        // 13 张图被判成复杂档后，MiniMax（只验证到常规档）反而接不了
+        // 自己唯一该接的活，媒体批当场 blocked。真实翻过车。
+        let mediaTask = prompt.hasPrefix("【媒体】")
+        if mediaTask {
+            t.profile = TaskProfile(
+                tier: .standard, risk: .safe, estimatedMinutes: 15,
+                isSelfContained: true,
+                rationale: "媒体清单任务：档次固定，不按条目数升档")
+        }
+        if classify, !mediaTask {
             t.profile = TaskClassifier.classify(
                 prompt: prompt, repo: repo,
                 history: TaskStore.all(), dashboard: LLMQuota.dashboard())

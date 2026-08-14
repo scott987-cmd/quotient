@@ -532,3 +532,43 @@ public enum AskIngest {
         return out
     }
 }
+
+// MARK: - 系统提问（卡死弹窗）
+
+/// 任务卡死时**系统自己**向手机发问 —— 不是 agent 在问，是调度器在问。
+///
+/// 起因是一句用户反问：「游戏制作又卡住了，这种不应该弹窗找我确认继续吗？」
+/// 在此之前，卡死的任务只是安静地躺在看板上变灰，人得自己巡逻才发现。
+/// 现在：任务进入「等下去不会变」的状态（没人能接 / 重试用尽的失败）时，
+/// 自动生成一条带按钮的提问推到手机 ——「重试」把它放回队列并清掉
+/// 已试名单（换人再来），「放弃」走 abandon 丢弃。答复走的是和
+/// agent 提问完全同一条通道（AskIngest），不另起炉灶。
+public enum StuckAsk {
+    /// 每个任务只弹一次：已经挂着 pendingAsk 就不再重复发。
+    @discardableResult
+    public static func raise(task: WorkTask, reason: String) -> Bool {
+        guard task.pendingAsk == nil else { return false }
+        var t = task
+        let ask = Ask(
+            taskID: t.id, machineID: Paths.machineID(), round: 1,
+            platform: t.preferredPlatform,
+            taskPrompt: String(t.prompt.prefix(200)),
+            repoName: RepoRegistry.all().first {
+                NSString(string: $0.localPath).expandingTildeInPath
+                    == NSString(string: t.repo).expandingTildeInPath
+            }?.alias ?? t.repo,
+            questions: [Ask.Question(
+                text: "这个任务卡死了：\(String(reason.prefix(200)))。怎么处理？",
+                options: ["重试（换人再来）", "放弃这个任务"],
+                suggestion: "重试（换人再来）")],
+            progressNote: "系统代发：卡死等确认，不是 agent 在提问")
+        t.pendingAsk = ask
+        t.state = .blocked
+        // 「换人再来」的前提是把已试名单清掉 —— 不清的话重试还是那批人。
+        t.triedPlatforms = []
+        t.interruptedCount = nil
+        guard (try? TaskStore.append(t)) != nil else { return false }
+        try? AskStore.publish(ask)
+        return true
+    }
+}
