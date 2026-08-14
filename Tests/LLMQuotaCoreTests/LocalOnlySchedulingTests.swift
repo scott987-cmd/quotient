@@ -101,3 +101,76 @@ final class LocalOnlySchedulingTests: XCTestCase {
                        + "自动跨机会让每台机器的仓库路径必须一致。实际字段：\\(fields)")
     }
 }
+
+/// 媒体任务和编码任务的双向闸。
+///
+/// MiniMax 的媒体执行器接进调度后，两个方向都可能派错：
+/// 编码任务派给它必然产出垃圾（它只会调 mmx 生成资产）；
+/// 媒体任务派给编码执行器则白跑一轮。以【媒体】前缀分流。
+final class MediaGateTests: XCTestCase {
+    private struct CodeRunner: AgentRunner {
+        let platform: Platform
+        var binaryName: String { "echo" }
+        func command(prompt: String, cwd: String)
+            -> (launchPath: String, args: [String], env: [String: String]) {
+            ("/bin/echo", [prompt], [:])
+        }
+    }
+    private struct MediaRunner: AgentRunner {
+        let platform: Platform = .minimax
+        var binaryName: String { "echo" }
+        var mediaOnly: Bool { true }
+        func command(prompt: String, cwd: String)
+            -> (launchPath: String, args: [String], env: [String: String]) {
+            ("/bin/echo", [prompt], [:])
+        }
+    }
+    private func dash(_ ps: [Platform]) -> Dashboard {
+        Dashboard(generatedAt: Date(), machines: [], reports: ps.map {
+            PlatformReport(platform: $0, planName: "p", monthlyCost: nil, currency: "CNY",
+                           detected: true, machines: ["本机"], lastActivity: nil, statuses: [],
+                           last30dRequests: 0, last30dBillableTokens: 0, last7dRequests: 0,
+                           topModels: [])
+        })
+    }
+    private func task(_ prompt: String) -> WorkTask {
+        WorkTask(id: "t", prompt: prompt, repo: "/tmp")
+    }
+
+    func testMediaTaskOnlyGoesToMediaRunner() {
+        let d = dash([.qwen, .minimax])
+        let decision = WorkScheduler().decide(
+            dashboard: d, runners: [CodeRunner(platform: .qwen), MediaRunner()],
+            task: task("【媒体】\nIMG assets/a.png :: 深渊生物"))
+        XCTAssertEqual(decision.candidates.map(\.platform), [.minimax],
+                       "媒体任务只能给媒体执行器：\(decision.candidates.map(\.platform))")
+    }
+
+    func testCodingTaskNeverGoesToMediaRunner() {
+        let d = dash([.qwen, .minimax])
+        let decision = WorkScheduler().decide(
+            dashboard: d, runners: [CodeRunner(platform: .qwen), MediaRunner()],
+            task: task("给 README 补一节说明"))
+        XCTAssertFalse(decision.candidates.contains { $0.platform == .minimax },
+                       "编码任务不能派给媒体执行器 —— 它只会调 mmx，产出必然是垃圾")
+        XCTAssertTrue(decision.candidates.contains { $0.platform == .qwen })
+    }
+
+    /// 分诊（task 为 nil）不受方向闸影响 —— MiniMax 的文本执行器还得干分诊。
+    func testClassificationPathUnaffected() {
+        let d = dash([.minimax])
+        struct TextRunner: AgentRunner {
+            let platform: Platform = .minimax
+            var binaryName: String { "echo" }
+            var canEdit: Bool { false }
+            func command(prompt: String, cwd: String)
+                -> (launchPath: String, args: [String], env: [String: String]) {
+                ("/bin/echo", [prompt], [:])
+            }
+        }
+        let decision = WorkScheduler().decide(
+            dashboard: d, runners: [TextRunner()], requiresEditing: false)
+        XCTAssertTrue(decision.candidates.contains { $0.platform == .minimax },
+                      "task 为 nil（分诊路径）时方向闸不该拦文本执行器")
+    }
+}

@@ -1558,8 +1558,31 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 // 提交前先验一次。**在提交之前**是刻意的：提交完再验的话，
                 // 坏代码已经落在分支上，还得再回滚一次；而且 work review
                 // 会把它当成正常产出列出来，说「能干净合入」。
-                let v = Verifier.run(in: ws.path, repoPath: task.repo)
-                if v.ran {
+                // **纯文档改动跳过构建验收。**
+                //
+                // 验收命令是仓库级的（比如「整个 App 必须编译过」），
+                // 而图的第一步常常只产出文档。实测被咬：s1 让 Kimi 读代码
+                // 产出参数速查表（NOTES-slice.md，写得没问题），验收却要求
+                // 构建通过 —— 而 App 入口要到 s3 才写，构建注定失败。
+                // 一步文档任务被一个它不可能满足的验收判死，下游全部冻住，
+                // 用户看到的是「Kimi 失败了」—— 它是被冤枉的。
+                // 判据是「碰没碰可构建的源码」，不是枚举安全类型 ——
+                // 第一版只放行 .md，紧接着媒体任务（png/mp3）就会栽进
+                // 同一个坑：资产改动照样过不了「整个 App 必须编译」。
+                let codeExts: Set<String> = ["swift", "yml", "yaml", "plist", "h", "m",
+                                             "c", "cpp", "metal", "xcconfig",
+                                             "entitlements", "sh", "json"]
+                let touched = GitWorkspace.changedFileNames(in: ws.path)
+                let touchedCode = touched.contains {
+                    codeExts.contains(($0 as NSString).pathExtension.lowercased())
+                }
+                let skipVerify = !touched.isEmpty && !touchedCode
+                let v = skipVerify
+                    ? Verifier.Outcome(ran: false, passed: true,
+                        summary: "没碰可构建源码（\(touched.count) 个文件，文档/资产类），跳过构建验收",
+                        tail: "")
+                    : Verifier.run(in: ws.path, repoPath: task.repo)
+                if v.ran || skipVerify {
                     print(Ansi.dim("  " + v.summary))
                 }
                 guard !v.ran || v.passed else {

@@ -78,6 +78,12 @@ public enum Verifier {
         public var passed: Bool
         public var summary: String
         public var tail: String
+        public init(ran: Bool, passed: Bool, summary: String, tail: String) {
+            self.ran = ran
+            self.passed = passed
+            self.summary = summary
+            self.tail = tail
+        }
     }
 
     /// 找这个仓库登记的验证命令。

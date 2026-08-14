@@ -366,8 +366,22 @@ public struct WorkScheduler: Sendable {
         var candidates: [(Pick, Double)] = []
         let cooling = CooldownLedger.active(now: now)
 
+        let isMediaTask = task?.prompt.hasPrefix("【媒体】") ?? false
         for runner in runners {
             let p = runner.platform
+
+            // **媒体任务和编码任务是两个世界，方向都要闸。**
+            //
+            // 编码任务派给媒体执行器必然产出垃圾（它只会调 mmx 生成资产）；
+            // 媒体任务派给编码执行器则白跑一轮 —— agent 会试图「写代码生成图片」。
+            // 以【媒体】开头的任务只给 mediaOnly 执行器，反之亦然。
+            if runner.mediaOnly != isMediaTask {
+                rejected.append(Rejection(
+                    platform: p,
+                    reason: runner.mediaOnly ? "只接【媒体】任务" : "媒体任务要媒体执行器",
+                    kind: .permanent))
+                continue
+            }
 
             // 接力时别转回已经失败过的平台 —— 它刚在同一个任务上栽过。
             if let task, task.triedPlatforms.contains(p) {
@@ -621,6 +635,10 @@ public protocol AgentRunner: Sendable {
     /// 派编码任务给它必然产出零改动。这个标志让调度器提前排除它，
     /// 而不是白跑一轮才发现。
     var canEdit: Bool { get }
+    /// 只接【媒体】任务（生成图片/音乐）。**必须在协议里声明**：
+    /// 只写在扩展里的话，通过存在类型调用永远走扩展默认值，
+    /// 子类型的覆盖静默失效 —— 方向闸就是这么被测试抓出来没生效的。
+    var mediaOnly: Bool { get }
     /// 无头执行。cwd 是独立 worktree，不是用户的工作区。
     func command(prompt: String, cwd: String) -> (launchPath: String, args: [String], env: [String: String])
 
@@ -640,6 +658,10 @@ public extension AgentRunner {
 
     /// 绝大多数执行器都是能改文件的编码 agent。
     var canEdit: Bool { true }
+    /// 只接【媒体】任务的执行器（生成图片/音乐这类）。
+    /// 编码任务派给它必然产出垃圾，媒体任务派给编码执行器则白跑 ——
+    /// 两个方向都要闸。
+    var mediaOnly: Bool { false }
     var binaryPath: String? { Proc.which(binaryName) }
     var isAvailable: Bool { binaryPath != nil }
 }
@@ -797,6 +819,75 @@ public struct MiniMaxRunner: AgentRunner {
     }
 }
 
+/// MiniMax 的媒体执行器：把任务提示词里的资产清单变成真文件。
+///
+/// # 为什么终于要接这条通路
+///
+/// MiniMax 一直只跑分诊 —— 它的编码执行器是纯文本（canEdit=false），
+/// 而它真正的本事（图片/音乐/语音生成）调度器一直够不着。
+/// 用户的原话：「我的 minimax 为啥一直没有调度起来？
+/// 让他去生成大量的游戏图片和音乐啊」—— 额度最富余的平台闲着，
+/// 正是这个工具要消灭的那种浪费。
+///
+/// # 任务格式（提示词里的 DSL）
+///
+/// 任务提示词以【媒体】开头，正文里每行一个资产：
+///
+///     IMG assets/creature-stage1.png :: 深渊里的小型发光生物，青色荧光，剪影感
+///     IMG assets/zone-2.png 16:9 :: 中层海域背景，体积光从上方打下
+///     MUSIC assets/ambient.mp3 :: 深海环境音，缓慢，压迫感渐强
+///
+/// 驱动脚本逐行执行 `mmx image generate --out` / `mmx music generate
+/// --instrumental --out`，全部成功才算过。产物是真文件，走正常的
+/// worktree → 提交 → 审查流程 —— **进包前逐张检查角落**（AGENTS.md：
+/// 模型会画出训练数据里的画师签名）这一步留给人，工具不越权。
+public struct MiniMaxMediaRunner: AgentRunner {
+    public let platform: Platform = .minimax
+    public let binaryName = "mmx"
+    public var canEdit: Bool { true }     // 它写文件（资产），这是真的编辑
+    public var mediaOnly: Bool { true }
+    public init() {}
+
+    public func command(
+        prompt: String, cwd: String
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
+        // 驱动内联成一段 zsh：解析 DSL、逐行调 mmx、统计成败。
+        // 单独装一个脚本文件的话，发布/更新就多一个会漂移的部件。
+        let driver = #"""
+        set -u
+        ok=0; bad=0
+        while IFS= read -r line; do
+          case "$line" in
+            IMG\ *)
+              rest="${line#IMG }"
+              spec="${rest%%::*}"; desc="${rest#*::}"
+              path=$(printf '%s' "$spec" | awk '{print $1}')
+              ratio=$(printf '%s' "$spec" | awk '{print $2}')
+              mkdir -p "$(dirname "$path")"
+              if mmx image generate --prompt "$desc" --out "$path"                    ${ratio:+--aspect-ratio "$ratio"} >/dev/null 2>&1                  && [ -s "$path" ]; then
+                echo "OK  $path"; ok=$((ok+1))
+              else
+                echo "FAIL $path"; bad=$((bad+1))
+              fi;;
+            MUSIC\ *)
+              rest="${line#MUSIC }"
+              path="${rest%%::*}"; desc="${rest#*::}"
+              path=$(printf '%s' "$path" | awk '{print $1}')
+              mkdir -p "$(dirname "$path")"
+              if mmx music generate --prompt "$desc" --instrumental --out "$path"                    >/dev/null 2>&1 && [ -s "$path" ]; then
+                echo "OK  $path"; ok=$((ok+1))
+              else
+                echo "FAIL $path"; bad=$((bad+1))
+              fi;;
+          esac
+        done <<< "$LLMQ_MEDIA_SPEC"
+        echo "生成 $ok 个，失败 $bad 个"
+        [ "$ok" -gt 0 ] && [ "$bad" -eq 0 ]
+        """#
+        return ("/bin/zsh", ["-c", driver], ["LLMQ_MEDIA_SPEC": prompt])
+    }
+}
+
 public enum RunnerRegistry {
     /// 只放**本机装了独立 CLI** 的平台。
     ///
@@ -808,7 +899,8 @@ public enum RunnerRegistry {
     ///（IneligibleTierError，要求迁移到 Antigravity）。留着只会每次调度都白试一遍。
     /// GeminiRunner 的代码保留，哪天换成 Antigravity 或企业版把它加回来即可。
     public static let all: [AgentRunner] = [
-        ClaudeRunner(), QwenRunner(), KimiRunner(), OpenCodeRunner()
+        ClaudeRunner(), QwenRunner(), KimiRunner(), OpenCodeRunner(),
+        MiniMaxMediaRunner()
     ]
 
     /// 能做纯推理（分类、总结）的执行器，包含改不了文件的那些。
@@ -1246,6 +1338,24 @@ public enum GitWorkspace {
     public static func commitsAhead(in dir: String, base: String = "main") -> Int {
         let r = git(["rev-list", "--count", "\(base)..HEAD"], in: dir)
         return Int(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    /// 这个工作区里改动过的文件名（未提交的 + 相对 base 已提交的，去重）。
+    ///
+    /// 给「纯文档改动跳过构建验收」用 —— 只有数量不够，得看清是哪些文件。
+    public static func changedFileNames(in dir: String, base: String = "main") -> [String] {
+        var names = Set<String>()
+        let st = git(["status", "--porcelain"], in: dir)
+        for line in st.stdout.split(separator: "\n") {
+            let f = line.dropFirst(3).trimmingCharacters(in: .whitespaces)
+            if !f.isEmpty { names.insert(String(f.split(separator: " -> ").last ?? "")) }
+        }
+        let diff = git(["diff", "--name-only", "\(base)...HEAD"], in: dir)
+        for line in diff.stdout.split(separator: "\n") {
+            let f = line.trimmingCharacters(in: .whitespaces)
+            if !f.isEmpty { names.insert(f) }
+        }
+        return names.sorted()
     }
 
     /// 当前 HEAD 的 sha。
