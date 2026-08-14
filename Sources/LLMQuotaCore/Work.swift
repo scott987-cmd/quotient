@@ -898,6 +898,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
         echo "# LLMQ_NODE=${LLMQ_NODE-} LLMQ_MMX=$LLMQ_MMX"
         ok=0; bad=0
         tmperr="${TMPDIR:-/tmp}/mmx-err-$$"
+        tmpout="${TMPDIR:-/tmp}/mmx-out-$$"
         while IFS= read -r line; do
           case "$line" in
             IMG\ *)
@@ -908,12 +909,12 @@ public struct MiniMaxMediaRunner: AgentRunner {
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${path:h}"     # :h = 目录部分，zsh 内建
               run_mmx image generate --prompt "$desc" --out "$path" \
-                ${ratio:+--aspect-ratio "$ratio"} </dev/null >/dev/null 2>"$tmperr"
+                ${ratio:+--aspect-ratio "$ratio"} </dev/null >"$tmpout" 2>"$tmperr"
               if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
               else
-                err="$(<$tmperr)"
-                echo "FAIL $path :: ${err[1,300]}"; bad=$((bad+1))
+                err="$(<$tmperr) $(<$tmpout)"
+                echo "FAIL $path :: ${err[1,400]}"; bad=$((bad+1))
               fi;;
             MUSIC\ *)
               rest="${line#MUSIC }"
@@ -923,16 +924,16 @@ public struct MiniMaxMediaRunner: AgentRunner {
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${path:h}"
               run_mmx music generate --prompt "$desc" --instrumental \
-                --out "$path" </dev/null >/dev/null 2>"$tmperr"
+                --out "$path" </dev/null >"$tmpout" 2>"$tmperr"
               if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
               else
-                err="$(<$tmperr)"
-                echo "FAIL $path :: ${err[1,300]}"; bad=$((bad+1))
+                err="$(<$tmperr) $(<$tmpout)"
+                echo "FAIL $path :: ${err[1,400]}"; bad=$((bad+1))
               fi;;
           esac
         done <<< "$LLMQ_MEDIA_SPEC"
-        /bin/rm -f "$tmperr"
+        /bin/rm -f "$tmperr" "$tmpout"
         echo "生成 $ok 个，失败 $bad 个"
         [ "$ok" -gt 0 ] && [ "$bad" -eq 0 ]
         """#
