@@ -175,6 +175,111 @@ public enum Review {
     /// - Parameter verify: 仓库配了验证命令时，先在临时工作区里验一遍合并结果。
     ///   **默认开着**：一个不验证就落地的合并，等于把 agent 的产出直接
     ///   推进主干，而这套系统的产出是无人值守生成的。
+    /// 自动落地的总开关。**默认关**：用户明确执行过
+    /// `llmq work autoland on` 才开启，保证「机器替人合并」是被授权过的行为。
+    /// 存成文件而不是内存标记：worker 重启后授权仍然有效。
+    static var autoLandFlagURL: URL {
+        Paths.appSupport.appendingPathComponent("autoland.on")
+    }
+    public static func autoLandEnabled() -> Bool {
+        FileManager.default.fileExists(atPath: autoLandFlagURL.path)
+    }
+    public static func setAutoLand(enabled: Bool) {
+        if enabled {
+            try? ICloudSafe.write(Data("on".utf8), to: autoLandFlagURL)
+        } else {
+            try? FileManager.default.removeItem(at: autoLandFlagURL)
+        }
+    }
+
+    /// 自动落地的否决名单：验收失败过的分支，别再自动重试。
+    /// 本机文件，人工处置（合入/丢弃）后分支消失，条目就成了死数据，无害。
+    static var autoLandVetoURL: URL {
+        Paths.appSupport.appendingPathComponent("autoland-veto.json")
+    }
+    static func autoLandVeto() -> [String: String] {
+        guard let d = try? Data(contentsOf: autoLandVetoURL) else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: d)) ?? [:]
+    }
+    static func setAutoLandVeto(branch: String, note: String) {
+        var m = autoLandVeto()
+        m[branch] = String(note.prefix(300))
+        if let d = try? JSONEncoder().encode(m) {
+            try? ICloudSafe.write(d, to: autoLandVetoURL)
+        }
+    }
+
+    public struct AutoLandOutcome: Sendable {
+        public var branch: String
+        public var landed: Bool
+        public var note: String
+    }
+
+    /// 把「机器有把握」的那部分待审分支自动合进 main。
+    ///
+    /// 背景是一句用户原话：「不是 auto 模式，为啥有这么多需要我确认的」——
+    /// 排查发现落地环节 100% 靠人敲 `work review`，agent 干完的活全部
+    /// 堆在待审名单里等人，跟 auto 的承诺完全相反。
+    ///
+    /// 什么样的分支机器敢自己合（**五个条件全满足**）：
+    /// - 任务记录还在，且状态是 done —— failed/running 的产出不碰；
+    /// - 不是高危（risk != .sensitive）—— 高危本来就该人看；
+    /// - 能干净合入（mergesCleanly）；
+    /// - 不和其他待审分支改同一个文件（overlapsWith 为空）——
+    ///   成组的分支合了第一个第二个就冲突，顺序该人定；
+    /// - 改动文件里没有敏感路径（构建脚本、CI、签名配置那批）。
+    ///
+    /// 满足之后走的还是 `merge`（verify: true）：合并前照样跑仓库的
+    /// 验收命令，验不过就不合、原样留给人。所以这里放宽的只是
+    /// 「谁来按回车」，不是「按回车前查什么」。
+    ///
+    /// - Parameter maxPerCall: 一轮最多合几个。默认 1 —— 验收可能要跑
+    ///   十几分钟的全量构建，循环每轮只吃一个，别把收答复、派活饿着。
+    public static func autoLand(repo: String, base: String = "main",
+                                tasks: [WorkTask] = TaskStore.all(),
+                                maxPerCall: Int = 1) -> [AutoLandOutcome] {
+        let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        // 主仓库脏着（多半是人正在里面改代码）就整轮跳过，
+        // 也**不给任何分支记否决**：环境没就绪不是分支的错。
+        // 真实翻车：自动落地首航撞上一次会话的未提交改动，
+        // 一份完全没问题的产出被记了否决、从此不再自动重试。
+        let dirty = GitWorkspace.git(["status", "--porcelain"], in: repo).stdout
+        guard dirty.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return []
+        }
+
+        var outcomes: [AutoLandOutcome] = []
+        for item in list(repo: repo, base: base, tasks: tasks) {
+            // 按「尝试次数」限流而不是「成功次数」：贵的是验收那一步，
+            // 失败的尝试一样烧了一次全量构建。
+            if outcomes.count >= maxPerCall { break }
+            guard let t = byID[item.taskID], t.state == .done else { continue }
+            if t.profile?.risk == .sensitive { continue }
+            guard item.mergesCleanly, item.overlapsWith.isEmpty else { continue }
+            if GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " ")) { continue }
+            if let veto = autoLandVeto()[item.branch] {
+                // 上次验收就没过。不再自动重试 —— 循环每 30 秒一轮，
+                // 重试一次是十几分钟全量构建，等于把 worker 变成了烤炉。
+                // 人工 `work review` 合入或 discard 之后这条自然消失。
+                _ = veto
+                continue
+            }
+            switch merge(repo: repo, branch: item.branch, base: base) {
+            case .success:
+                // merge 内部已记 landedAt，这里不用再记。
+                outcomes.append(AutoLandOutcome(
+                    branch: item.branch, landed: true,
+                    note: "任务 done、无冲突、不碰敏感路径、验收通过 —— 自动合入"))
+            case .failure(let e):
+                setAutoLandVeto(branch: item.branch, note: e.localizedDescription)
+                outcomes.append(AutoLandOutcome(
+                    branch: item.branch, landed: false,
+                    note: e.localizedDescription + "（已记否决，不再自动重试，留给人工审）"))
+            }
+        }
+        return outcomes
+    }
+
     public static func merge(repo: String, branch: String, base: String = "main",
                              deleteBranch: Bool = true,
                              verify: Bool = true) -> Result<String, NSError> {

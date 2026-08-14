@@ -808,6 +808,23 @@ func cmdWork(_ args: [String]) throws {
     case "loop":
         try cmdWorkLoop(rest)
 
+    // llmq work autoland on|off|status —— 授权/收回「验收通过的安全产出自动合入」
+    case "autoland":
+        switch rest.first ?? "status" {
+        case "on":
+            Review.setAutoLand(enabled: true)
+            print(Ansi.green("自动落地已开启。")
+                + "循环每轮会把满足全部条件的产出合进 main："
+                + "任务 done、非高危、能干净合入、不与其他待审分支重叠、"
+                + "不碰敏感路径、且合并前验收通过。其余照旧留给 work review。")
+        case "off":
+            Review.setAutoLand(enabled: false)
+            print("自动落地已关闭，产出全部回到人工 work review。")
+        default:
+            print("自动落地：" + (Review.autoLandEnabled()
+                ? Ansi.green("开") : "关（llmq work autoland on 开启）"))
+        }
+
     case "install-loop":
         try cmdInstallLoop()
 
@@ -1933,6 +1950,22 @@ func cmdWorkLoop(_ args: [String]) throws {
         for r in intents {
             let mark = r.accepted ? Ansi.green("  ✓ ") : Ansi.yellow("  ⚠︎ ")
             print(mark + "配置 " + Ansi.dim(String(r.id.prefix(8))) + "  " + r.note)
+        }
+
+        // 落地环节（详见 Review.autoLand 的条件说明）。
+        // 显式开关，默认关：`llmq work autoland on` 之后才生效，
+        // 关着的时候产出照旧全部留在 `work review` 名单里等人工处置。
+        if Review.autoLandEnabled() {
+            phase("落地", 1500) {
+                for repo in RepoRegistry.all() {
+                    let path = NSString(string: repo.localPath).expandingTildeInPath
+                    for o in Review.autoLand(repo: path) {
+                        let mark = o.landed ? Ansi.green("  ✓ 落地 ")
+                                            : Ansi.yellow("  ⚠︎ 没落 ")
+                        print(mark + o.branch + Ansi.dim("  " + o.note))
+                    }
+                }
+            }
         }
 
         var incoming: [Inbox.Ingested] = []

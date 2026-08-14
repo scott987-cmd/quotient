@@ -550,7 +550,28 @@ public struct WorkScheduler: Sendable {
             }
         }
 
-        let ordered = candidates.sorted { $0.1 > $1.1 }.map(\.0)
+        var ordered = candidates.sorted { $0.1 > $1.1 }.map(\.0)
+
+        // **高危无人接时，指挥亲自上。**
+        //
+        // 角色规则里高危只有架构师（Claude）能接，而本机 Claude 是指挥、
+        // 不参与竞选 —— 于是每个高危任务都「没有平台能接」，转人工。
+        // 更糟的是储备池还自动生成碰构建脚本的维护任务：
+        // 系统自己制造它自己干不了的活，然后堆给人。实测一次堆了 5 个，
+        // 用户的原话是「不是 auto 模式，为啥有这么多需要我确认的」。
+        //
+        // 指挥不竞选的本意是保住控制面的额度，不是让高危活饿死 ——
+        // 高危任务本来稀少，兜底不动摇那个初衷。
+        // 兜底同样过角色的风险闸：指挥自己的 maxRisk 也够不着时，
+        // 该转人工就转人工，不能因为「总得有人干」硬塞。
+        if ordered.isEmpty,
+           task?.profile?.risk == .sensitive,
+           let dp = dispatcherPlatform,
+           AgentRoles.accepts(.sensitive, platform: dp),
+           let dr = runners.first(where: { $0.platform == dp && $0.canEdit && !$0.mediaOnly }) {
+            ordered.append(Pick(platform: dp, runner: dr,
+                reason: "高危只有架构师能接，其余角色都够不着 —— 指挥兼任"))
+        }
         return Decision(candidates: ordered, rejected: rejected,
                         dispatcher: dispatcherPlatform)
     }
@@ -854,37 +875,51 @@ public struct MiniMaxMediaRunner: AgentRunner {
         // 驱动内联成一段 zsh：解析 DSL、逐行调 mmx、统计成败。
         // 单独装一个脚本文件的话，发布/更新就多一个会漂移的部件。
         let driver = #"""
-        set -u
+        # 解析全用 zsh 内建，外部命令全用绝对路径。
+        #
+        # 实测（本机终端也能复现）：同一个 zsh 里，$(… | awk …) 第一次成功、
+        # 之后每一次都 command not found —— macOS 26 zsh 的命令替换怪癖。
+        # 靠 PATH 的外部命令在这个驱动里一个都不能用。
         ok=0; bad=0
         while IFS= read -r line; do
           case "$line" in
             IMG\ *)
               rest="${line#IMG }"
               spec="${rest%%::*}"; desc="${rest#*::}"
-              path=$(printf '%s' "$spec" | awk '{print $1}')
-              ratio=$(printf '%s' "$spec" | awk '{print $2}')
-              mkdir -p "$(dirname "$path")"
-              if mmx image generate --prompt "$desc" --out "$path"                    ${ratio:+--aspect-ratio "$ratio"} >/dev/null 2>&1                  && [ -s "$path" ]; then
+              parts=(${=spec})              # zsh 内建分词
+              path="${parts[1]-}"; ratio="${parts[2]-}"
+              [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
+              /bin/mkdir -p "${path:h}"     # :h = 目录部分，zsh 内建
+              err=$("$LLMQ_MMX" image generate --prompt "$desc" --out "$path" \
+                    ${ratio:+--aspect-ratio "$ratio"} </dev/null 2>&1 >/dev/null)
+              if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
               else
-                echo "FAIL $path"; bad=$((bad+1))
+                echo "FAIL $path :: ${err##*$'\n'}"; bad=$((bad+1))
               fi;;
             MUSIC\ *)
               rest="${line#MUSIC }"
-              path="${rest%%::*}"; desc="${rest#*::}"
-              path=$(printf '%s' "$path" | awk '{print $1}')
-              mkdir -p "$(dirname "$path")"
-              if mmx music generate --prompt "$desc" --instrumental --out "$path"                    >/dev/null 2>&1 && [ -s "$path" ]; then
+              spec="${rest%%::*}"; desc="${rest#*::}"
+              parts=(${=spec})
+              path="${parts[1]-}"
+              [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
+              /bin/mkdir -p "${path:h}"
+              err=$("$LLMQ_MMX" music generate --prompt "$desc" --instrumental \
+                    --out "$path" </dev/null 2>&1 >/dev/null)
+              if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
               else
-                echo "FAIL $path"; bad=$((bad+1))
+                echo "FAIL $path :: ${err##*$'\n'}"; bad=$((bad+1))
               fi;;
           esac
         done <<< "$LLMQ_MEDIA_SPEC"
         echo "生成 $ok 个，失败 $bad 个"
         [ "$ok" -gt 0 ] && [ "$bad" -eq 0 ]
         """#
-        return ("/bin/zsh", ["-c", driver], ["LLMQ_MEDIA_SPEC": prompt])
+        return ("/bin/zsh", ["-c", driver],
+                ["LLMQ_MEDIA_SPEC": prompt,
+                 // mmx 也不能靠 PATH 找 —— 同一个怪癖会咬它。
+                 "LLMQ_MMX": binaryPath ?? "mmx"])
     }
 }
 
