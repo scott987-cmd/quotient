@@ -875,12 +875,19 @@ public struct MiniMaxMediaRunner: AgentRunner {
         // 驱动内联成一段 zsh：解析 DSL、逐行调 mmx、统计成败。
         // 单独装一个脚本文件的话，发布/更新就多一个会漂移的部件。
         let driver = #"""
-        # 解析全用 zsh 内建，外部命令全用绝对路径。
+        # 三条铁律，全是实测换来的（macOS 26 zsh）：
+        # ① 解析只用 zsh 内建 —— 同一个 zsh 里 $(…|awk…) 第一次成功、
+        #    之后每次 command not found。
+        # ② 外部命令**不进命令替换** —— 上一版把 mmx 放进 $(…) 捕获 stderr，
+        #    连它 shebang 里 `env node` 的 PATH 查找都会坏掉。
+        #    错误直接重定向进临时文件，读回用 $(<file)：zsh 内建，不 exec 任何东西。
+        # ③ 管道也不用 —— 截断用 zsh 的 ${var[1,300]} 切片。
         #
-        # 实测（本机终端也能复现）：同一个 zsh 里，$(… | awk …) 第一次成功、
-        # 之后每一次都 command not found —— macOS 26 zsh 的命令替换怪癖。
-        # 靠 PATH 的外部命令在这个驱动里一个都不能用。
+        # mmx 的 shebang 是 `#!/usr/bin/env node`，node 和 mmx 装在同一目录：
+        # 把该目录前置进 PATH；LLMQ_MMX 不是全路径时兜 hermes 的默认位置。
+        export PATH="${LLMQ_MMX:h}:$HOME/.hermes/node/bin:$PATH"
         ok=0; bad=0
+        tmperr="${TMPDIR:-/tmp}/mmx-err-$$"
         while IFS= read -r line; do
           case "$line" in
             IMG\ *)
@@ -890,12 +897,13 @@ public struct MiniMaxMediaRunner: AgentRunner {
               path="${parts[1]-}"; ratio="${parts[2]-}"
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${path:h}"     # :h = 目录部分，zsh 内建
-              err=$("$LLMQ_MMX" image generate --prompt "$desc" --out "$path" \
-                    ${ratio:+--aspect-ratio "$ratio"} </dev/null 2>&1 >/dev/null)
+              "$LLMQ_MMX" image generate --prompt "$desc" --out "$path" \
+                ${ratio:+--aspect-ratio "$ratio"} </dev/null >/dev/null 2>"$tmperr"
               if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
               else
-                echo "FAIL $path :: ${err##*$'\n'}"; bad=$((bad+1))
+                err="$(<$tmperr)"
+                echo "FAIL $path :: ${err[1,300]}"; bad=$((bad+1))
               fi;;
             MUSIC\ *)
               rest="${line#MUSIC }"
@@ -904,15 +912,17 @@ public struct MiniMaxMediaRunner: AgentRunner {
               path="${parts[1]-}"
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${path:h}"
-              err=$("$LLMQ_MMX" music generate --prompt "$desc" --instrumental \
-                    --out "$path" </dev/null 2>&1 >/dev/null)
+              "$LLMQ_MMX" music generate --prompt "$desc" --instrumental \
+                --out "$path" </dev/null >/dev/null 2>"$tmperr"
               if [ -s "$path" ]; then
                 echo "OK  $path"; ok=$((ok+1))
               else
-                echo "FAIL $path :: ${err##*$'\n'}"; bad=$((bad+1))
+                err="$(<$tmperr)"
+                echo "FAIL $path :: ${err[1,300]}"; bad=$((bad+1))
               fi;;
           esac
         done <<< "$LLMQ_MEDIA_SPEC"
+        /bin/rm -f "$tmperr"
         echo "生成 $ok 个，失败 $bad 个"
         [ "$ok" -gt 0 ] && [ "$bad" -eq 0 ]
         """#
