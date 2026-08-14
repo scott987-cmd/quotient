@@ -34,13 +34,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class DashboardModel: ObservableObject {
     @Published private(set) var dashboard: Dashboard?
     @Published private(set) var isCollecting = false
+    /// 上一次 reload 还没回来时别再派一个 —— 卡住的那个可能永远不回来。
+    @Published private(set) var isReloading = false
     @Published private(set) var lastError: String?
     @Published private(set) var iCloudSync: ICloudSyncStatus = .unavailable
 
     private var refreshTimer: Timer?
     private var collectTimer: Timer?
 
-    /// 读快照很便宜，可以频繁刷；采集要扫日志，间隔放长。
+    /// 采集要扫日志，间隔放长。
+    /// （原来这里写「读快照很便宜」—— 事实证明它可以卡死十几分钟，见 reload。）
     private let refreshInterval: TimeInterval = 60
     private let collectInterval: TimeInterval = 600
 
@@ -56,8 +59,27 @@ final class DashboardModel: ObservableObject {
     }
 
     /// 只读已有快照，不扫日志。
+    ///
+    /// **必须在后台线程。** 「只读快照」听起来很轻，但它会去读配置，
+    /// 而配置在 iCloud 上 —— iCloud 的读可以**永久阻塞**（不是慢，是不返回）。
+    /// 实测：`QuotaEngine:129 → CooldownLedger.load() → Data(contentsOf:) → open()`，
+    /// 1746/1746 采样全停在那一帧，菜单栏点了完全没反应，持续十几分钟。
+    ///
+    /// 底下每一层都加了看门狗，但这一层要独立成立：**UI 线程不该等任何 I/O**，
+    /// 无论那个 I/O 自认为有多快。旁边的 `collect()` 早就是这么写的，
+    /// 只是当时觉得 reload「很便宜」就留在了主线程上 —— 上面那行注释
+    /// 「读快照很便宜」就是这个判断的化石。
     func reload() {
-        dashboard = LLMQuota.dashboard()
+        guard !isReloading else { return }
+        isReloading = true
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let d = LLMQuota.dashboard()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.dashboard = d
+                self.isReloading = false
+            }
+        }
     }
 
     /// 扫本机日志并写快照。放后台线程 —— 首次要解析 1GB 出头。

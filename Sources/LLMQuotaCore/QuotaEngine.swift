@@ -12,7 +12,17 @@ public struct QuotaEngine: Sendable {
 
     // MARK: - Entry point
 
-    public func buildDashboard(snapshots: [MachineSnapshot], now: Date = Date()) -> Dashboard {
+    /// - Parameters:
+    ///   - tasks: 传 nil 就现读 `TaskStore.all()`。给测试留的注入口 ——
+    ///     不注入的话这个函数会去读本机真实的 tasks.jsonl，测不出确定的结果。
+    ///   - machineName / repoAliases: 同理，默认值就是真实环境。
+    public func buildDashboard(
+        snapshots: [MachineSnapshot],
+        now: Date = Date(),
+        tasks: [WorkTask]? = nil,
+        machineName: String = Paths.machineName(),
+        repoAliases: [RepoAlias]? = nil
+    ) -> Dashboard {
         let machines = snapshots.map {
             MachineInfo(
                 machineID: $0.machineID,
@@ -28,7 +38,15 @@ public struct QuotaEngine: Sendable {
             reports.append(buildReport(plan: plan, snapshots: snapshots, now: now))
         }
 
-        return Dashboard(generatedAt: now, machines: machines, reports: reports)
+        // TaskStore.all() 每个 id 只留最新一条，正是这里要的。
+        let board = TaskBoard.build(
+            from: tasks ?? TaskStore.all(),
+            machineName: machineName,
+            repoAliases: repoAliases ?? RepoRegistry.all(),
+            now: now)
+
+        return Dashboard(generatedAt: now, machines: machines, reports: reports,
+                         tasks: board.tasks, tasksTruncated: board.truncated)
     }
 
     // MARK: - Per platform

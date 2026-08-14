@@ -601,7 +601,12 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         self.enabled = enabled
         self.lastHumanActivity = lastHumanActivity
         self.lastHumanActivityHere = lastHumanActivityHere
-        self.role = AgentRoles.role(for: platform)
+        // 发布版：留白填**生效值**，不是配置里那个「nil 表示继承默认」的覆盖值。
+        // 看板是要发给手机的，而手机解析不了「继承」—— 发 nil 过去，
+        // 界面上就是一片空白，用户以为一个都没设，实际每个都在按 25% 拦。
+        // 这里是整个看板里唯一给 role 赋值的地方，收口在这。
+        self.role = AgentRoles.published(
+            for: platform, default: WorkScheduler.defaultHumanReserve)
         self.agentName = agentName.isEmpty ? AgentIdentity.name(for: platform) : agentName
         self.agentBinary = agentBinary.isEmpty
             ? AgentIdentity.binaryName(for: platform) : agentBinary
@@ -630,16 +635,156 @@ public struct ModelUsage: Codable, Sendable, Hashable {
     }
 }
 
+/// 手机端要看的**一条任务**，只留显示需要的那几个字段。
+///
+/// # 为什么不直接发 `WorkTask`
+///
+/// `WorkTask` 里有 prompt 全文、仓库绝对路径、handoff、pendingAsk……
+/// 一条就可能几 KB，而这份文件要走 iCloud 同步到手机。更要紧的是
+/// **prompt 里带着 `/Users/<你>/...` 这种本机路径**，发到手机上既没意义
+/// 也没必要。所以这里是一份显式的、窄的投影：加字段要有人动手加，
+/// 不会因为 Mac 侧给 WorkTask 加了个字段就悄悄跟着漏出去。
+public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
+    /// 标题最多多少个**字符**（不是字节）。
+    ///
+    /// 按字节截会把一个多字节的汉字劈成两半，输出是 `锟斤拷` 那种乱码；
+    /// Swift 的 `prefix` 按 Character（字素簇）走，汉字和 emoji 都不会被切开。
+    public static let titleMaxCharacters = 80
+
+    public var id: String
+    /// 短标题：优先 `stepTitle`，没有就取 prompt 的第一行，再截到 80 字符。
+    public var title: String
+    public var state: WorkTask.State
+    /// 还没派出去的时候没有。
+    public var platform: Platform?
+    /// 哪台机器在跑它。
+    public var machineName: String
+    public var startedAt: Date?
+    /// 跑了多久。running 是「到现在为止」，终态是「一共跑了」。
+    public var elapsedSeconds: Int?
+    public var graphID: String?
+    public var stepIndex: Int?
+    /// 这张图一共几步。**按 graphID 数出来的**，不是记录里存的。
+    public var stepTotal: Int?
+    public var repoAlias: String?
+
+    public init(
+        id: String,
+        title: String,
+        state: WorkTask.State,
+        platform: Platform? = nil,
+        machineName: String,
+        startedAt: Date? = nil,
+        elapsedSeconds: Int? = nil,
+        graphID: String? = nil,
+        stepIndex: Int? = nil,
+        stepTotal: Int? = nil,
+        repoAlias: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.state = state
+        self.platform = platform
+        self.machineName = machineName
+        self.startedAt = startedAt
+        self.elapsedSeconds = elapsedSeconds
+        self.graphID = graphID
+        self.stepIndex = stepIndex
+        self.stepTotal = stepTotal
+        self.repoAlias = repoAlias
+    }
+
+    /// 手写解码，可选字段一律 `decodeIfPresent`。
+    ///
+    /// 合成解码器对缺键零容忍 —— 缺一个键抛 `keyNotFound`，
+    /// 而这个类型是数组元素，一条解不出来，**整个 Dashboard 都解不出来**。
+    /// 给属性写默认值救不了合成解码器，这个坑在这个项目里翻过五次车。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        // 状态用字符串接，认不出来的当 queued。
+        // 将来 Mac 侧加了新状态时，老客户端显示得不准，但**还能显示**——
+        // 比整份看板解不出来强。
+        state = (try c.decodeIfPresent(String.self, forKey: .state))
+            .flatMap(WorkTask.State.init(rawValue:)) ?? .queued
+        platform = try c.decodeIfPresent(Platform.self, forKey: .platform)
+        machineName = try c.decodeIfPresent(String.self, forKey: .machineName) ?? ""
+        startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
+        elapsedSeconds = try c.decodeIfPresent(Int.self, forKey: .elapsedSeconds)
+        graphID = try c.decodeIfPresent(String.self, forKey: .graphID)
+        stepIndex = try c.decodeIfPresent(Int.self, forKey: .stepIndex)
+        stepTotal = try c.decodeIfPresent(Int.self, forKey: .stepTotal)
+        repoAlias = try c.decodeIfPresent(String.self, forKey: .repoAlias)
+    }
+
+    /// 按**字符**截断，超了就用省略号收尾（收尾之后总长仍然 ≤ 上限）。
+    public static func clampTitle(_ raw: String, limit: Int = titleMaxCharacters) -> String {
+        // 换行会把手机上的一行标题撑成一段，先压平。
+        let flat = raw.split(whereSeparator: \.isNewline).first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        guard flat.count > limit else { return flat }
+        guard limit > 1 else { return String(flat.prefix(limit)) }
+        return String(flat.prefix(limit - 1)) + "…"
+    }
+
+    /// 一条任务显示成什么标题。
+    ///
+    /// **这不是脱敏。** prompt 前 80 个字符里如果就写着 `/Users/…/项目`，
+    /// 它会跟着标题过去 —— 截断挡掉的是「长」和「80 字之后的东西」，
+    /// 不是路径本身。想要干净的标题就给任务写 `stepTitle`
+    /// （拆解出来的图节点本来就都有）。
+    public static func title(for task: WorkTask) -> String {
+        let stepTitle = task.stepTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let raw = stepTitle.isEmpty ? task.prompt : stepTitle
+        let clamped = clampTitle(raw)
+        // prompt 可能整个是空白 / 只有换行，那样标题会是空的 ——
+        // 手机上一行空白比一个 id 更没用。
+        return clamped.isEmpty ? "任务 \(task.id.prefix(8))" : clamped
+    }
+}
+
 /// 整个仪表盘的数据。
 public struct Dashboard: Codable, Sendable {
     public var generatedAt: Date
     public var machines: [MachineInfo]
     public var reports: [PlatformReport]
 
-    public init(generatedAt: Date, machines: [MachineInfo], reports: [PlatformReport]) {
+    /// 现在有哪些活。见 `TaskBoard` —— 范围、排序和上限都在那儿定。
+    ///
+    /// 这份数据以前根本不存在：手机拿到的只有机器和额度，
+    /// 「办公室」里那些机器人在动全靠用量活跃度**推**出来，不是真的任务记录。
+    public var tasks: [TaskBrief]
+
+    /// `tasks` 被上限截掉过。
+    ///
+    /// **静默截断是不能接受的**：手机上「一共 3 个任务」会变成一句假话，
+    /// 而且是那种没人会去核对的假话。宁可界面上多一行「还有更多」。
+    public var tasksTruncated: Bool
+
+    public init(generatedAt: Date, machines: [MachineInfo], reports: [PlatformReport],
+                tasks: [TaskBrief] = [], tasksTruncated: Bool = false) {
         self.generatedAt = generatedAt
         self.machines = machines
         self.reports = reports
+        self.tasks = tasks
+        self.tasksTruncated = tasksTruncated
+    }
+
+    /// 手写解码：`tasks` / `tasksTruncated` 走 `decodeIfPresent`。
+    ///
+    /// 集群里各台机器的二进制版本不一定同步，老机器发出来的看板里
+    /// **没有这两个键**。合成解码器遇到缺键直接抛 `keyNotFound`，
+    /// 于是整份看板解不出来 —— 手机上不是「少了任务列表」，
+    /// 而是连额度都没了。给属性写默认值救不了它，必须手写。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generatedAt = try c.decode(Date.self, forKey: .generatedAt)
+        machines = try c.decode([MachineInfo].self, forKey: .machines)
+        reports = try c.decode([PlatformReport].self, forKey: .reports)
+        tasks = try c.decodeIfPresent([TaskBrief].self, forKey: .tasks) ?? []
+        tasksTruncated = try c.decodeIfPresent(Bool.self, forKey: .tasksTruncated) ?? false
     }
 
     /// 按紧急度排出来的额度告警，菜单栏标题取第一条。
