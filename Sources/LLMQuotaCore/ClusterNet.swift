@@ -975,10 +975,62 @@ public enum ClusterNet {
             else { continue }
             candidates.append((String(cString: f.ifa_name), String(cString: host)))
         }
-        // en0 优先：Mac 上那是内建网卡，比一堆虚拟接口（utun、bridge）靠谱。
-        return candidates.first(where: { $0.name == "en0" })?.ip
-            ?? candidates.first(where: { $0.name.hasPrefix("en") })?.ip
-            ?? candidates.first?.ip
+        return pickLAN(candidates)
+    }
+
+    /// 从网卡列表里挑一个「对端真的能连过来」的地址。
+    ///
+    /// # 为什么不能只按网卡名字挑
+    ///
+    /// 原来是三级回退：`en0` → 任意 `en` 开头 → 第一个。踩过一次很难查的坑：
+    /// 这台 Mac 没有带 IPv4 的 `en0`，于是掉进第二条，抓到了
+    /// `en11: 169.254.46.146` —— 而真地址在 `en1: 192.168.31.85`。
+    ///
+    /// `169.254.0.0/16` 是**链路本地**地址，含义就是「我没拿到 DHCP，
+    /// 自己编了一个」，路由不出去，对端永远连不上。
+    /// 而 presence 把它当本机地址发布出去，另一台就照着这个地址连，
+    /// 每半分钟失败一次 —— 日志里只看得到 TLS 握手错误
+    /// （`certificate required`、`server closed session`），
+    /// **完全看不出「地址本身就是假的」**。这是最贵的一类 bug：
+    /// 报错信息把人引向证书，而问题在网络层。
+    ///
+    /// 顺带修了排序：`en11` 在字符串比较里排在 `en1` 前面，
+    /// 而 `en1` 才是内建网卡。按「前缀 + 数字后缀」排。
+    static func pickLAN(_ candidates: [(name: String, ip: String)]) -> String? {
+        candidates
+            .filter { isUsableLAN($0.ip) }
+            .sorted { a, b in
+                // 私有地址优先 —— VPN 可能给一个路由不到局域网的公网段地址。
+                let pa = isPrivate(a.ip), pb = isPrivate(b.ip)
+                if pa != pb { return pa }
+                // 物理网卡优先于 utun / bridge / awdl 这类虚拟口。
+                let ea = a.name.hasPrefix("en"), eb = b.name.hasPrefix("en")
+                if ea != eb { return ea }
+                return ifaceRank(a.name) < ifaceRank(b.name)
+            }
+            .first?.ip
+    }
+
+    /// 这个地址能不能被对端连上。
+    static func isUsableLAN(_ ip: String) -> Bool {
+        if ip.hasPrefix("169.254.") { return false }   // 链路本地：没 DHCP 时自分配
+        if ip.hasPrefix("127.") { return false }
+        return ip != "0.0.0.0"
+    }
+
+    /// RFC1918 私有地址。
+    static func isPrivate(_ ip: String) -> Bool {
+        if ip.hasPrefix("10.") || ip.hasPrefix("192.168.") { return true }
+        let p = ip.split(separator: ".")
+        return p.count == 4 && p[0] == "172"
+            && (Int(p[1]).map { (16...31).contains($0) } ?? false)
+    }
+
+    /// `en1` 要排在 `en11` 前面 —— 直接比字符串会反过来。
+    static func ifaceRank(_ name: String) -> (String, Int) {
+        let prefix = String(name.prefix { !$0.isNumber })
+        let digits = name.drop { !$0.isNumber }
+        return (prefix, Int(digits) ?? 9999)
     }
 
     static func describe(_ r: ClusterRequest) -> String {
