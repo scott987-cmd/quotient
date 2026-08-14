@@ -214,6 +214,46 @@ public enum ICloudSafe {
         return Watchdog.run("icloud.rm:" + url.path, timeout: timeout, body).valueOr(false)
     }
 
+    /// 带超时的建目录。iCloud 上的 mkdir 一样会挂死
+    /// （ConfigIntentIngest 原来是在调用点手工包看门狗 —— 收进来，
+    /// 免得下一个调用点忘了包）。
+    @discardableResult
+    public static func ensureDir(_ dir: URL, timeout: TimeInterval = 8) -> Bool {
+        let body = {
+            (try? FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true)) != nil
+        }
+        guard isICloud(dir) else { return body() }
+        return Watchdog.run("icloud.mkdir:" + dir.path, timeout: timeout, body).valueOr(false)
+    }
+
+    /// 带超时的 mtime 读取。镜像的「新者胜」全靠它 ——
+    /// 而 stat 一个没下载的 iCloud 文件同样可能挂起。
+    /// 读不到返回 nil；调用方不许把 nil 当「文件很旧」去覆盖，只能当「不知道」。
+    public static func modificationDate(_ url: URL, timeout: TimeInterval = 8) -> Date? {
+        let body = { () -> Date? in
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+        }
+        guard isICloud(url) else { return body() }
+        return Watchdog.run("icloud.stat:" + url.path, timeout: timeout, body).valueOr(nil)
+    }
+
+    /// 带超时的「是不是普通文件」。
+    ///
+    /// stat 一个 iCloud URL 和 open 一样会永久挂起 —— 这条是审查抓出来的：
+    /// 镜像里两处对云端 URL 做裸 resourceValues，而同一份改动自己的注释
+    /// 就写着「云端 stat 会挂」。守卫测试只扫原子写，扫不到 stat，
+    /// 所以这类洞只能靠审查和这里的收口。
+    public static func isRegularFile(_ url: URL, timeout: TimeInterval = 6) -> Bool {
+        let probe = {
+            (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile ?? false
+        }
+        guard isICloud(url) else { return probe() }
+        return Watchdog.run("icloud.stat:" + url.path, timeout: timeout, probe)
+            .valueOr(false)
+    }
+
     /// 带超时的 `moveItem`。iCloud 上 move 同样会挂死（实测栈顶是 `access`）。
     @discardableResult
     public static func move(_ from: URL, to dest: URL, timeout: TimeInterval = 8) -> Bool {

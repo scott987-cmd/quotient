@@ -62,6 +62,21 @@ func displayWidth(_ s: String) -> Int {
 
 // MARK: - Commands
 
+/// 镜像心跳的三态输出。collect 和 doctor 共用 —— 措辞必须区分
+/// 「从未授权 / App 没在跑 / 镜像在报错」，三者的修法完全不同。
+func printMirrorHealth(indent: String) {
+    let status = MirrorHealth.check()
+    let text = MirrorHealth.describe(status)
+    switch status {
+    case .ok:
+        print(indent + Ansi.green("✓ ") + Ansi.dim(text))
+    case .neverSynced, .appNotRunning:
+        print(indent + Ansi.yellow("⚠ " + text))
+    case .failing:
+        print(indent + Ansi.red("✗ " + text))
+    }
+}
+
 func cmdCollect(verbose: Bool) throws {
     let result = try LLMQuota.collect()
     let snap = result.snapshot
@@ -75,9 +90,11 @@ func cmdCollect(verbose: Bool) throws {
 
     switch result.iCloudSync {
     case .synced:
-        print("  " + Ansi.green("已同步到 iCloud")
+        print("  " + Ansi.green("已写入共享暂存")
             + Ansi.dim(" " + (Paths.iCloudSnapshotsDir?.path
                 .replacingOccurrences(of: home, with: "~") ?? "")))
+        // 写进暂存 ≠ 到了 iCloud —— 搬运是菜单栏 App 的镜像干的，读心跳说实话。
+        printMirrorHealth(indent: "  ")
     case .unavailable:
         print(Ansi.yellow("  未检测到 iCloud Drive，快照只存在本地，其他电脑看不到"))
     case .stalled(let why):
@@ -461,6 +478,96 @@ func cmdWork(_ args: [String]) throws {
     let rest = Array(args.dropFirst())
 
     switch sub {
+    // llmq work plan —— 计划清单：排好顺序、由人放行的任务。
+    //
+    //   llmq work plan                     看清单（顺便报储备池还有多少）
+    //   llmq work plan add "<任务>" [--repo <别名>] [--first]
+    //   llmq work plan rm <序号>
+    //   llmq work plan up|down <序号>
+    //   llmq work plan go [<序号>]         放进执行队列（走查重和分诊）
+    case "plan":
+        let sub2 = rest.first ?? "list"
+        let rest2 = Array(rest.dropFirst())
+        switch sub2 {
+        case "list", "":
+            let list = PlannedStore.all()
+            if list.isEmpty {
+                print(Ansi.dim("计划清单是空的。llmq work plan add \"<任务>\" --repo <别名>"))
+            } else {
+                print(Ansi.bold("计划清单") + Ansi.dim("  按顺序放行，放着不动就不跑"))
+                for (i, t) in list.enumerated() {
+                    let repo = t.repoAlias.map { Ansi.cyan("[\($0)] ") } ?? ""
+                    print("  \(i + 1). " + repo
+                        + t.prompt.replacingOccurrences(of: "\n", with: " ").prefix(76))
+                }
+                print(Ansi.dim("  放行第一个：llmq work plan go"))
+            }
+            // 「还有哪些可以安排」的另一半：机器自己扫出来的储备活。
+            let facts = ReservePool.facts(repo: RepoRegistry.resolve(nil)
+                ?? FileManager.default.currentDirectoryPath)
+            if !facts.isEmpty {
+                print(Ansi.dim("储备池还有 \(facts.count) 条可安排（llmq work reserve）"))
+            }
+
+        case "add":
+            guard let prompt = rest2.first(where: { !$0.hasPrefix("--") }) else {
+                print("用法：llmq work plan add \"<任务>\" [--repo <别名>] [--first]"); exit(2)
+            }
+            var alias: String? = nil
+            if let i = rest2.firstIndex(of: "--repo"), i + 1 < rest2.count {
+                alias = rest2[i + 1]
+                guard RepoRegistry.all().contains(where: { $0.alias == alias }) else {
+                    print(Ansi.red("不认识别名 \(alias!)。已登记："))
+                    for r in RepoRegistry.all() { print("  " + r.alias) }
+                    exit(1)
+                }
+            }
+            let t = try PlannedStore.add(prompt: prompt, repoAlias: alias,
+                                         first: rest2.contains("--first"))
+            let pos = rest2.contains("--first") ? 1 : PlannedStore.all().count
+            print(Ansi.green("已加进计划 ") + "第 \(pos) 位  " + Ansi.dim(t.id))
+
+        case "rm":
+            guard let n = rest2.first.flatMap({ Int($0) }) else {
+                print("用法：llmq work plan rm <序号>"); exit(2)
+            }
+            if let t = try PlannedStore.remove(at: n) {
+                print(Ansi.green("已移除 ") + t.prompt.prefix(60))
+            } else {
+                print(Ansi.red("没有第 \(n) 条"))
+            }
+
+        case "up", "down":
+            guard let n = rest2.first.flatMap({ Int($0) }) else {
+                print("用法：llmq work plan \(sub2) <序号>"); exit(2)
+            }
+            try PlannedStore.move(position: n, up: sub2 == "up")
+            try cmdWork(["plan"])
+
+        case "go":
+            let n = rest2.first.flatMap { Int($0) } ?? 1
+            let list = PlannedStore.all()
+            guard n >= 1, n <= list.count else {
+                print(list.isEmpty ? Ansi.dim("计划清单是空的")
+                                   : Ansi.red("没有第 \(n) 条")); exit(list.isEmpty ? 0 : 2)
+            }
+            let t = list[n - 1]
+            guard let repoPath = RepoRegistry.resolve(t.repoAlias) else {
+                print(Ansi.red("别名 \(t.repoAlias ?? "（默认）") 解析不了")); exit(1)
+            }
+            // 走 work add 的完整入口：查重、分诊、拆解一个不少。
+            // 查重拦下时它会 exit(3)，计划条目原地保留 —— 那正是想要的。
+            var fwd = ["add", t.prompt, "--repo", repoPath]
+            fwd.append(contentsOf: rest2.filter { $0.hasPrefix("--") && $0 != "--first" })
+            try cmdWork(fwd)
+            _ = try PlannedStore.remove(at: n)
+            print(Ansi.dim("已从计划清单移除（第 \(n) 位）"))
+
+        default:
+            print("用法：llmq work plan [add|rm|up|down|go]")
+        }
+        return
+
     case "add":
         guard let prompt = rest.first(where: { !$0.hasPrefix("--") }) else {
             print("用法：llmq work add \"<任务描述>\" [--repo <路径>]")
@@ -2144,7 +2251,7 @@ func cmdMachines() throws {
     print("  名称      " + Paths.machineName())
     print("  机器 ID   " + Ansi.dim(Paths.machineID()))
 
-    print("\n" + Ansi.bold("共享通道"))
+    print("\n" + Ansi.bold("共享通道") + Ansi.dim("（本地暂存，由菜单栏 App 镜像到 iCloud）"))
     if let snapDir = Paths.iCloudSnapshotsDir {
         let probe = snapDir.appendingPathComponent(".llmq-probe")
         try? FileManager.default.createDirectory(at: snapDir, withIntermediateDirectories: true)
@@ -2153,8 +2260,9 @@ func cmdMachines() throws {
         print("  快照      " + short(snapDir.path) + "  "
             + (writable ? Ansi.green("可写") : Ansi.red("不可写")))
     } else {
-        print("  快照      " + Ansi.red("iCloud Drive 不可用 —— 多机汇总没法工作"))
+        print("  快照      " + Ansi.red("共享暂存不可用 —— 多机汇总没法工作"))
     }
+    printMirrorHealth(indent: "  ")
     if let cfgDir = Paths.iCloudConfigDir {
         let hasPlans = FileManager.default.fileExists(
             atPath: cfgDir.appendingPathComponent("plans.json").path)
@@ -2225,6 +2333,15 @@ func cmdDoctor(tidy: Bool = false) throws {
                             : Ansi.yellow("  复查：还剩 \(after.files.count) 个"))
         return
     }
+
+    // **共享暂存有没有人在往 iCloud 搬。**
+    //
+    // CLI 自己不碰 iCloud 了（launchd 下会永久挂起），只写本地暂存；
+    // 搬运靠菜单栏 App 的镜像。App 不在跑的话，这台机器看起来一切正常 ——
+    // 采集成功、快照落盘、任务照跑 —— 但数据一个字节都没出本机。
+    print(Ansi.bold("iCloud 镜像"))
+    printMirrorHealth(indent: "  ")
+    print("")
 
     // 降级过的安全设置要**主动报**，不能等人去翻文件。
     // 一个静默变弱的系统，看起来和没变弱的一模一样。
@@ -2462,14 +2579,14 @@ func cmdDoctor(tidy: Bool = false) throws {
     print("  缓存      " + short(Paths.cacheDir.path))
     print("  本地快照  " + short(Paths.localSnapshotsDir.path))
     if let icloud = Paths.iCloudSnapshotsDir {
-        // 目录存在不等于写得进去 —— iCloud Drive 受 TCC 管，实际试一次才知道。
+        // 共享暂存是本地目录，CLI 不再直接碰 iCloud；搬运看镜像心跳。
         let probe = icloud.appendingPathComponent(".llmq-write-probe")
         let writable = (try? Data().write(to: probe)) != nil
         try? FileManager.default.removeItem(at: probe)
-        print("  iCloud    " + short(icloud.path) + "  "
-            + (writable ? Ansi.green("可写") : Ansi.yellow("不可写，需要完全磁盘访问权限")))
+        print("  共享暂存  " + short(icloud.path) + "  "
+            + (writable ? Ansi.green("可写") : Ansi.yellow("不可写")))
     } else {
-        print("  iCloud    " + Ansi.yellow("未启用（多机汇总会失效）"))
+        print("  共享暂存  " + Ansi.yellow("不可用（多机汇总会失效）"))
     }
     print("  本机      \(Paths.machineName())")
 
@@ -2921,6 +3038,45 @@ func cmdCluster(_ rest: [String]) throws {
         print(Ansi.green("已撤销 ") + node)
         print(Ansi.dim("证书本身没吊销（私有 CA 没有 CRL），"
                        + "但它连不进来了。serve 要重启才生效。"))
+
+    // llmq cluster selfcheck —— 本机自检（只读）
+    //
+    // 把「这台到底怎么了」一次说清楚：版本、服务、更新通道、地址、iCloud。
+    // 存在的理由：排查另一台机器时我 SSH 过去挨个敲命令，
+    // 结论留在了会话里、命令没留下，下次得从头摸一遍。
+    case "selfcheck":
+        let sc = SelfCheck.run()
+        print(SelfCheck.render(sc))
+        exit(sc.worst == .bad ? 1 : 0)
+
+    // llmq cluster diagnose <节点> —— 让对面自检，把结果打回来
+    //
+    // **知识只写一份**（SelfCheck），这里只负责把它送过去执行。
+    // 不在这边远程敲一堆命令 —— 那就又变成「跑跑就忘」了。
+    case "diagnose":
+        let dnode = need(1, "对端节点名")
+        let dcfg = loadConfig()
+        guard let daddr = dcfg.peers[dnode] else {
+            print(Ansi.red("不认识节点 \(dnode)。已知：")
+                + dcfg.peers.keys.sorted().joined(separator: "、"))
+            exit(2)
+        }
+        let dhost = daddr.split(separator: ":").first.map(String.init) ?? daddr
+        print(Ansi.dim("ssh \(dhost) → llmq cluster selfcheck"))
+        // BatchMode：只用密钥，绝不停下来要密码。
+        // 要密码就直接失败并说清楚 —— 挂在那儿等输入更糟。
+        let dr = Proc.run("/usr/bin/ssh",
+            ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", dhost,
+             "~/.local/bin/llmq cluster selfcheck"],
+            cwd: NSTemporaryDirectory(), env: [:], timeout: 90)
+        if dr.exitCode != 0 && dr.stdout.isEmpty {
+            print(Ansi.red("连不上或跑不起来"))
+            let e = dr.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            print(Ansi.dim("  " + (e.isEmpty ? "（没有错误输出）" : String(e.prefix(300)))))
+            print(Ansi.dim("  需要免密钥 ssh 到 \(dhost)。要密码的话这里不会停下来问。"))
+            exit(1)
+        }
+        print(dr.stdout)
 
     // llmq cluster peer <节点名> <host:port>
     case "peer":

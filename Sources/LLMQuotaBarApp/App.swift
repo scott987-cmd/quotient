@@ -6,10 +6,12 @@ import SwiftUI
 struct LLMQuotaBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = DashboardModel()
+    @StateObject private var mirror = MirrorController()
 
     var body: some Scene {
         MenuBarExtra {
-            DashboardView(model: model)
+            DashboardView(model: model, mirror: mirror)
+                .onAppear { model.onCollected = { [weak mirror] in mirror?.syncNow() } }
         } label: {
             // 菜单栏只有一行的空间，所以这里只放"最该被看见的那一条"。
             HStack(spacing: 3) {
@@ -38,6 +40,8 @@ final class DashboardModel: ObservableObject {
     @Published private(set) var isReloading = false
     @Published private(set) var lastError: String?
     @Published private(set) var iCloudSync: ICloudSyncStatus = .unavailable
+    /// 采集完成后的回调 —— App 用它触发一轮镜像。模型不直接认识镜像器。
+    var onCollected: (() -> Void)?
 
     private var refreshTimer: Timer?
     private var collectTimer: Timer?
@@ -94,6 +98,8 @@ final class DashboardModel: ObservableObject {
                     self.iCloudSync = r.iCloudSync
                     self.isCollecting = false
                     self.reload()
+                    // 刚采完就镜像一轮 —— 新快照不该等 30 秒才上云。
+                    self.onCollected?()
                 }
             } catch {
                 await MainActor.run {
@@ -137,11 +143,14 @@ final class DashboardModel: ObservableObject {
 
 struct DashboardView: View {
     @ObservedObject var model: DashboardModel
+    @ObservedObject var mirror: MirrorController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
+            MirrorSection(mirror: mirror)
+                .padding(.horizontal, 14).padding(.top, 8)
             permissionBanner
 
             ScrollView {

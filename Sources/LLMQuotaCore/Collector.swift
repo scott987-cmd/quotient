@@ -337,29 +337,45 @@ public enum Paths {
         appSupport.appendingPathComponent("snapshots", isDirectory: true)
     }
 
-    /// iCloud 里的共享配置目录。
+    /// 本地共享暂存根：`Application Support/LLMQuotaBar/shared/`。
+    ///
+    /// ## 为什么 CLI 不再直接碰 iCloud
+    ///
+    /// launchd 起的常驻进程访问 iCloud Drive 会**永久挂起**
+    /// （TCC 的 FileProviderDomain 闸门，完全磁盘访问覆盖不了它，实测过多次）。
+    /// 靠看门狗兜底的代价是工作循环每轮白等 8–45 秒、当轮发布失败。
+    ///
+    /// 所以现在：CLI 只读写这个本地目录（不受任何闸门管），
+    /// 菜单栏 App 里的 MirrorService 负责它和 iCloud 真身之间的镜像 ——
+    /// App 是有界面的进程，能用 NSOpenPanel + security-scoped bookmark
+    /// 拿到用户亲手授出的 iCloud 目录访问权。代价（用户已接受）：
+    /// App 不在跑就不同步。目录结构和 iCloud 的 LLMQuotaBar/ 完全一致，
+    /// 见 `SharedLayout`。
+    public static var sharedRoot: URL {
+        appSupport.appendingPathComponent("shared", isDirectory: true)
+    }
+
+    /// 共享配置目录。
     ///
     /// 套餐上限、月费、冷却状态都是**账号级**的，不该按机器各存一份：
     /// 换台机器就要重填一遍上限，而 Kimi 额度用尽在 A 机器撞到之后，
     /// B 机器不该再白撞一次。
+    ///
+    /// **属性名保留，指向变了**：现在是本地暂存（`sharedRoot/config`），
+    /// 由菜单栏 App 镜像到 iCloud。`ICloudSafe.isICloud` 对它返回 false，
+    /// 所有原来的看门狗包裹自动变成零开销直通 ——
+    /// 这就是消掉每轮 8–45 秒 iCloud 税的机制。
     public static var iCloudConfigDir: URL? {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let icloud = home
-            .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: icloud.path) else { return nil }
-        return icloud.appendingPathComponent("\(appName)/config", isDirectory: true)
+        sharedRoot.appendingPathComponent("config", isDirectory: true)
     }
 
-    /// iCloud Drive 里的共享快照目录 —— 多机汇总就靠它，不需要任何服务器。
+    /// 共享快照目录 —— 多机汇总就靠它，不需要任何服务器。
+    /// 同上：本地暂存（`sharedRoot/snapshots`），由菜单栏 App 镜像。
     public static var iCloudSnapshotsDir: URL? {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let icloud = home
-            .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: icloud.path) else { return nil }
-        return icloud.appendingPathComponent("\(appName)/snapshots", isDirectory: true)
+        sharedRoot.appendingPathComponent("snapshots", isDirectory: true)
     }
 
-    /// 快照写到哪：有 iCloud 就写 iCloud，否则退回本地。
+    /// 快照写到哪。共享暂存永远可用（本地目录），兜底分支只是保住类型。
     public static var snapshotsDir: URL { iCloudSnapshotsDir ?? localSnapshotsDir }
 
     public static func ensureDirectories() throws {
@@ -367,9 +383,8 @@ public enum Paths {
         for dir in [appSupport, cacheDir, localSnapshotsDir] {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-        for dir in [iCloudSnapshotsDir, iCloudConfigDir].compactMap({ $0 }) {
-            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
+        // 共享暂存的整套子目录一次建齐 —— CLI 和 App 靠这个结构对话。
+        SharedLayout.ensure(at: sharedRoot)
     }
 
     public static func machineID() -> String {

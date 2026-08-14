@@ -217,11 +217,39 @@ public enum ReleaseChannel {
         }
 
         // ① 证书必须由本集群的 CA 签发
+        //
+        // **「读不到」和「被篡改了」必须分开报。**
+        //
+        // 这条判断真金白银地咬过一次：对面那台机器的更新器每 30 分钟报一次
+        // 「有人换了 iCloud 里的东西」，连报两天，于是它一直停在旧版本 ——
+        // 而真相是 launchd 起的进程读不到 iCloud 上那张证书（EPERM）。
+        // 一句指控篡改的话，把人引向「谁动了我的 iCloud」，
+        // 而问题在访问授权。它还是**静默**的：只写在没人看的日志里。
+        //
+        // 注意「先检查可读性」这个自然的修法**也是错的**：实测 launchd 下
+        // `[ -r file ]` 返回真，真去 fopen 才 EPERM。只能靠真实读取的结果分。
+        let probe = Proc.run("/bin/cat", [certURL.path],
+                             cwd: NSTemporaryDirectory(), env: [:], timeout: 10)
+        if probe.exitCode != 0 || probe.stdout.isEmpty {
+            let why = probe.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let denied = why.lowercased().contains("not permitted")
+                || why.lowercased().contains("permission denied")
+            return .rejected(denied
+                ? "**读不到**发布证书（\(certURL.lastPathComponent)）—— 不是被篡改，"
+                  + "是这个进程没权限读 iCloud 上那个文件。"
+                  + "launchd 起的进程没有终端的授权上下文，"
+                  + "而这条报错会让人去查「谁动了我的 iCloud」。原始错误：\(why.prefix(120))"
+                : "发布证书读不出来：\(why.isEmpty ? "文件是空的" : String(why.prefix(120)))")
+        }
+
         let chain = Proc.run("/usr/bin/openssl",
             ["verify", "-CAfile", ClusterCA.caCert.path, certURL.path],
             cwd: dir.path, env: [:], timeout: 20)
         guard chain.exitCode == 0 else {
-            return .rejected("发布证书不是本集群 CA 签的 —— 有人换了 iCloud 里的东西")
+            let detail = (chain.stderr + chain.stdout)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return .rejected("发布证书不是本集群 CA 签的 —— 有人换了 iCloud 里的东西"
+                + (detail.isEmpty ? "" : "（openssl：\(detail.prefix(120))）"))
         }
 
         // ② CN 必须正好是 release-signer。

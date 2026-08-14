@@ -216,9 +216,13 @@ public enum RepoRegistry {
 /// 复用它就不用开端口、不用管证书过期、不用依赖任何第三方中继。
 /// 任务本来要跑十几分钟，iCloud 那点同步延迟无所谓。
 ///
-/// 目录在 CloudDocs 下而不是 App 专属容器里，是为了**现在就能用**：
+/// iCloud 上的目录在 CloudDocs 下而不是 App 专属容器里，是为了**现在就能用**：
 /// iOS 的「文件」App 和「快捷指令」都能写 iCloud Drive，
-/// 不用等原生 App 做出来。以后 App 写同一个地方即可。
+/// 不用等原生 App 做出来。
+///
+/// **CLI 这边看到的 root 现在是本地暂存**（`Paths.sharedRoot`，结构和
+/// iCloud 那份完全一致）：launchd 进程碰 iCloud 会永久挂起，所以
+/// 收件箱由菜单栏 App 的 MirrorService 抢占拉到本地，CLI 只消费本地。
 public enum Inbox {
     public static var root: URL? {
         Paths.iCloudSnapshotsDir?.deletingLastPathComponent()
