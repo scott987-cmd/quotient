@@ -2132,6 +2132,23 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Format.duration(86400), "1天")
     }
 
+    /// 差一秒跨天仍是小时口径，不能提前进位成"1天"。
+    func testDuration差一秒跨天仍显示小时() {
+        XCTAssertEqual(Format.duration(86399), "23小时59分")
+    }
+
+    /// 带小数的秒数按截断处理，不是四舍五入 —— 59.9 秒还不满一分钟。
+    func testDuration小数秒按截断() {
+        XCTAssertEqual(Format.duration(59.9), "0分钟")
+    }
+
+    /// 非有限值也走占位符。实现里的 isFinite 守卫就是为它们设的，
+    /// 没有测试盯着，守卫被删掉也不会有人发现。
+    func testDuration非有限值显示占位符() {
+        XCTAssertEqual(Format.duration(Double.infinity), "—")
+        XCTAssertEqual(Format.duration(Double.nan), "—")
+    }
+
     // MARK: - compact
 
     func testCompact零() {
@@ -2160,6 +2177,19 @@ final class FormatTests: XCTestCase {
     func testCompactInt重载() {
         XCTAssertEqual(Format.compact(500), "500")
         XCTAssertEqual(Format.compact(2500), "2.5K")
+    }
+
+    /// 负数按绝对值选量级，符号跟着数值走 —— 用量差值可能是负的。
+    func testCompact负数保留符号() {
+        XCTAssertEqual(Format.compact(-500), "-500")
+        XCTAssertEqual(Format.compact(-2500.0), "-2.5K")
+        XCTAssertEqual(Format.compact(-1_500_000.0), "-1.5M")
+    }
+
+    /// 不足一千的小数保留一位小数，不能走 Int 分支被截成整数。
+    func testCompact小数保留一位() {
+        XCTAssertEqual(Format.compact(1.5), "1.5")
+        XCTAssertEqual(Format.compact(0.5), "0.5")
     }
 }
 
