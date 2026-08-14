@@ -482,10 +482,12 @@ public struct WorkScheduler: Sendable {
                 continue
             }
 
-            // 任何一条额度已用尽或即将超额，就整个平台排除。
-            if let bad = report.statuses.first(where: {
-                $0.health == .exhausted || $0.health == .atRisk
-            }) {
+            // 用尽 = 硬排除。「预计超额」（atRisk）不再一票否决 ——
+            // 它是把突发烧速外推成整周常态的**预测**，实测把只用了 27% 的
+            // Codex 拦在场外整晚，而真正的契约是留白线（实际用量）。
+            // 现在：实际用量还没碰调度停手线就放行，外推只作参考；
+            // 真到线了自有 reserve 闸拦（下面那道）。
+            if let bad = report.statuses.first(where: { $0.health == .exhausted }) {
                 rejected.append(Rejection(
                     platform: p,
                     reason: "\(bad.label)额度\(bad.health.displayName)"
