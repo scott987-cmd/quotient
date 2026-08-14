@@ -997,7 +997,9 @@ public struct CodexRunner: AgentRunner {
 
     public func command(prompt: String, cwd: String)
         -> (launchPath: String, args: [String], env: [String: String]) {
-        (binaryPath ?? "codex", ["exec", "--full-auto", prompt], [:])
+        // 0.147 起没有 --full-auto 了（1 秒退出码 2 实测）——
+        // --approve-for-me = 自动审批 + workspace-write 沙箱，同义替代。
+        (binaryPath ?? "codex", ["exec", "--approve-for-me", prompt], [:])
     }
 }
 
