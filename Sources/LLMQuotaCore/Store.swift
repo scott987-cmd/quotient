@@ -362,6 +362,19 @@ public enum LLMQuota {
         Watchdog.run("plans.mirror", timeout: 8) { PlansStore.mirrorFromICloud() }
         let dash = dashboard(now: now)
         Watchdog.run("publish.dashboard", timeout: 8) { Inbox.publishDashboard(dash) }
+        // 同一份任务，另外再按机器单独发一份。
+        //
+        // `dashboard.json` 在 iCloud 上**只有一份，每台机器都往里写**，
+        // 所以它里面的 `tasks` 永远是「最后一台采集完的机器」的活 ——
+        // 两台机器同时干活时，手机上的任务会随着谁最后采集而整批切换。
+        // `taskboards/<machineID>.json` 一台一个文件，谁都不写别人的，
+        // 手机读的时候再合并（和 `snapshots/` 同一个模式）。
+        //
+        // 上面那行**不能删**：老版本的手机只认 `dashboard.tasks`，
+        // 删了它们会一条任务都看不到。
+        Watchdog.run("publish.taskboard", timeout: 8) { TaskBoardStore.publish(dash) }
+        // 清理只在 Mac 侧做（手机只读）。它会先读再删，读不动的一律留着。
+        Watchdog.run("taskboard.prune", timeout: 12) { TaskBoardStore.prune(now: now) }
         Watchdog.run("publish.repos", timeout: 8) { Inbox.publishRepos() }
         Watchdog.run("presence.publish", timeout: 8) { ClusterPresenceStore.publish() }
         return result

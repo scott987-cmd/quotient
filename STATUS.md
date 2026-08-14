@@ -28,8 +28,21 @@
 | **按平台留白** | `AgentRole.reserveFraction`、`Work.swift:482` | `llmq runner roles` 的「留白」列；拒绝理由里出现「剩余不足为它预留的 X%」 |
 | **手机改留白** | `ConfigIntent.swift` | 往 iCloud `config-intents/` 扔个 json，下一轮 `work loop` 打「配置 xxxx  MiniMax 留白 默认 → 20%」，文件进 `processed/` |
 | 飞书通知 | `Work.swift` `Notifier.feishu` | 只做单向通知，审批不走它（要入站回调，和「只开一个端口」冲突） |
+| **按机器分的任务板** | `TaskBoardStore.swift` | `llmq collect` 后 iCloud 上有 `taskboards/<machineID>.json`；`llmq doctor` 的「手机任务板」段列出几台、各自多久没更新 |
 
 ## 未完成
+
+- **手机端合并两台的任务**（2026-08-14）：Mac 侧已经按机器分文件发了
+  （`taskboards/<machineID>.json`，一台一个，谁都不写别人的 —— 和 `snapshots/`
+  同一个模式）。**缺的是 iOS 那边的合并**（另一个仓库 `LLMQuotaApp`，另一个人做）：
+  按 `(machineID, task.id)` 去重（任务 id 是 UUID 前 8 位，跨机器会撞，
+  只按 id 去重会让一台的任务盖掉另一台的）、把 `generatedAt` 超过
+  `TaskBoardStore.staleAfter`（30 分钟 = 两轮采集）的板子标成
+  「那台机器 N 分钟前的状态」而不是混进「正在干」、以及
+  `taskboards/` 一个文件都读不到时退回 `dashboard.tasks`。
+
+  Mac 侧**继续往 `dashboard.json` 里写 `tasks`**，那是老版本手机唯一的来源，
+  不能停发（`TaskBoardStoreTests` 里有一条源码级检查钉住了这个）。
 
 - **手机上的留白入口**（2026-08-13）：Mac 侧两头都通了 —— 看板里每个平台带
   `role.reserveFraction`（**生效值**，不是配置里那个「nil 表示继承」的覆盖值）

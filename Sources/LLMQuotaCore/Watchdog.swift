@@ -147,11 +147,71 @@ public enum ICloudSafe {
     public static func contentsOfDirectory(
         _ dir: URL, timeout: TimeInterval = 8
     ) -> [URL] {
-        let list = { (try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles])) ?? [] }
-        guard isICloud(dir) else { return list() }
-        return Watchdog.run("icloud.ls:" + dir.path, timeout: timeout, list).valueOr([])
+        list(dir, timeout: timeout).value ?? []
+    }
+
+    /// 一次「碰 iCloud」的三种结局。
+    ///
+    /// **`failed` 和 `stalled` 绝不能压成同一个 nil。**
+    /// 前者是拿到了确定的答案（文件不在、没权限、内容是坏的），
+    /// 后者是**根本不知道那里有没有东西**（iCloud 没响应）。
+    /// 把后者当成前者，就是把「读不到」说成「没有」——
+    /// 这个项目已经为此犯过三次错，其中一次直接覆盖掉了整份配置。
+    ///
+    /// `read` / `contentsOfDirectory` 把两者都压成 nil / 空数组，
+    /// 「读出来显示一下」用它们没问题；但凡要拿读的结果去**删东西**、
+    /// 或者去断言「那台机器没有任务」，都必须用下面这两个带结局的版本。
+    public enum Probe<T> {
+        case ok(T)
+        /// 跑完了，但没成。这是一个**确定的**答案。
+        case failed
+        /// 超时，或者同一个 key 上一次还卡着。什么都不知道。
+        case stalled
+
+        public var value: T? {
+            if case .ok(let v) = self { return v }
+            return nil
+        }
+
+        /// 没拿到确定答案 —— 调用方**不许**据此断言「没有」。
+        public var isStalled: Bool {
+            if case .stalled = self { return true }
+            return false
+        }
+    }
+
+    /// 带超时的读，区分「读了、没有」和「读不动」。
+    public static func readProbe(_ url: URL, timeout: TimeInterval = 8) -> Probe<Data> {
+        let body = { () -> Data? in try? Data(contentsOf: url) }
+        guard isICloud(url) else { return body().map { .ok($0) } ?? .failed }
+        switch Watchdog.run("icloud.read:" + url.path, timeout: timeout, body) {
+        case .done(let d): return d.map { .ok($0) } ?? .failed
+        case .timedOut, .skipped: return .stalled
+        }
+    }
+
+    /// 带超时的列目录，区分「目录是空的」和「目录读不动」。
+    public static func list(_ dir: URL, timeout: TimeInterval = 8) -> Probe<[URL]> {
+        let body = { () -> [URL]? in
+            try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+        }
+        guard isICloud(dir) else { return body().map { .ok($0) } ?? .failed }
+        switch Watchdog.run("icloud.ls:" + dir.path, timeout: timeout, body) {
+        case .done(let l): return l.map { .ok($0) } ?? .failed
+        case .timedOut, .skipped: return .stalled
+        }
+    }
+
+    /// 带超时的删除。iCloud 上的 unlink 同样会挂死。
+    ///
+    /// 删除是不可逆的那一类 —— 调用方在删之前基本都得先读一遍，
+    /// 那一步务必用 `readProbe`，别用会把「读不动」变成「没有」的 `read`。
+    @discardableResult
+    public static func remove(_ url: URL, timeout: TimeInterval = 8) -> Bool {
+        let body = { (try? FileManager.default.removeItem(at: url)) != nil }
+        guard isICloud(url) else { return body() }
+        return Watchdog.run("icloud.rm:" + url.path, timeout: timeout, body).valueOr(false)
     }
 
     /// 带超时的 `moveItem`。iCloud 上 move 同样会挂死（实测栈顶是 `access`）。

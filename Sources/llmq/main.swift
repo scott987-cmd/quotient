@@ -2386,6 +2386,46 @@ func cmdDoctor(tidy: Bool = false) throws {
         }
     }
 
+    // **手机上的任务列表是从这些文件拼出来的。**
+    //
+    // 以前任务是塞在 dashboard.json 里发的，而那个文件只有一份、每台机器
+    // 都往里写 —— 手机上永远只看得到最后一台采集完的机器的活。
+    // 现在一台一个文件，手机读的时候合并。这里报两件事：
+    // 看到了几台，以及各自多久没更新（太旧的板子里那些 running 多半早死了）。
+    print(Ansi.bold("手机任务板"))
+    let boards = TaskBoardStore.loadAll()
+    if boards.directoryStalled {
+        print(Ansi.red("  ⚠ taskboards/ 目录读不动（iCloud 没响应）"))
+        print(Ansi.dim("    这**不代表**没有任务板 —— 这一轮就是没看到，两回事。"))
+    } else if boards.directoryMissing {
+        print(Ansi.dim("  还没有 taskboards/ 目录 —— 跑一次 llmq collect 就会建出来"))
+        print(Ansi.dim("  （老版本手机读 dashboard.json 里的 tasks，那条路一直在，没断）"))
+    } else if boards.boards.isEmpty && boards.unreadable.isEmpty {
+        print(Ansi.dim("  目录是空的：一台机器都还没发过任务板"))
+    } else {
+        for b in boards.boards {
+            let age = Date().timeIntervalSince(b.generatedAt)
+            let stale = age > TaskBoardStore.staleAfter
+            let when = Format.relative(b.generatedAt)
+            let count = "\(b.tasks.count) 个任务" + (b.tasksTruncated ? "（已截断）" : "")
+            print("  " + pad(b.machineName.isEmpty ? b.machineID : b.machineName, 24)
+                + pad(count, 18)
+                + (stale ? Ansi.yellow(when + "  ← 超过 30 分钟没更新") : Ansi.green(when)))
+        }
+        if boards.boards.contains(where: {
+            Date().timeIntervalSince($0.generatedAt) > TaskBoardStore.staleAfter
+        }) {
+            print(Ansi.dim("  标黄的那些：采集是 15 分钟一轮，两轮没到了。"
+                + "手机会把它们的任务显示成「那台机器 N 分钟前的状态」，不混进「正在干」。"))
+        }
+    }
+    if !boards.unreadable.isEmpty {
+        print(Ansi.yellow("  ⚠ \(boards.unreadable.count) 份任务板读不出来："
+            + boards.unreadable.prefix(3).joined(separator: " ")))
+        print(Ansi.dim("    读不动 ≠ 那台机器没有任务。清理不会碰它们（只删确定是旧的）。"))
+    }
+    print("")
+
     print(Ansi.bold("调度范围"))
     print("  自动调度" + Ansi.green("只在本机") + "选平台，"
         + Ansi.dim("从不把任务派到别的机器"))
