@@ -196,7 +196,8 @@ public enum MirrorService {
                 localDir: local.appendingPathComponent(spec.dir, isDirectory: true),
                 cloudDir: cloud.appendingPathComponent(spec.dir, isDirectory: true),
                 cloudProcessed: cloud.appendingPathComponent(spec.processed, isDirectory: true),
-                label: spec.dir, now: now, list: list, move: move, stats: &stats)
+                label: spec.dir, now: now,
+                selfMachineID: selfMachineID, list: list, move: move, stats: &stats)
         }
 
         writeHeartbeat(local: local, stats: stats, now: now)
@@ -383,6 +384,7 @@ public enum MirrorService {
     /// 判断送达，样子必须和原来 CLI 直接操作 iCloud 时一致。
     static func claimPull(
         localDir: URL, cloudDir: URL, cloudProcessed: URL, label: String, now: Date,
+        selfMachineID: String,
         list: (URL) -> ICloudSafe.Probe<[URL]>,
         move: (URL, URL) -> Bool, stats: inout MirrorStats
     ) {
@@ -407,6 +409,21 @@ public enum MirrorService {
             // ① 内容先到手。读不到（没下载完/卡住）就不抢 —— 抢到一个空壳，
             //    文件从手机上消失了、内容却永远没进任何机器，等于弄丢任务。
             guard let data = ICloudSafe.read(url), !data.isEmpty else { continue }
+
+            // ①½ 认目标：写给别的机器的意图**不抢**。
+            //
+            // 抢占是先移者赢、移走即消费 —— 计划清单按机器存，
+            // 「放行 mac-mini 的计划」被 MacBook 抢走就永久丢了：
+            // MacBook 的清单里没有那个 id，回执写「已放行过或被删了」，
+            // 而真相是抢错了人。目标机器还在的话它永远等不到这条。
+            //
+            // 只认 targetMachineID 这一个键、解不出 JSON 就当无目标（照抢）——
+            // 无目标是既有语义（留白意图谁处理都行），不能把它们卡死。
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let target = obj["targetMachineID"] as? String,
+               !target.isEmpty, target != selfMachineID {
+                continue
+            }
             let tmp = localDir.appendingPathComponent(".claim-\(UUID().uuidString).tmp")
             guard ICloudSafe.write(data, to: tmp) else { continue }
 

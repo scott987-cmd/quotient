@@ -30,7 +30,9 @@ public struct ConfigIntent: Codable, Sendable {
     /// 不用 id（每条都不同），也不能只用 platform ——
     /// 以后加别的 kind 时，「改留白」和「改难度上限」是两件独立的事，
     /// 合并成一个键会让其中一条被无声吃掉。
-    var target: String { "\(kind)|\(platform)" }
+    /// plan-go 必须带 planID：两条放行**不同**计划的意图不是同一个目标，
+    /// 少了这一段，同一轮里先发的那条会被「被更晚的取代」无声吃掉。
+    var target: String { "\(kind)|\(platform)|\(planID ?? "")" }
     /// 谁提的。目前只有 "phone"，留着是为了以后 Mac 之间也能用这条通路。
     public var source: String
 
@@ -45,6 +47,17 @@ public struct ConfigIntent: Codable, Sendable {
     /// `Platform` 的 rawValue，和看板里那个一致。
     public var platform: String
 
+    /// kind == "plan-go" 时要放行的计划任务 id。
+    public var planID: String?
+
+    /// 这条意图只归哪台机器处理。
+    ///
+    /// **计划清单是按机器存的** —— 「放行 mac-mini 的计划第 1 条」
+    /// 被 MacBook 抢走就永久丢了（抢占是先移者赢，移走即消费）。
+    /// 镜像的抢占环节会检查这个字段：不是发给自己的**不抢**。
+    /// 空 = 谁都能处理（留白这类改共享配置的意图就是这样）。
+    public var targetMachineID: String?
+
     /// kind == "reserve" 时的留白比例。
     ///
     /// 可选是为了把「没填」和「填了个越界的」分开报 —— 合并成一个
@@ -53,13 +66,16 @@ public struct ConfigIntent: Codable, Sendable {
 
     public init(id: String = UUID().uuidString, createdAt: Date = Date(),
                 source: String = "phone", kind: String = ConfigIntent.kindReserve,
-                platform: String, fraction: Double? = nil) {
+                platform: String, fraction: Double? = nil,
+                planID: String? = nil, targetMachineID: String? = nil) {
         self.id = id
         self.createdAt = createdAt
         self.source = source
         self.kind = kind
         self.platform = platform
         self.fraction = fraction
+        self.planID = planID
+        self.targetMachineID = targetMachineID
     }
 
     /// 跨版本、跨设备传的结构一律手写 —— 合成解码器缺一个键就整条丢，
@@ -78,9 +94,12 @@ public struct ConfigIntent: Codable, Sendable {
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? ""
         platform = try c.decodeIfPresent(String.self, forKey: .platform) ?? ""
         fraction = try c.decodeIfPresent(Double.self, forKey: .fraction)
+        planID = try c.decodeIfPresent(String.self, forKey: .planID)
+        targetMachineID = try c.decodeIfPresent(String.self, forKey: .targetMachineID)
     }
 
     public static let kindReserve = "reserve"
+    public static let kindPlanGo = "plan-go"
 
     /// 留白的合法区间。
     ///
@@ -207,6 +226,51 @@ public enum ConfigIntentIngest {
         return out
     }
 
+    /// 手机放行一条计划任务。
+    ///
+    /// 走 `TaskIntake.enqueue` —— 和 CLI 的 `work plan go` 同一个入口，
+    /// 查重、分诊、拆图一个不少。**成功才从计划清单移除**：
+    /// 查重拦下时条目留在原地，和 CLI 行为一致。
+    static func applyPlanGo(_ intent: ConfigIntent) -> Outcome {
+        // 归属再核一遍。镜像抢占已经按 target 过滤了，但这层是最后防线：
+        // 万一抢占那层出 bug，错的机器执行了别人的放行，
+        // 计划 id 在本机查不到，会得到一条「已放行或删除」的假回执 ——
+        // 而真相是「压根不归我」。两种拒绝要分开说。
+        if let target = intent.targetMachineID, target != Paths.machineID() {
+            return .rejected("这条放行是给 \(String(target.prefix(8))) 的，本机是 "
+                + "\(String(Paths.machineID().prefix(8))) —— 抢占不该把它给我")
+        }
+        guard let pid = intent.planID, !pid.isEmpty else {
+            return .rejected("plan-go 意图没带 planID")
+        }
+        let list = PlannedStore.all()
+        guard let idx = list.firstIndex(where: { $0.id == pid }) else {
+            return .rejected("计划清单里没有 \(pid) —— 可能已经放行过或被删了")
+        }
+        let item = list[idx]
+        guard let repo = RepoRegistry.resolve(item.repoAlias) else {
+            return .retry("别名 \(item.repoAlias ?? "（默认）") 眼下解析不了，下轮再试")
+        }
+        do {
+            switch try TaskIntake.enqueue(prompt: item.prompt, repo: repo,
+                                          origin: "phone-plan-go") {
+            case .single(let t):
+                _ = try? PlannedStore.remove(at: idx + 1)
+                return .applied("已放行为任务 \(t.id)")
+            case .graph(let nodes):
+                _ = try? PlannedStore.remove(at: idx + 1)
+                return .applied("已放行并拆成 \(nodes.count) 步（图 "
+                    + (nodes.first?.graphID ?? "?") + "）")
+            case .duplicate(let dups):
+                let who = dups.prefix(2).map(\.taskID).joined(separator: "、")
+                return .rejected("查重拦下：和 \(who) 疑似同一件事。"
+                    + "计划条目保留 —— 确认不是重复就在 Mac 上 llmq work plan go --force")
+            }
+        } catch {
+            return .retry("入队没写成：\(error.localizedDescription)")
+        }
+    }
+
     enum Outcome {
         case applied(String)
         /// 这条永远不会被接受，别再重试。
@@ -216,6 +280,9 @@ public enum ConfigIntentIngest {
     }
 
     static func apply(_ intent: ConfigIntent) -> Outcome {
+        if intent.kind == ConfigIntent.kindPlanGo {
+            return applyPlanGo(intent)
+        }
         guard intent.kind == ConfigIntent.kindReserve else {
             return .rejected("不认识的意图类型「\(intent.kind)」"
                 + "——这台 Mac 的版本可能比手机旧")

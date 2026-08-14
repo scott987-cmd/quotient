@@ -33,13 +33,38 @@ public struct MachineTaskBoard: Codable, Sendable {
     /// 被 `TaskBoard.maxTasks` 截掉过。静默截断会让手机上的条数变成假话。
     public var tasksTruncated: Bool
 
+    /// 这台机器的**计划清单**（人排的、还没放行的）。
+    ///
+    /// 发出去手机才能看到「有哪些可以安排」，也才有东西可以点「放行」。
+    /// 放行走 config-intents 通道回来（kind=plan-go，带 targetMachineID）。
+    public var planned: [PlannedBrief]
+
+    public struct PlannedBrief: Codable, Sendable, Identifiable {
+        public var id: String
+        public var title: String
+        public var repoAlias: String?
+        public init(id: String, title: String, repoAlias: String?) {
+            self.id = id
+            self.title = title
+            self.repoAlias = repoAlias
+        }
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+            title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+            repoAlias = try c.decodeIfPresent(String.self, forKey: .repoAlias)
+        }
+    }
+
     public init(machineID: String, machineName: String, generatedAt: Date,
-                tasks: [TaskBrief], tasksTruncated: Bool = false) {
+                tasks: [TaskBrief], tasksTruncated: Bool = false,
+                planned: [PlannedBrief] = []) {
         self.machineID = machineID
         self.machineName = machineName
         self.generatedAt = generatedAt
         self.tasks = tasks
         self.tasksTruncated = tasksTruncated
+        self.planned = planned
     }
 
     /// 手写解码，**每一个字段都走 `decodeIfPresent`**。
@@ -61,6 +86,7 @@ public struct MachineTaskBoard: Codable, Sendable {
         generatedAt = try c.decodeIfPresent(Date.self, forKey: .generatedAt) ?? .distantPast
         tasks = try c.decodeIfPresent([TaskBrief].self, forKey: .tasks) ?? []
         tasksTruncated = try c.decodeIfPresent(Bool.self, forKey: .tasksTruncated) ?? false
+        planned = try c.decodeIfPresent([PlannedBrief].self, forKey: .planned) ?? []
     }
 }
 
@@ -112,10 +138,17 @@ public enum TaskBoardStore {
         machineID: String = Paths.machineID(),
         machineName: String = Paths.machineName()
     ) -> Bool {
+        let planned = PlannedStore.all().map {
+            MachineTaskBoard.PlannedBrief(
+                id: $0.id,
+                title: TaskBrief.clampTitle($0.prompt),
+                repoAlias: $0.repoAlias)
+        }
         let board = MachineTaskBoard(
             machineID: machineID, machineName: machineName,
             generatedAt: dash.generatedAt,
-            tasks: dash.tasks, tasksTruncated: dash.tasksTruncated)
+            tasks: dash.tasks, tasksTruncated: dash.tasksTruncated,
+            planned: planned)
         return publish(board)
     }
 
