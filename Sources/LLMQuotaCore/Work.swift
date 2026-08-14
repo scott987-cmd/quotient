@@ -907,6 +907,8 @@ public struct MiniMaxMediaRunner: AgentRunner {
               parts=(${=spec})              # zsh 内建分词
               path="${parts[1]-}"; ratio="${parts[2]-}"
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
+              # 幂等续跑：上一轮已经生成的不重烧额度（重试保留半成品分支）。
+              [ -s "$path" ] && { echo "SKIP $path 已存在"; ok=$((ok+1)); continue }
               /bin/mkdir -p "${path:h}"     # :h = 目录部分，zsh 内建
               # 比例参数必须走数组展开。zsh 的 ${ratio:+--aspect-ratio "$ratio"}
               # 不做词切分，整段并成**一个**参数 —— mmx 收到
@@ -928,6 +930,8 @@ public struct MiniMaxMediaRunner: AgentRunner {
               parts=(${=spec})
               path="${parts[1]-}"
               [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
+              # 幂等续跑：上一轮已经生成的不重烧额度（重试保留半成品分支）。
+              [ -s "$path" ] && { echo "SKIP $path 已存在"; ok=$((ok+1)); continue }
               /bin/mkdir -p "${path:h}"
               run_mmx music generate --prompt "$desc" --instrumental \
                 --out "$path" --timeout 300 </dev/null >"$tmpout" 2>"$tmperr"
