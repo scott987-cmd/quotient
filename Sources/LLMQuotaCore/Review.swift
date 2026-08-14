@@ -312,8 +312,47 @@ public enum Review {
         // 合并是串行的，写在合并之后天然不打架。
         if case .success = r {
             ProgressLog.recordLanding(repo: repo, branch: branch)
+            // 落地即排审查：给审查员（opencode/火山）生成一条【审查】任务
+            // 复查这次合并 —— 自动落地放宽了「谁按回车」，
+            // 这道事后复查把省下的人审那双眼睛补回来。
+            enqueuePostLandReview(repo: repo, branch: branch)
         }
         return r
+    }
+
+    /// 为一次已完成的合并生成复查任务。
+    ///
+    /// 这同时回答了「审查员几乎没有低危的活」：每一次落地都产一条
+    /// safe 档审查任务，供给和产出自然挂钩。两个不生成的口子：
+    /// - 审查产出自己落地时（否则审查→落地→审查无限递归）；
+    /// - 媒体产出（图和音乐没有 diff 可读，进包前的人工查签名照旧）。
+    static func enqueuePostLandReview(repo: String, branch: String) {
+        let taskID = String(branch.split(separator: "/").last ?? "")
+        if let t = TaskStore.all().first(where: { $0.id == taskID }) {
+            if t.prompt.hasPrefix("【审查】") || t.prompt.hasPrefix("【媒体】") { return }
+        }
+        let sha = GitWorkspace.git(["rev-parse", "--short", "main"], in: repo)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sha.isEmpty else { return }
+        var t = WorkTask(
+            id: String(UUID().uuidString.prefix(8)).lowercased(),
+            prompt: """
+            【审查】复查刚合入 main 的合并 \(sha)（来源分支 \(branch)）。
+            步骤：用 `git show \(sha)` 读完整 diff（首行提交带 -m 说明），\
+            检查逻辑错误、安全隐患、与现有代码的矛盾、改了定义漏了调用点。
+            产出：把结论写进 reviews/REVIEW-\(sha).md —— 每条发现 = \
+            文件:行号 + 问题一句话 + 严重度(高/中/低)；没有发现问题也要写\
+            「审查通过」加一段为什么可信的摘要。
+            边界：只新增这一个文件，不改任何现有代码。
+            """,
+            repo: repo)
+        t.profile = TaskProfile(
+            tier: .trivial, risk: .safe, estimatedMinutes: 8,
+            isSelfContained: true,
+            rationale: "落地后自动生成的复查：只读 diff、只写一份报告")
+        t.preferredPlatform = .volcark
+        t.note = "落地自动排的复查 · \(branch)"
+        try? TaskStore.append(t)
     }
 
     static func mergeUnverified(repo: String, branch: String, base: String = "main",

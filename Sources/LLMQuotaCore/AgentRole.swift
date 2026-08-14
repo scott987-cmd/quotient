@@ -249,10 +249,12 @@ public enum AgentRoles {
                           + "没有文件访问也不认识仓库。编码任务它接不了，"
                           + "现在只用它跑分诊。媒体那块产能这个调度器还够不着。"),
             AgentRole(platform: .deepseek, title: "备用", maxRisk: .safe, prefers: []),
-            AgentRole(platform: .volcark, title: "新人", maxRisk: .safe,
+            AgentRole(platform: .volcark, title: "审查员", maxRisk: .safe,
                       prefers: [.trivial],
                       note: "opencode 跑的，经本地 LiteLLM 网关转到火山方舟。"
-                          + "刚接进来还没跑过任务，先只给低危的活攒成绩。"),
+                          + "岗位职责：每份合进 main 的 agent 产出都会自动生成"
+                          + "一条【审查】任务，由它读 diff 写报告 —— 自动落地"
+                          + "省下的人审，靠这道事后复查补回来。"),
             AgentRole(platform: .gemini, title: "备用", maxRisk: .safe, prefers: []),
         ]
     }

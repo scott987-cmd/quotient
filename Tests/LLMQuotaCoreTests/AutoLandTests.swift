@@ -155,3 +155,31 @@ final class AutoLandTests: XCTestCase {
         XCTAssertFalse(Review.autoLandEnabled())
     }
 }
+
+/// 落地即排审查：每次合并自动生成【审查】任务；审查/媒体产出落地不再生成。
+extension AutoLandTests {
+    func testLandingEnqueuesReviewTask() {
+        makeBranch("t20")
+        let out = Review.autoLand(repo: repo, tasks: [doneTask("t20")])
+        XCTAssertTrue(out.first?.landed == true, "\(out)")
+        let reviews = TaskStore.all().filter { $0.prompt.hasPrefix("【审查】") }
+        XCTAssertEqual(reviews.count, 1, "落地一单必须排一条审查")
+        XCTAssertEqual(reviews.first?.profile?.risk, .safe, "审查是 safe 档的活")
+        XCTAssertEqual(reviews.first?.preferredPlatform, .volcark,
+                       "审查点名给审查员（opencode/火山）")
+    }
+
+    /// 审查产出自己落地时不再生成审查 —— 否则审查→落地→审查无限循环。
+    func testReviewLandingDoesNotRecurse() {
+        makeBranch("t21", file: "reviews/REVIEW-abc.md")
+        var t = doneTask("t21")
+        t.prompt = "【审查】复查合并 abc……"
+        try? TaskStore.append(t)
+        let out = Review.autoLand(repo: repo, tasks: [t])
+        XCTAssertTrue(out.first?.landed == true, "\(out)")
+        let reviews = TaskStore.all().filter {
+            $0.prompt.hasPrefix("【审查】") && $0.id != "t21"
+        }
+        XCTAssertTrue(reviews.isEmpty, "审查落地不能再生审查：\(reviews.map(\.id))")
+    }
+}

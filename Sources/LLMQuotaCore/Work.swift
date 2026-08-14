@@ -731,7 +731,12 @@ public struct ClaudeRunner: AgentRunner {
             // 换个目录就等于全新未登录状态。
             // 而且这一步本来就是多余的：调度器的用量靠 worktree 路径就能认出来
             //（见 LaneRouter），不需要靠配置目录来隔离。
-            [:]
+            //
+            // 窗口豁免：旧版 Claude CLI 碰到不认识的新模型会直接拒跑
+            //（「map it in modelOverrides or update Claude Code」），
+            // MacBook 上的 EAP 审查第一棒就是这么死的。这个官方开关恢复
+            // 「问 API」的老行为，对认识模型的新版 CLI 无副作用。
+            ["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1"]
         )
     }
 }
