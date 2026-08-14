@@ -410,6 +410,50 @@ func cmdLearn(_ args: [String]) throws {
     }
 }
 
+/// 「浪费了多少」在没有上限时唯一能站住的口径：完整过去的额度窗口里，
+/// 一次都没用的有多少。取数和聚合在 WasteMeter.assessAll（纯函数），
+/// 这里只负责打印。
+func cmdWaste() throws {
+    let snapshots = SnapshotStore.loadAll()
+    guard !snapshots.isEmpty else {
+        print(Ansi.yellow("还没有任何快照，先跑一次 llmq collect。"))
+        return
+    }
+
+    let results = WasteMeter.assessAll(snapshots: snapshots, config: PlansStore.load())
+    guard !results.isEmpty else {
+        // 空状态必须自证：有快照但一个平台都没探测到，要明说，
+        // 不能一声不吭地输出一张空表。
+        print(Ansi.yellow("快照里没有探测到任何平台的用量数据。"))
+        print(Ansi.dim("先跑 llmq doctor 看本机认出了哪些数据源，再跑 llmq collect。"))
+        return
+    }
+
+    print(Ansi.bold("空窗统计")
+        + Ansi.dim(" · 完整过去的额度窗口里一次都没用的有多少（不需要知道上限）"))
+
+    for pw in results {
+        print("\n" + Ansi.bold(pw.platform.displayName))
+        switch pw.verdict {
+        case .measured(let reports):
+            for r in reports { print("  " + WasteMeter.sentence(r)) }
+        case .noBuckets:
+            // **绝不能把这种情况输出成「100% 空窗」。**
+            // 零个桶说明本地这条路子测不了它（比如不产生本地用量日志），
+            // 不代表它没在被用。
+            print("  " + Ansi.yellow("算不出来：所有电脑加起来都没有这个平台的一个用量桶。"))
+            print(Ansi.dim("  没有本地日志 ≠ 没用过 —— 有的平台不产生本地用量记录，"))
+            print(Ansi.dim("  也可能是采集还没覆盖到。这里不能报「窗口全空」。"))
+        case .noWindowConfigured:
+            print("  " + Ansi.yellow("算不出来：plans.json 里没有这个平台的任何窗口长度。"))
+            print(Ansi.dim("  用 llmq plan edit 在 limits 里补上 windowMinutes。"))
+        case .noRetentionStart:
+            print("  " + Ansi.yellow("算不出来：快照里拿不到数据保留起点（retentionStart）。"))
+            print(Ansi.dim("  重新跑一次 llmq collect 生成新快照。"))
+        }
+    }
+}
+
 // MARK: - work
 
 func cmdWork(_ args: [String]) throws {
@@ -3814,6 +3858,7 @@ func usage() {
       llmq doctor              探测本机有哪些数据源、哪些采集器已验证
       llmq plan [edit]         查看/编辑各平台的套餐额度配置
       llmq learn [--apply]     从真实用量反解各平台的额度上限
+      llmq waste               各平台的空窗统计（没有上限也算得出来的浪费口径）
       llmq security            暴露面自查（凭据权限、对外监听）
       llmq install-agent [秒]  安装 launchd 定时采集（默认 900 秒）
       llmq work <子命令>       任务队列与执行
@@ -3852,6 +3897,8 @@ do {
         try cmdDashboard(rest)
     case "learn":
         try cmdLearn(rest)
+    case "waste":
+        try cmdWaste()
     case "security":
         try cmdSecurity()
     case "machines":

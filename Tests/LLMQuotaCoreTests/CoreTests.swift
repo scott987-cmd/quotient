@@ -4063,6 +4063,36 @@ final class WasteMeterTests: XCTestCase {
                     model: "m", requests: requests)
     }
 
+    /// 造一台机器的快照。桶和保留起点都从参数走，
+    /// 方便构造多机、不同保留起点交错的场景。
+    private func snapshot(machine: String, retentionStart: Date,
+                          platform: Platform, buckets: [UsageBucket]) -> MachineSnapshot {
+        MachineSnapshot(
+            machineID: machine, machineName: machine,
+            generatedAt: Date(timeIntervalSince1970: 100 * hour),
+            retentionStart: retentionStart,
+            platforms: [PlatformSnapshot(platform: platform, detected: true, buckets: buckets)]
+        )
+    }
+
+    /// 造只含一个平台、窗口长度可指定的配置。
+    private func config(_ platform: Platform, windows: [Int]) -> PlansConfig {
+        PlansConfig(plans: [PlatformPlan(
+            platform: platform, planName: "测试",
+            limits: windows.map {
+                QuotaLimit(id: "\($0)", label: "\($0) 分钟", windowMinutes: $0,
+                           kind: .session, metric: .requests)
+            }
+        )])
+    }
+
+    /// 取 assessAll 对某个平台的结论。
+    private func verdict(_ platform: Platform, snapshots: [MachineSnapshot],
+                         config: PlansConfig, now: Date) -> WasteMeter.Verdict? {
+        WasteMeter.assessAll(snapshots: snapshots, config: config, now: now)
+            .first { $0.platform == platform }?.verdict
+    }
+
     /// **一个桶都没有 ≠ 一次都没用 —— 这条是拿真实数据撞出来的。**
     ///
     /// MiniMax 一开始被报成「153 个窗口全空、连续空 153 个」，
@@ -4195,6 +4225,121 @@ final class WasteMeterTests: XCTestCase {
         XCTAssertTrue(s.contains("7 个一次都没用"))
         XCTAssertTrue(s.contains("连续空了 3 个"))
         XCTAssertFalse(s.contains("token"), "上限未知时不许把浪费说成一个 token 数")
+    }
+
+    /// **【这条是核心】零个桶是「算不出来」，不是「100% 空窗」。**
+    ///
+    /// 探测到了平台但所有机器加起来一个桶都没有（比如 MiniMax 不产生
+    /// 本地用量日志），必须落在 noBuckets 那一档；而「有数据、窗口全空」
+    /// 是 measured 且 idle == total。两个断言卡的是两种不同的情况，
+    /// 混进同一条路时不可能同时通过 —— 那样测不了的平台就会被报成
+    /// 「完全没用」，而那会让人去退订一个正在花钱的服务。
+    func testAssessNoBucketsIsUnmeasurableNotFullyIdle() {
+        let now = Date(timeIntervalSince1970: 25 * hour)
+        let rs = Date(timeIntervalSince1970: 0)
+        let cfg = config(.minimax, windows: [300])
+
+        // 探测到了，但一个桶都没有。
+        let noData = verdict(.minimax,
+                             snapshots: [snapshot(machine: "a", retentionStart: rs,
+                                                  platform: .minimax, buckets: [])],
+                             config: cfg, now: now)
+        XCTAssertEqual(noData, .noBuckets, "零个桶必须单独落在「测不出来」那一档")
+
+        // 有数据但窗口全空：桶在、但一次调用都没有 —— 这才是「真的闲着」。
+        let fullyIdle = verdict(.minimax,
+                                snapshots: [snapshot(
+                                    machine: "a", retentionStart: rs, platform: .minimax,
+                                    buckets: [bucket(at: Date(timeIntervalSince1970: hour),
+                                                     requests: 0)])],
+                                config: cfg, now: now)
+        guard let v = fullyIdle, case .measured(let reports) = v, let r = reports.first else {
+            return XCTFail("有桶就该算得出来，实际是 \(String(describing: fullyIdle))")
+        }
+        XCTAssertEqual(r.total, 5)
+        XCTAssertEqual(r.idle, r.total, "有数据、全空窗，才是 100% 空窗")
+
+        // 两种情况不能被同一个结果覆盖。
+        XCTAssertNotEqual(noData, fullyIdle)
+    }
+
+    /// 多台机器对同一平台各有桶时，合并结果要包含全部机器 ——
+    /// 丢任何一台，它那个用过的窗口就会被误报成空窗。
+    func testAssessMergesBucketsAcrossMachines() {
+        let now = Date(timeIntervalSince1970: 25 * hour)
+        let rs = Date(timeIntervalSince1970: 0)
+        let v = verdict(.claude, snapshots: [
+            snapshot(machine: "a", retentionStart: rs, platform: .claude,
+                     buckets: [bucket(at: Date(timeIntervalSince1970: 1 * hour))]),
+            snapshot(machine: "b", retentionStart: rs, platform: .claude,
+                     buckets: [bucket(at: Date(timeIntervalSince1970: 16 * hour))]),
+        ], config: config(.claude, windows: [300]), now: now)
+        guard let v, case .measured(let reports) = v, let r = reports.first else {
+            return XCTFail("两台都有桶，该有 measured 结论")
+        }
+        XCTAssertEqual(r.total, 5)
+        XCTAssertEqual(r.idle, 3, "两台机器各用一个窗，合并后只剩 3 个空窗；丢一台会变 4")
+    }
+
+    /// 两台机器报了同一个窗口的桶，也不许重复计入。
+    func testAssessDoesNotDoubleCountOverlappingBuckets() {
+        let now = Date(timeIntervalSince1970: 25 * hour)
+        let rs = Date(timeIntervalSince1970: 0)
+        let same = bucket(at: Date(timeIntervalSince1970: 1 * hour))
+        let v = verdict(.claude, snapshots: [
+            snapshot(machine: "a", retentionStart: rs, platform: .claude, buckets: [same]),
+            snapshot(machine: "b", retentionStart: rs, platform: .claude, buckets: [same]),
+        ], config: config(.claude, windows: [300]), now: now)
+        guard let v, case .measured(let reports) = v, let r = reports.first else {
+            return XCTFail("有桶就该有 measured 结论")
+        }
+        XCTAssertEqual(r.total, 5)
+        XCTAssertEqual(r.idle, 4, "同一个窗口被两台机器报，也只算用过一次")
+    }
+
+    /// 起点取所有快照 retentionStart 的**最小值**，窗口长度只来自
+    /// plan.limits 的 windowMinutes —— 取了大的那个起点，会把早期的真实
+    /// 用量漏在区间外，空窗虚高。
+    func testAssessUsesEarliestRetentionStartAndPlanWindows() {
+        let now = Date(timeIntervalSince1970: 25 * hour)
+        // 机器 a 只保留了最近 10 小时；机器 b 有从 0 开始的完整历史。
+        let v = verdict(.kimi, snapshots: [
+            snapshot(machine: "a", retentionStart: Date(timeIntervalSince1970: 10 * hour),
+                     platform: .kimi,
+                     buckets: [bucket(at: Date(timeIntervalSince1970: 16 * hour))]),
+            snapshot(machine: "b", retentionStart: Date(timeIntervalSince1970: 0),
+                     platform: .kimi,
+                     buckets: [bucket(at: Date(timeIntervalSince1970: 1 * hour))]),
+        ], config: config(.kimi, windows: [300, 10080]), now: now)
+        guard let v, case .measured(let reports) = v else {
+            return XCTFail("有桶有配置，该有 measured 结论")
+        }
+        // 配了两个窗口就出两条，不多不少，按分钟数升序。
+        XCTAssertEqual(reports.map(\.windowMinutes), [300, 10080])
+        let r = reports[0]
+        // 起点用最早的 0 → 5 个完整窗；若误用 a 的 10h 起点，只会有 3 个。
+        XCTAssertEqual(r.total, 5, "起点必须是最早的 retentionStart")
+        XCTAssertEqual(r.idle, 3, "两台各用一个窗，早期那次用量不能被漏掉")
+    }
+
+    /// plan 里查不到窗口长度时，走「缺配置」那一档 ——
+    /// 不许悄悄拿个默认窗口算出一个看似真的数。
+    func testAssessMissingWindowConfigIsExplicit() {
+        let now = Date(timeIntervalSince1970: 25 * hour)
+        let rs = Date(timeIntervalSince1970: 0)
+        let snaps = [snapshot(machine: "a", retentionStart: rs, platform: .qwen,
+                              buckets: [bucket(at: Date(timeIntervalSince1970: 1 * hour))])]
+
+        // plan 存在但 limits 是空的。
+        let emptyLimits = PlansConfig(plans: [PlatformPlan(
+            platform: .qwen, planName: "测试", limits: [])])
+        XCTAssertEqual(verdict(.qwen, snapshots: snaps, config: emptyLimits, now: now),
+                       .noWindowConfigured)
+
+        // plan 整个不存在。
+        XCTAssertEqual(verdict(.qwen, snapshots: snaps, config: PlansConfig(plans: []),
+                               now: now),
+                       .noWindowConfigured)
     }
 }
 
