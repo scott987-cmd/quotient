@@ -124,3 +124,55 @@ extension CooldownClassifyTests {
         }
     }
 }
+
+extension CooldownClassifyTests {
+    /// 额度用尽不做指数退避 —— 它有确定的恢复时刻。
+    func testQuotaExhaustionDoesNotBackOffForDays() {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+
+        var last: Cooldown?
+        // 连撞四次 —— 实际发生过的情形（strikes 堆到 4）
+        for _ in 0..<4 {
+            last = CooldownLedger.record(platform: .claude, cause: .quotaExhausted,
+                                         detail: "429 已达到 5 小时的使用上限")
+        }
+        let hours = (last?.remaining ?? 0) / 3600
+        XCTAssertLessThanOrEqual(hours, 5.1,
+            "Claude 是 5 小时窗，冻 \(Int(hours)) 小时是白冻——而它还是本机的指挥")
+    }
+
+    /// 服务端给了确切重置时间就采信，别用兜底值盖掉。
+    func testKnownResetTimeWins() {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+        let reset = Date().addingTimeInterval(7 * 86400)
+        let cd = CooldownLedger.record(platform: .qwen, cause: .quotaExhausted,
+                                       detail: "1-week quota exhausted",
+                                       knownResetAt: reset)
+        XCTAssertEqual(cd.until.timeIntervalSince1970, reset.timeIntervalSince1970,
+                       accuracy: 1, "周窗真的要等一周，别用 5 小时兜底盖掉")
+    }
+
+    /// 日志行是整个 JSON，要抠出服务端那句话，不是取头 200 字符。
+    func testExcerptFindsTheActualMessage() {
+        let line = #"{"parentUuid":"a0d60529-f794-4368-af2c-eeb212c4123a","sessionId":"x","type":"assistant","message":{"content":"API Error: Request rejected (429) · [1308][已达到 5 小时的使用上限。您的限额将在 2026-08-15 12:00:47 重置。]"}}"#
+        let got = QuotaSignal.excerpt(line)
+        XCTAssertTrue(got.contains("已达到 5 小时的使用上限"),
+                      "抠出来的是：\(got)")
+        XCTAssertFalse(got.hasPrefix("{\"parentUuid\""),
+                       "别再把 UUID 头部当成错误消息存进台账")
+    }
+}

@@ -135,6 +135,19 @@ public enum CooldownLedger {
             until = now.addingTimeInterval(30 * 86400)
         } else if let knownResetAt, knownResetAt > now {
             until = knownResetAt
+        } else if cause == .quotaExhausted {
+            // **额度用尽不做指数退避。**
+            //
+            // 退避的前提是「重试大概率还是失败，而且重试本身有代价」。
+            // 额度用尽不满足这个前提：它有确定的恢复时刻，最坏也就是
+            // 窗口长度。实测代价 —— strikes 堆到 4 之后 Claude 被冻
+            // 1 天 16 小时，而它是 5 小时窗，那 35 小时是白冻的，
+            // 期间所有高危任务（Claude 是本机指挥兼架构师）全线停摆。
+            //
+            // 没拿到确切重置时间就按 5 小时保守估：猜早了下次撞 429 再记
+            // 一条（而且现在撞顶还会被 QuotaCeiling 采成上限样本，不算白撞），
+            // 猜晚了才是纯浪费。宁可多撞几次，不要白冻一整天。
+            until = now.addingTimeInterval(5 * 3600)
         } else {
             until = now.addingTimeInterval(backoff[min(strikes - 1, backoff.count - 1)])
         }

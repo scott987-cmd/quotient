@@ -43,6 +43,31 @@ public enum QuotaSignal {
         return quotaWords.contains { l.contains($0.lowercased()) }
     }
 
+    /// 从整行日志里抠出**服务端那句话**。
+    ///
+    /// 会话日志一行就是一整个 JSON 对象，直接取前 200 字符会得到
+    /// `{"parentUuid":"a0d60529-..."` —— 全是无关的头部字段。实测后果：
+    /// 冷却台账里的 detail 全是 UUID，人看不出为什么被冻，
+    /// 程序也认不出是哪个窗口满了（撞顶采样因此一条都记不下来）。
+    ///
+    /// 做法是以额度关键词为锚，向两边各取一段。
+    static func excerpt(_ line: String, span: Int = 90) -> String {
+        let anchors = ["使用上限", "限额", "额度", "quota", "usage limit",
+                       "rate limit", "429", "exhaust"]
+        for a in anchors {
+            guard let r = line.range(of: a, options: .caseInsensitive) else { continue }
+            let lo = line.index(r.lowerBound,
+                                offsetBy: -span,
+                                limitedBy: line.startIndex) ?? line.startIndex
+            let hi = line.index(r.upperBound,
+                                offsetBy: span,
+                                limitedBy: line.endIndex) ?? line.endIndex
+            return String(line[lo..<hi])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return String(line.prefix(200))
+    }
+
     /// 从消息里抠重置时间。中文「将在 YYYY-MM-DD HH:MM:SS 重置」和
     /// 英文 ISO 两种都认 —— 前者是 GLM 的写法，后者是 Qwen 的。
     static func parseReset(_ line: String, now: Date = Date()) -> Date? {
@@ -114,7 +139,7 @@ public enum QuotaSignal {
                     let owner = dominantPlatform(in: lines) ?? platform
                     let hit = Hit(platform: owner, at: mod,
                                   resetsAt: parseReset(s, now: now),
-                                  message: String(s.prefix(200)))
+                                  message: excerpt(s))
                     if newest == nil || hit.at > newest!.at { newest = hit }
                     break
                 }
