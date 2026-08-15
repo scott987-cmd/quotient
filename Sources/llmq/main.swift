@@ -2303,24 +2303,32 @@ func cmdWorkLoop(_ args: [String]) throws {
             let dash = LLMQuota.dashboard()
             let opps = IdleFiller.opportunities(dashboard: dash)
             guard let opp = opps.first else { return }
-            guard let work = IdleFiller.findWork(for: opp) else {
+            guard let hit = IdleFiller.found(for: opp) else {
                 // 找不到真需求就老实闲着 —— 绝不为了填窗口编任务，
                 // 那只是把「窗口过期」的浪费换成「产出没人要」的浪费。
                 print(Ansi.dim("  空窗 " + opp.platform.displayName
                                + "（" + opp.reason + "）但没有现成的活可填"))
                 return
             }
-            let repo = RepoRegistry.all().first(where: { $0.isDefault })?.localPath
+            let fallback = RepoRegistry.all().first(where: { $0.isDefault })?.localPath
                 ?? RepoRegistry.all().first?.localPath
-            guard let repo else { return }
+            guard let repo = hit.repo ?? fallback else { return }
             print(Ansi.cyan("  空窗填活 ") + opp.platform.displayName
                   + Ansi.dim("  " + opp.reason))
+            // 会对外发布的活，任务描述里就把闸写死 —— 老板要求对外发布必须他点头。
+            let prompt = hit.publishes
+                ? hit.prompt + "\n\n**这条活的产出会对外可见。做完停下来交给老板确认，"
+                    + "不要自己发布/上架/投稿。**"
+                : hit.prompt
             if let outcome = try? TaskIntake.enqueue(
-                prompt: work, repo: NSString(string: repo).expandingTildeInPath,
+                prompt: prompt, repo: NSString(string: repo).expandingTildeInPath,
                 classify: true, split: false, force: false,
-                origin: "idle-filler", preferredPlatform: opp.platform),
+                origin: hit.projectID.map { "playbook:" + $0 } ?? "idle-filler",
+                preferredPlatform: opp.platform),
                case .single(let t) = outcome {
                 print(Ansi.dim("    已入队 " + t.id))
+                // **入队成功之后**才记取用 —— 提前记会让轮转跳过一条配方。
+                if let pid = hit.projectID { Playbook.recordRun(pid) }
             }
         }
 
@@ -4563,6 +4571,8 @@ do {
         try cmdWork(rest)
     case "plan":
         try cmdPlan(rest)
+    case "playbook":
+        try cmdPlaybook(rest)
     case "office":
         try cmdOffice(rest)
     case "release":
@@ -4583,4 +4593,89 @@ do {
 } catch {
     FileHandle.standardError.write(Data("错误：\(error)\n".utf8))
     exit(1)
+}
+
+
+// MARK: - 项目清单
+
+/// llmq playbook [list|show|approve|pause|resume|seed]
+///
+/// 清单里是**提前规划、批过一次方案、之后可反复自动执行**的项目。
+/// 空窗填活时先从这里取 —— 一个能卖钱的资产包，价值高于补一条注释。
+func cmdPlaybook(_ args: [String]) throws {
+    let sub = args.first ?? "list"
+    let rest = Array(args.dropFirst())
+
+    switch sub {
+    case "list":
+        let all = Playbook.all()
+        guard !all.isEmpty else {
+            print(Ansi.dim("清单是空的。`llmq playbook seed` 放入内置的起手项目。"))
+            return
+        }
+        for p in all {
+            let mark = p.paused ? Ansi.dim("暂停")
+                : (p.isApproved ? Ansi.green("已批准") : Ansi.yellow("等你过目"))
+            print(mark + "  " + Ansi.bold(p.name)
+                  + Ansi.dim("  \(p.id.prefix(8))  \(p.recipes.count) 条配方  跑过 \(p.runs) 次"))
+            if !p.isApproved {
+                let firstLine = p.brief.split(separator: "\n").first.map(String.init) ?? ""
+                print(Ansi.dim("    " + firstLine.prefix(72)))
+            }
+        }
+        let pending = all.filter { !$0.isApproved }
+        if !pending.isEmpty {
+            print()
+            print(Ansi.yellow("\(pending.count) 个项目在等你过目。")
+                  + Ansi.dim("看方案：llmq playbook show <id>；批：llmq playbook approve <id>"))
+        }
+
+    case "show":
+        guard let id = rest.first,
+              let p = Playbook.all().first(where: { $0.id.hasPrefix(id) }) else {
+            print(Ansi.red("没找到这个项目")); exit(1)
+        }
+        print(Ansi.bold(p.name) + Ansi.dim("  " + p.id))
+        print(p.isApproved ? Ansi.green("已批准") : Ansi.yellow("等你过目 —— 批了才会被自动取用"))
+        if let r = p.repo { print(Ansi.dim("仓库 " + r)) }
+        print()
+        print(p.brief)
+        print()
+        print(Ansi.bold("配方（会被反复执行的任务）"))
+        for r in p.recipes {
+            print("  · " + r.title + Ansi.dim("  [\(r.tier)]"
+                + (r.platform.map { " 点名 " + $0 } ?? "")
+                + (r.publishes ? Ansi.yellow("  产出要对外发布 → 会停下来等你确认") : "")))
+        }
+
+    case "approve":
+        guard let id = rest.first, let p = Playbook.approve(id) else {
+            print(Ansi.red("没找到这个项目")); exit(1)
+        }
+        print(Ansi.green("已批准 ") + p.name)
+        print(Ansi.dim("从现在起，额度快过期时会自动从它的配方里取活。"))
+
+    case "pause", "resume":
+        guard let id = rest.first,
+              var p = Playbook.all().first(where: { $0.id.hasPrefix(id) }) else {
+            print(Ansi.red("没找到这个项目")); exit(1)
+        }
+        p.paused = (sub == "pause")
+        Playbook.upsert(p)
+        print(p.paused ? "已暂停 " + p.name : "已恢复 " + p.name)
+
+    case "seed":
+        let added = Playbook.seedBuiltins()
+        if added.isEmpty {
+            print(Ansi.dim("内置项目已经在清单里了。"))
+        } else {
+            for p in added { print(Ansi.green("已放入 ") + p.name) }
+            print()
+            print(Ansi.yellow("都还没批准。")
+                  + Ansi.dim("先看方案：llmq playbook show <id>"))
+        }
+
+    default:
+        print("用法：llmq playbook [list|show <id>|approve <id>|pause <id>|resume <id>|seed]")
+    }
 }
