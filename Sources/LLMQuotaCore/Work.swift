@@ -386,6 +386,7 @@ public struct WorkScheduler: Sendable {
         let cooling = CooldownLedger.active(now: now)
 
         let isMediaTask = task?.prompt.hasPrefix("【媒体】") ?? false
+        let isReviewTask = task?.prompt.hasPrefix("【评审") ?? false
         for runner in runners {
             let p = runner.platform
 
@@ -399,6 +400,16 @@ public struct WorkScheduler: Sendable {
                     platform: p,
                     reason: runner.mediaOnly ? "只接【媒体】任务" : "媒体任务要媒体执行器",
                     kind: .permanent))
+                continue
+            }
+
+            // 审查任务同理双向闸。**但只在这个平台有别的选择时才拦** ——
+            // 审查执行器只接【审查】，而【审查】任务本身也能被普通编码
+            // 执行器干（它们能读 diff 也能写报告），所以这里只挡
+            // 「审查执行器接非审查任务」这一半。
+            if runner.reviewOnly, !isReviewTask {
+                rejected.append(Rejection(
+                    platform: p, reason: "只接【评审】任务", kind: .permanent))
                 continue
             }
 
@@ -541,8 +552,12 @@ public struct WorkScheduler: Sendable {
             }
 
             // 配了上限的额度里，剩余最少的那条决定这个平台还能不能接活。
+            //
+            // **advisory 的不算。** MiniMax 的视频额度天天打满（生图就是
+            // 在用它），拿它当「剩余最少的那条」，整个平台就永远够不着 ——
+            // 实测评审任务因此一直派不出去，而评审根本不消耗视频额度。
             let configured = report.statuses.compactMap { s -> (QuotaStatus, Double)? in
-                guard let f = s.usedFraction else { return nil }
+                guard !s.advisory, let f = s.usedFraction else { return nil }
                 return (s, f)
             }
             if let tightest = configured.max(by: { $0.1 < $1.1 }) {
@@ -686,6 +701,11 @@ public protocol AgentRunner: Sendable {
     /// 只写在扩展里的话，通过存在类型调用永远走扩展默认值，
     /// 子类型的覆盖静默失效 —— 方向闸就是这么被测试抓出来没生效的。
     var mediaOnly: Bool { get }
+    /// 只接【评审】任务（方案评审、项目验收）。
+    ///
+    /// 和 mediaOnly 一样是闸：编码任务派给评审执行器必然产出垃圾 ——
+    /// 它只会写报告。而评审恰恰是 MiniMax 唯一能干好的那类活：
+    /// 不用改代码、不用跑命令，材料给全就是纯推理。
     /// 无头执行。cwd 是独立 worktree，不是用户的工作区。
     func command(prompt: String, cwd: String) -> (launchPath: String, args: [String], env: [String: String])
 
@@ -709,6 +729,7 @@ public extension AgentRunner {
     /// 编码任务派给它必然产出垃圾，媒体任务派给编码执行器则白跑 ——
     /// 两个方向都要闸。
     var mediaOnly: Bool { false }
+    var reviewOnly: Bool { false }
     var binaryPath: String? { Proc.which(binaryName) }
     var isAvailable: Bool { binaryPath != nil }
 }
@@ -1020,7 +1041,7 @@ public enum RunnerRegistry {
     /// GeminiRunner 的代码保留，哪天换成 Antigravity 或企业版把它加回来即可。
     public static let all: [AgentRunner] = [
         ClaudeRunner(), QwenRunner(), KimiRunner(), CodexRunner(),
-        OpenCodeRunner(), MiniMaxMediaRunner()
+        OpenCodeRunner(), MiniMaxMediaRunner(), MiniMaxReviewRunner()
     ]
 
     /// 能做纯推理（分类、总结）的执行器，包含改不了文件的那些。
@@ -1886,5 +1907,181 @@ public enum Elsewhere {
         return "这台接不了，但 \(best.machine) 上 \(who) 接得了（那份额度正闲着）："
             + "\n    llmq cluster dispatch \(best.node) \"\(one.prefix(100))\""
             + (repoAlias.map { " --repo \($0)" } ?? "")
+    }
+}
+
+/// MiniMax 的**评审**执行器：方案评审 + 项目验收。
+///
+/// # 为什么是这两件，不是代码审查
+///
+/// 第一版做的是代码 diff 审查，老板当场纠正了方向：
+/// 「代码合入你来 review 就可以了，我要看的是整个项目评审通过的效果，
+/// 其次是技术方案的评审」。
+///
+/// 这个纠正是对的，而且正好对上 MiniMax 的能力边界。`mmx text chat`
+/// 不能读文件、不能跑命令 —— 逐行审代码本来就是它最不擅长的（它看不到
+/// 上下文，只能看到我们塞进 prompt 的那一段）。而**方案评审**和
+/// **项目验收**是纯推理：材料给全，判断力就是全部所需。
+///
+/// 更实际的一点：代码审查已经有 volcark 在做，而方案和项目这两层
+/// **一直没人做** —— 项目做完了没人对照当初的目标问一句「这算达标了吗」。
+///
+/// # 两种任务
+///
+///     【评审·方案】<项目 id>    ← 批准前评审 playbook 里的方案
+///     【评审·项目】<项目 id>    ← 做完之后对照方案验收
+///
+/// 材料由 Swift/shell 侧收集（方案正文、STATUS.md、最近提交、产出清单），
+/// MiniMax 只负责判断。报告写进 `reviews/`，走正常的提交流程。
+public struct MiniMaxReviewRunner: AgentRunner {
+    public let platform: Platform = .minimax
+    public let binaryName = "mmx"
+    /// 它写文件（评审报告），走正常的 worktree → 提交 → 审查流程。
+    public var canEdit: Bool { true }
+    public var mediaOnly: Bool { false }
+    public var reviewOnly: Bool { true }
+    public init() {}
+
+    public func command(
+        prompt: String, cwd: String
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
+        let driver = #"""
+        # 三条铁律和媒体驱动一样（macOS 26 zsh 实测）：
+        # ① 解析只用 zsh 内建；② 外部命令不进 $(…)；③ 不用管道。
+        export PATH="${LLMQ_MMX:h}:$HOME/.hermes/node/bin:$PATH"
+        run_mmx() {
+          if [ -n "$LLMQ_NODE" ]; then "$LLMQ_NODE" "$LLMQ_MMX" "$@"
+          else "$LLMQ_MMX" "$@"; fi
+        }
+
+        tmpd="${TMPDIR:-/tmp}/mmxreview-$$"
+        mkdir -p "$tmpd"
+
+        # 材料：仓库现状。**评审要有据可依，不能凭任务描述空想。**
+        material=""
+        [ -f STATUS.md ] && material="$material
+        ## STATUS.md
+        $(<STATUS.md)"
+        [ -f README.md ] && material="$material
+        ## README.md
+        $(<README.md)"
+        git log --oneline -20 > "$tmpd/log.txt" 2>/dev/null
+        material="$material
+        ## 最近 20 个提交
+        $(<$tmpd/log.txt)"
+        git ls-files > "$tmpd/files.txt" 2>/dev/null
+        files_text="$(<$tmpd/files.txt)"
+        material="$material
+        ## 文件清单（前 4000 字符）
+        ${files_text[1,4000]}"
+
+        # 材料整体也要有上限：一次评审塞进去几十万字符，模型会在中间
+        # 丢掉一半，评出来的东西看着完整其实是瞎编的。
+        if [ ${#material} -gt 50000 ]; then
+          material="${material[1,50000]}
+        …（材料截断）"
+        fi
+
+        case "$LLMQ_PROMPT" in
+          *方案*) kind=方案 ;;
+          *) kind=项目 ;;
+        esac
+
+        if [ "$kind" = "方案" ]; then
+          read -r -d '' ask <<PROMPT_END
+        你是技术方案评审人。下面是一份待评审的方案和它所在仓库的现状。
+
+        # 待评审的方案
+        $LLMQ_PROMPT
+
+        # 仓库现状
+        $material
+
+        请输出一份 Markdown 评审报告，只输出报告本身：
+
+        # 方案评审：<方案名>
+
+        **结论**：可以开工 / 需要改了再开工 / 不建议做（三选一，说清为什么）
+
+        ## 这个方案要解决的问题是真问题吗
+        一段话。如果不是真问题，直接说，这比什么都重要。
+
+        ## 方案本身的漏洞
+        逐条列。每条说清：漏了什么、会导致什么后果。没有就写「没有」。
+
+        ## 验收标准够不够硬
+        方案里的"怎么算合格"能不能真的判定通过/不通过？
+        如果是"做得好看"这种没法判定的标准，指出来并给一个可判定的替代。
+
+        ## 和仓库现状对不对得上
+        方案假设的前提，在这个仓库里成立吗（依赖、目录、已有能力）。
+
+        要求：只基于上面给的材料判断，不要推测材料里没有的东西。
+        宁可说"材料不足以判断"，也不要编。
+        PROMPT_END
+        else
+          read -r -d '' ask <<PROMPT_END
+        你是项目验收人。下面是一个项目的当初目标和它现在的状态。
+
+        # 当初的目标和验收标准
+        $LLMQ_PROMPT
+
+        # 项目现状
+        $material
+
+        请输出一份 Markdown 验收报告，只输出报告本身：
+
+        # 项目验收：<项目名>
+
+        **结论**：达标 / 部分达标 / 不达标（三选一）
+
+        ## 逐条对照验收标准
+        当初定的每一条标准，现在满足了吗？满足写"✅ 是"并给出证据
+        （哪个文件、哪个提交）；没满足写"❌ 否"并说清差在哪。
+        判断不了的写"⚠️ 材料不足"，别猜。
+
+        ## 还差什么才能交付
+        按"必须做"和"可以先不做"分两组。没有就写「可以交付」。
+
+        ## 我看到的风险
+        材料里透出来的隐患（比如状态文档和实际提交对不上、
+        验收标准从来没被验证过）。没有就写「没有」。
+
+        要求：只基于上面给的材料判断。**不要因为项目看起来完成度高就放行**
+        —— 你的价值在于指出"看着完成了其实没有"的那部分。
+        PROMPT_END
+        fi
+
+        tmpout="$tmpd/out.txt"
+        run_mmx text chat --message "$ask" --output text \
+          --non-interactive --quiet > "$tmpout" 2>"$tmpd/err.txt"
+        rc=$?
+        if [ $rc -ne 0 ]; then
+          err="$(<$tmpd/err.txt)"
+          echo "mmx 失败（$rc）：${err[1,300]}"
+          exit 1
+        fi
+        report="$(<$tmpout)"
+        if [ ${#report} -lt 60 ]; then
+          echo "报告太短，八成没生成出来：${report[1,200]}"
+          exit 1
+        fi
+
+        stamp="$(git rev-parse --short HEAD 2>/dev/null || echo new)"
+        mkdir -p reviews
+        out="reviews/EVAL-${kind}-${stamp}.md"
+        printf '%s\n' "$report" > "$out"
+        git add "$out"
+        git commit -q -m "${kind}评审（MiniMax）" || true
+        echo "已写 $out（${#report} 字）"
+        # 结论直接回显到任务输出里 —— 人在手机上看到的是这一行。
+        while IFS= read -r l; do
+          case "$l" in *结论*) echo "$l"; break;; esac
+        done < "$out"
+        """#
+        var env: [String: String] = ["LLMQ_PROMPT": prompt]
+        if let mmx = binaryPath { env["LLMQ_MMX"] = mmx }
+        if let node = Proc.which("node") { env["LLMQ_NODE"] = node }
+        return ("/bin/zsh", ["-c", driver], env)
     }
 }

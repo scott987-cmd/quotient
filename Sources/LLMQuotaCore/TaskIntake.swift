@@ -45,6 +45,16 @@ public enum TaskIntake {
         // 分诊的「复杂档」衡量的是推理难度，而媒体驱动只是逐行执行清单 ——
         // 13 张图被判成复杂档后，MiniMax（只验证到常规档）反而接不了
         // 自己唯一该接的活，媒体批当场 blocked。真实翻过车。
+        // 【评审】同理：它是一个整体的推理动作，档次由内容长短决定不了。
+        // 判成复杂档之后 MiniMax（只验证到常规档）就接不了自己唯一
+        // 该接的活了 —— 和媒体任务当初翻的是同一辆车。
+        let reviewTask = prompt.hasPrefix("【评审")
+        if reviewTask {
+            t.profile = TaskProfile(
+                tier: .standard, risk: .safe, estimatedMinutes: 8,
+                isSelfContained: true,
+                rationale: "评审任务：读材料给判断，不改代码")
+        }
         let mediaTask = prompt.hasPrefix("【媒体】")
         if mediaTask {
             t.profile = TaskProfile(
@@ -52,7 +62,7 @@ public enum TaskIntake {
                 isSelfContained: true,
                 rationale: "媒体清单任务：档次固定，不按条目数升档")
         }
-        if classify, !mediaTask {
+        if classify, !mediaTask, !reviewTask {
             t.profile = TaskClassifier.classify(
                 prompt: prompt, repo: repo,
                 history: TaskStore.all(), dashboard: LLMQuota.dashboard())
@@ -65,8 +75,11 @@ public enum TaskIntake {
         // 拆成图之后每个节点只剩一段散文描述，驱动一行 DSL 都解析不到，
         // 全部空跑；而且拆解器还会顺手编出「接入打包配置」这类代码步 ——
         // 那不是媒体执行器的事。真踩过：13 项资产批被拆成 8 步图当场作废。
+        // 【评审】也永远不拆。实测：一个「评审 Greed 项目是否达标」的任务
+        // 被拆成 7 步开发子任务（「模拟器实跑取证」「终审汇总与合入」）——
+        // 拆解器把评审当成了开发计划。评审的产出是一份判断，不是一串动作。
         let isMedia = prompt.hasPrefix("【媒体】")
-        if split, !isMedia, TaskDecomposer.shouldDecompose(t),
+        if split, !isMedia, !reviewTask, TaskDecomposer.shouldDecompose(t),
            var nodes = TaskDecomposer.plan(t, dashboard: LLMQuota.dashboard()),
            nodes.count > 1 {
             // 逐节点分诊：整包判高危会让所有角色都够不着，

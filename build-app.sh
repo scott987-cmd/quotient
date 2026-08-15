@@ -142,9 +142,21 @@ if [ "$INSTALL" -eq 1 ]; then
   echo "   ~/.local/bin/llmq"
 
   # 循环装成常驻服务时，换了二进制要重启它才会生效。
-  if launchctl list 2>/dev/null | grep -q com.llmquotabar.worker; then
-    launchctl kickstart -k "gui/$(id -u)/com.llmquotabar.worker" 2>/dev/null \
-      && echo "   已重启工作循环（换了二进制）"
+  #
+  # **别用 `| grep -q`。** 这个脚本开头是 `set -euo pipefail`，
+  # 而 grep -q 一找到就退出 → launchctl 写管道时吃 SIGPIPE →
+  # 管道整体返回 141 → 条件永远不成立 → 这段静默跳过。
+  # 实测代价：一整晚我改了五次代码、装了五次，worker 一直跑着最早那份
+  # 二进制，任务按旧规则被拒，而我在日志里反复看到「已经修好的」行为。
+  # grep -c 会读完整个输入，不产生 SIGPIPE。
+  worker_loaded=$(launchctl list 2>/dev/null | grep -c com.llmquotabar.worker || true)
+  if [ "${worker_loaded:-0}" -gt 0 ]; then
+    if launchctl kickstart -k "gui/$(id -u)/com.llmquotabar.worker"; then
+      echo "   已重启工作循环（换了二进制）"
+    else
+      echo "   ⚠︎ 工作循环重启失败 —— 它还在跑旧二进制，手动："
+      echo "     launchctl kickstart -k gui/$(id -u)/com.llmquotabar.worker"
+    fi
   fi
 
   open /Applications/"$APP_NAME".app
