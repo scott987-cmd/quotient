@@ -2322,6 +2322,8 @@ func cmdWorkLoop(_ args: [String]) throws {
                 // 那只是把「窗口过期」的浪费换成「产出没人要」的浪费。
                 print(Ansi.dim("  空窗 " + opp.platform.displayName
                                + "（" + opp.reason + "）但没有现成的活可填"))
+                // 系统自己没辙了才打扰人 —— 填掉了就不用喊。
+                Nudge.nothingToFill(platform: opp.platform, reason: opp.reason)
                 return
             }
             let fallback = RepoRegistry.all().first(where: { $0.isDefault })?.localPath
@@ -2345,6 +2347,10 @@ func cmdWorkLoop(_ args: [String]) throws {
                 if let pid = hit.projectID { Playbook.recordRun(pid) }
             }
         }
+
+        // 有待决事项就推一条到手机。**只推需要人做决定的事** ——
+        // 「跑完了 3 个任务」不发，「有 3 份产出等你验收」才发。
+        phase("提醒", 20) { _ = Nudge.run() }
 
         var incoming: [Inbox.Ingested] = []
         phase("收远程任务", 20) { incoming = Inbox.ingest() }
