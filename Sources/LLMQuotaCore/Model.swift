@@ -194,6 +194,14 @@ public enum ModelRouter {
     ]
 
     /// - Parameter fallback: 模型名为空或认不出来时，归给采集它的那个 CLI 自己的平台。
+    /// 认不出来就返回 nil 的版本。给「必须确定归属才敢动作」的调用方用
+    /// —— 比如把额度打满记进冷却台账：猜错平台会冻住一个还能用的 agent。
+    public static func platformIfKnown(forModel model: String) -> Platform? {
+        let m = model.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !m.isEmpty, m != "<synthetic>" else { return nil }
+        return prefixRules.first { m.contains($0.0) }?.1
+    }
+
     public static func platform(forModel model: String, fallback: Platform) -> Platform {
         let m = model.lowercased().trimmingCharacters(in: .whitespaces)
         // Claude Code 用 "<synthetic>" 标记本地合成的消息，不是真实 API 调用。

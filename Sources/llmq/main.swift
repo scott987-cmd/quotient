@@ -83,6 +83,19 @@ func cmdCollect(verbose: Bool) throws {
 
     print(Ansi.bold("采集完成") + " · \(snap.machineName) · 耗时 \(String(format: "%.1f", result.duration))s")
 
+    // **顺手学一遍额度打满信号。**
+    //
+    // 光数请求数和 token 判断不出「用完没有」——GLM 按积分计费、
+    // 工作日下午还是 3 倍，口径根本对不上。唯一可靠的地面真相是服务端
+    // 自己说的那句 429，而它就写在会话日志里。人在终端里手工跑掉的额度，
+    // 系统只能从这里知道。
+    for hit in QuotaSignal.learnFromLogs() {
+        let when = hit.resetsAt.map { "，" + Format.duration($0.timeIntervalSinceNow) + "后重置" }
+            ?? "，没给重置时间（按退避冷却）"
+        print(Ansi.yellow("  额度打满：") + hit.platform.displayName + when)
+        print(Ansi.dim("    来源：" + hit.message.prefix(90)))
+    }
+
     let detected = snap.platforms.filter(\.detected)
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     print("检测到 \(detected.count) 个平台的数据源，快照已写入：")
