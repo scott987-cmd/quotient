@@ -2343,8 +2343,11 @@ func cmdWorkLoop(_ args: [String]) throws {
                 preferredPlatform: opp.platform),
                case .single(let t) = outcome {
                 print(Ansi.dim("    已入队 " + t.id))
-                // **入队成功之后**才记取用 —— 提前记会让轮转跳过一条配方。
-                if let pid = hit.projectID { Playbook.recordRun(pid) }
+                // **入队成功之后**才记取用 —— 提前记会让轮转跳过一条配方，
+                // 更糟的是会白白吃掉一个方向。
+                if let pid = hit.projectID {
+                    Playbook.recordRun(pid, consumedTopic: hit.usedTopic)
+                }
             }
         }
 
@@ -4688,6 +4691,31 @@ func cmdPlaybook(_ args: [String]) throws {
                 + (r.publishes ? Ansi.yellow("  产出要对外发布 → 会停下来等你确认") : "")))
         }
 
+    // llmq playbook topics <id>            看方向清单
+    // llmq playbook topics <id> "方向一" …   往清单里补
+    case "topics":
+        guard let id = rest.first else {
+            print("用法：llmq playbook topics <项目 id> [\"新方向\" …]"); exit(1)
+        }
+        let adding = Array(rest.dropFirst())
+        if !adding.isEmpty { _ = Playbook.addTopics(id, adding) }
+        guard let p = Playbook.all().first(where: { $0.id.hasPrefix(id) }) else {
+            print(Ansi.red("没找到这个项目")); exit(1)
+        }
+        print(Ansi.bold(p.name))
+        if p.backlog.isEmpty {
+            print(Ansi.yellow("方向清单空了 —— 这个项目暂时不会出活。"))
+            print(Ansi.dim("补方向：llmq playbook topics \(p.id) \"下一个方向\""))
+        } else {
+            print(Ansi.dim("待做（下一个会用第一条）"))
+            for (i, t) in p.backlog.enumerated() {
+                print((i == 0 ? Ansi.green("  → ") : "    ") + t)
+            }
+        }
+        if !p.shipped.isEmpty {
+            print(Ansi.dim("已做：" + p.shipped.joined(separator: "、")))
+        }
+
     case "approve":
         guard let id = rest.first, let p = Playbook.approve(id) else {
             print(Ansi.red("没找到这个项目")); exit(1)
@@ -4716,7 +4744,8 @@ func cmdPlaybook(_ args: [String]) throws {
         }
 
     default:
-        print("用法：llmq playbook [list|show <id>|approve <id>|pause <id>|resume <id>|seed]")
+        print("用法：llmq playbook [list|show <id>|approve <id>|topics <id> [新方向…]"
+              + "|pause <id>|resume <id>|seed]")
     }
 }
 

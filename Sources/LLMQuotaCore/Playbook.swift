@@ -64,15 +64,47 @@ public enum Playbook {
         public var runs: Int
         /// 暂停：不删除，只是这段时间不取用。
         public var paused: Bool
+        /// 待做方向清单。
+        ///
+        /// **方向是人的决定，不是 agent 该自己拍的。** 第一版配方写的是
+        /// 「挑一个和已有包不重样的主题，自己定」—— 老板的反馈是
+        /// 「生图的任务没有任务内容方向」。让它自己挑，产出方向就是随机的，
+        /// 而随机方向做出来的东西卖不掉。
+        ///
+        /// 清单空了这个项目就**不再出活**，转而提醒老板补方向 ——
+        /// 宁可空窗，也不要一堆没人要的产出。
+        public var backlog: [String]
+        /// 已经做过的方向。留着是为了不重复，也为了看清做了多少。
+        public var shipped: [String]
 
         public var isApproved: Bool { approvedAt != nil }
 
         public init(id: String, name: String, brief: String, repo: String? = nil,
+                    backlog: [String] = [], shipped: [String] = [],
                     recipes: [Recipe] = [], approvedAt: Date? = nil,
                     runs: Int = 0, paused: Bool = false) {
             self.id = id; self.name = name; self.brief = brief; self.repo = repo
             self.recipes = recipes; self.approvedAt = approvedAt
             self.runs = runs; self.paused = paused
+            self.backlog = backlog; self.shipped = shipped
+        }
+
+        // 老清单文件里没有这两个字段，解码时给默认值，别让整个清单读不出来。
+        enum CodingKeys: String, CodingKey {
+            case id, name, brief, repo, recipes, approvedAt, runs, paused, backlog, shipped
+        }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            name = try c.decode(String.self, forKey: .name)
+            brief = try c.decode(String.self, forKey: .brief)
+            repo = try c.decodeIfPresent(String.self, forKey: .repo)
+            recipes = try c.decodeIfPresent([Recipe].self, forKey: .recipes) ?? []
+            approvedAt = try c.decodeIfPresent(Date.self, forKey: .approvedAt)
+            runs = try c.decodeIfPresent(Int.self, forKey: .runs) ?? 0
+            paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+            backlog = try c.decodeIfPresent([String].self, forKey: .backlog) ?? []
+            shipped = try c.decodeIfPresent([String].self, forKey: .shipped) ?? []
         }
     }
 
@@ -121,8 +153,27 @@ public enum Playbook {
     }
 
     /// 可以拿来填空窗的项目：批准了、没暂停、有配方。
+    /// 可以拿来填空窗的项目：批准了、没暂停、有配方、**而且还有方向可做**。
+    ///
+    /// 配方里带 `{{topic}}` 的说明它需要一个方向；清单空了就别出活了 ——
+    /// 让 agent 自己编方向，做出来的东西没人要，那不是省额度，
+    /// 是把浪费从「窗口过期」换成「产出没人要」。
     public static func available() -> [Project] {
-        all().filter { $0.isApproved && !$0.paused && !$0.recipes.isEmpty }
+        all().filter { p in
+            guard p.isApproved, !p.paused, !p.recipes.isEmpty else { return false }
+            let needsTopic = p.recipes.contains { $0.prompt.contains("{{topic}}") }
+            return !needsTopic || !p.backlog.isEmpty
+        }
+    }
+
+    /// 清单快空了、需要老板补方向的项目。
+    public static func needsDirection() -> [Project] {
+        all().filter { p in
+            guard p.isApproved, !p.paused else { return false }
+            guard p.recipes.contains(where: { $0.prompt.contains("{{topic}}") })
+            else { return false }
+            return p.backlog.count <= 1
+        }
     }
 
     /// 取下一个该干的活。
@@ -143,8 +194,16 @@ public enum Playbook {
             }
             guard !usable.isEmpty else { continue }
             let r = usable[p.runs % usable.count]
+            // 需要方向的配方，清单空了就跳过这个项目（available() 已经滤过，
+            // 这里是传入自定义 projects 时的兜底）。
+            if r.prompt.contains("{{topic}}"), p.backlog.isEmpty { continue }
             let n = p.runs + 1
-            let prompt = r.prompt.replacingOccurrences(of: "{{n}}", with: "\(n)")
+            let prompt = r.prompt
+                .replacingOccurrences(of: "{{n}}", with: "\(n)")
+                .replacingOccurrences(of: "{{topic}}", with: p.backlog.first ?? "")
+                .replacingOccurrences(of: "{{shipped}}",
+                                      with: p.shipped.isEmpty ? "（还没有）"
+                                          : p.shipped.joined(separator: "、"))
             return (p, r, prompt)
         }
         return nil
@@ -152,11 +211,31 @@ public enum Playbook {
 
     /// 记一次取用。**必须在真的入队之后调用** ——
     /// 提前记会让轮转跳过一条配方，那条就再也轮不上了。
-    public static func recordRun(_ id: String) {
+    /// 记一次取用，并把用掉的方向从清单挪到「已做」。
+    ///
+    /// **必须在真的入队之后调用** —— 提前记会让轮转跳过一条配方，
+    /// 更糟的是会白白吃掉一个方向。
+    public static func recordRun(_ id: String, consumedTopic: Bool = false) {
         var list = all()
         guard let i = list.firstIndex(where: { $0.id == id }) else { return }
         list[i].runs += 1
+        if consumedTopic, !list[i].backlog.isEmpty {
+            list[i].shipped.append(list[i].backlog.removeFirst())
+        }
         save(list)
+    }
+
+    /// 往方向清单里补。老板在手机上或命令行加的。
+    public static func addTopics(_ id: String, _ topics: [String]) -> Project? {
+        var list = all()
+        guard let i = list.firstIndex(where: { $0.id.hasPrefix(id) }) else { return nil }
+        let fresh = topics.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !list[i].backlog.contains($0)
+                        && !list[i].shipped.contains($0) }
+        guard !fresh.isEmpty else { return list[i] }
+        list[i].backlog.append(contentsOf: fresh)
+        save(list)
+        return list[i]
     }
 }
 
@@ -204,14 +283,31 @@ extension Playbook {
                 **产出去哪**：~/dev/AssetPacks/pack-NN-<主题>/，上架前停下来等确认。
                 """,
                 repo: "~/dev/AssetPacks",
+                // 方向清单。**这是老板的决定，不是 agent 该自己拍的。**
+                // 用完了这个项目就停止出活，转而提醒补方向 ——
+                // 宁可空窗，也不要一堆没人要的产出。
+                //
+                // 起手这几个是按 itch.io 上素材包的实际需求排的：
+                // 图标类（买的人最多，单张就能用）> 场景/背景（做游戏原型要）
+                // > UI 套件（做完能直接卖给独立开发者）。
+                backlog: [
+                    "药水与炼金：瓶子、试管、药剂图标，透明底，一眼分得清效果",
+                    "武器图标：剑斧弓杖，同一套线条语言，能直接进背包格子",
+                    "地牢石砖场景：走廊、房间、楼梯，能拼接的暗色调背景",
+                    "魔法卷轴与符文：羊皮纸质感 + 发光符号",
+                    "赛博霓虹街景：雨夜、招牌、反光地面，横版背景",
+                ],
+                shipped: ["深渊（深海）", "龙穴（暗金卡牌）", "森林"],
                 recipes: [
                     Recipe(
                         title: "出一个新主题包",
                         prompt: """
                         【素材包】在 ~/dev/AssetPacks 出第 {{n}} 个新主题包。
 
-                        先读 PIPELINE.md 全文和 AGENTS.md，按五阶段做。挑一个和已有包\
-                        （深渊、龙穴、森林）不重样的主题，自己定，理由写进 STATUS.md。
+                        **主题已经定了：{{topic}}**。别自己换题 —— 方向是老板定的，\
+                        你负责把它做好。已经做过的（别重复）：{{shipped}}。
+
+                        先读 PIPELINE.md 全文和 AGENTS.md，按五阶段做。
 
                         用 genart image 生成 20-30 张 1024×1024，走 tools/strip-signature.sh \
                         裁签名 + 归一化。**同一包内风格必须统一** —— 生成前先定死风格描述词，\

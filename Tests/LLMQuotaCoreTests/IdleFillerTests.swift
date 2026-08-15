@@ -98,3 +98,40 @@ final class IdleFillerTests: XCTestCase {
                      "队列有活时不该再填")
     }
 }
+
+/// 方向清单：**方向是人的决定，不是 agent 该自己拍的。**
+final class PlaybookTopicTests: XCTestCase {
+    private func project(backlog: [String]) -> Playbook.Project {
+        Playbook.Project(
+            id: "p1", name: "测试项目", brief: "b",
+            backlog: backlog, shipped: ["旧方向"],
+            recipes: [Playbook.Recipe(
+                title: "出一个", prompt: "做 {{topic}}，别重复 {{shipped}}",
+                platform: "minimax")],
+            approvedAt: Date())
+    }
+
+    func testTopicIsFilledIntoThePrompt() {
+        let hit = Playbook.nextWork(for: .minimax, projects: [project(backlog: ["新方向"])])
+        XCTAssertEqual(hit?.prompt, "做 新方向，别重复 旧方向")
+    }
+
+    /// 清单空了就别出活 —— 让它自己编方向，做出来的东西没人要。
+    /// 那不是省额度，是把浪费从「窗口过期」换成「产出没人要」。
+    func testEmptyBacklogStopsTheProject() {
+        XCTAssertNil(Playbook.nextWork(for: .minimax, projects: [project(backlog: [])]),
+                     "没方向时应该停下来问人，不是随便挑一个")
+    }
+
+    /// 不点名平台的配方，谁来都能干。
+    func testUnpinnedRecipeAcceptsAnyPlatform() {
+        var p = project(backlog: ["x"])
+        p.recipes[0].platform = nil
+        XCTAssertNotNil(Playbook.nextWork(for: .codex, projects: [p]))
+    }
+
+    /// 点名了 MiniMax 的活，别拿 Codex 去跑 —— 点名是有理由的（它会生图）。
+    func testPinnedRecipeRejectsOtherPlatforms() {
+        XCTAssertNil(Playbook.nextWork(for: .codex, projects: [project(backlog: ["x"])]))
+    }
+}

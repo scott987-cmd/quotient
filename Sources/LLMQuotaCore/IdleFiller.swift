@@ -102,7 +102,8 @@ public enum IdleFiller {
     public static func found(for opp: Opportunity,
                              repos: [RepoAlias] = RepoRegistry.all(),
                              tasks: [WorkTask] = TaskStore.all())
-    -> (prompt: String, repo: String?, projectID: String?, publishes: Bool)? {
+    -> (prompt: String, repo: String?, projectID: String?,
+        publishes: Bool, usedTopic: Bool)? {
         // 队列里已经有活 → 不用填，调度器自己会派
         if tasks.contains(where: { $0.state == .queued }) { return nil }
 
@@ -110,7 +111,8 @@ public enum IdleFiller {
         //（资产包、内容生产）；储备池里是从代码扫出来的零碎维护活。
         // 一个能卖钱的资产包，价值高于补一条注释。
         if let hit = Playbook.nextWork(for: opp.platform) {
-            return (hit.prompt, hit.project.repo, hit.project.id, hit.recipe.publishes)
+            return (hit.prompt, hit.project.repo, hit.project.id,
+                    hit.recipe.publishes, hit.recipe.prompt.contains("{{topic}}"))
         }
 
         for repo in repos {
@@ -125,7 +127,7 @@ public enum IdleFiller {
             for f in todo {
                 let p = ReservePool.prompt(for: f)
                 if GitWorkspace.mentionsRiskyPath(p) { continue }
-                return (p, path, nil, false)
+                return (p, path, nil, false, false)
             }
         }
         return nil
