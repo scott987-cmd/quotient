@@ -113,7 +113,13 @@ public enum MirrorService {
 
     static let perMachineDirs = ["snapshots", "taskboards", "presence"]
     static let rootPushFiles = ["dashboard.json", "office.json", "repos.json"]
-    static let bidirectionalDirs = ["config", "releases"]
+    /// 双向同步的目录。
+    ///
+    /// `approvals` 是手机批项目方案用的：手机写一个批准文件，
+    /// Mac 端读到就把清单里那个项目标成已批准。走目录而不是直接
+    /// 双向同步 playbook.json —— 后者两边都会改（Mac 改 runs、
+    /// 手机改 approvedAt），整文件覆盖必然丢一边。
+    static let bidirectionalDirs = ["config", "releases", "approvals"]
 
     /// 永不搬的文件：`.sb-` 半成品（原子写卡在 rename 留下的）、
     /// 心跳文件、一切点开头的文件。
@@ -151,6 +157,12 @@ public enum MirrorService {
                 cloudDir: cloud.appendingPathComponent(d, isDirectory: true),
                 label: d, selfMachineID: selfMachineID, list: list, stats: &stats)
         }
+
+        // playbook.json 只推不拉：清单内容由 Mac 端说了算，
+        // 手机只能通过 approvals/ 表达「我批了」。
+        pushIfNewer(localFile: local.appendingPathComponent("playbook.json"),
+                    cloudFile: cloud.appendingPathComponent("playbook.json"),
+                    label: "playbook.json", stats: &stats)
 
         // 根下三个单文件：本地新就推。
         for name in rootPushFiles {

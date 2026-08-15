@@ -229,3 +229,60 @@ extension Playbook {
         ]
     }
 }
+
+// MARK: - 手机批准
+
+extension Playbook {
+    /// 手机写来的批准。
+    ///
+    /// 手机不直接改 `playbook.json`：那个文件两边都会写
+    ///（Mac 改 `runs`、手机改 `approvedAt`），整文件同步必然丢一边。
+    /// 改成手机往 `approvals/` 放一个小文件，Mac 端读到就应用。
+    /// 和 agent 提问走 `answers/` 是同一套路子。
+    public struct Approval: Codable, Sendable {
+        public var projectID: String
+        public var approvedAt: Date
+        /// 谁批的。多设备时能看出是从哪台手机批的。
+        public var device: String?
+        /// 批注。老板可能想在批准时附一句要求。
+        public var note: String?
+    }
+
+    static var approvalsDir: URL {
+        Paths.appSupport.appendingPathComponent("approvals", isDirectory: true)
+    }
+
+    /// 收手机批准：应用到清单，然后删掉那个文件（已经生效了，留着只会重复应用）。
+    ///
+    /// - Returns: 这一轮真正生效的项目。
+    @discardableResult
+    public static func ingestApprovals() -> [Project] {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: approvalsDir.path)
+        else { return [] }
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        var applied: [Project] = []
+        var list = all()
+        var dirty = false
+        for name in names where name.hasSuffix(".json") {
+            let f = approvalsDir.appendingPathComponent(name)
+            guard let d = try? Data(contentsOf: f),
+                  let a = try? dec.decode(Approval.self, from: d) else { continue }
+            if let i = list.firstIndex(where: { $0.id == a.projectID }) {
+                // 已经批过就别改时间 —— 那会让「什么时候批的」这件事失真
+                if list[i].approvedAt == nil {
+                    list[i].approvedAt = a.approvedAt
+                    if let note = a.note, !note.isEmpty {
+                        list[i].brief += "\n\n**老板批注**：" + note
+                    }
+                    applied.append(list[i])
+                    dirty = true
+                }
+            }
+            // 不管有没有生效都删：留着只会每轮重复读一次
+            try? fm.removeItem(at: f)
+        }
+        if dirty { save(list) }
+        return applied
+    }
+}
