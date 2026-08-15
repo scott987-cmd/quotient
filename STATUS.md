@@ -128,10 +128,11 @@
 
 ## 最近落地（自动记录，别手改）
 
-最后更新：2026-08-15 17:44　共 18 个任务
+最后更新：2026-08-15 18:50　共 19 个任务
 
 | 时间 | 干了什么 | 谁干的 | 改动 |
 |---|---|---|---|
+| 08-15 18:50 | Sources/LLMQuotaCore/ReservePool.swift 第 54 行… | Codex | 3 个文件 |
 | 08-15 17:44 | 【审查】复查刚合入 main 的合并 e0f5119（来源分支 agent/volcark… | Codex | 1 个文件 |
 | 08-15 16:19 | 给 TaskGraph.swift 补一段文件头注释说明它解决什么问题，同时在 build… | Qwen | 2 个文件 |
 | 08-14 15:53 | 为 Sources/LLMQuotaCore/Cooldown.swift 里的每一个 p… | 火山方舟 | 1 个文件 |
@@ -143,6 +144,5 @@
 | 08-13 21:35 | 把 Sources/LLMQuotaCore/Format.swift 里 Format.… | 火山方舟 | 0 个文件 |
 | 08-13 21:34 | 占位任务，只为看调度决策 | 火山方舟 | 0 个文件 |
 | 08-13 21:33 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | 火山方舟 | 0 个文件 |
-| 08-13 21:28 | 为 Sources/LLMQuotaCore/Format.swift 里的 Format… | 火山方舟 | 0 个文件 |
 
 <!-- /llmq:progress -->
