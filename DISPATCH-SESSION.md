@@ -66,3 +66,20 @@ llmq cluster diagnose <节点>  # 另一台机器的健康检查
 2. **Maw 视觉升级**（图 a90f8b8c，6/8）：s5「PlayerNode 动感」失败，s8 被冻住等上游
 3. **资产包 pack-03-forest**（幽林精灵，17 项）：已生成并落地，等终审
    （裁签名 → 抽验底边 → 打包 → 上架，流程见 AssetPacks/PIPELINE.md）
+
+## NAS 归档（2026-08-15 接入）
+
+- 挂载点：`/Volumes/scott_存储空间4/数字员工档案`（UGREEN-4117，SMB）
+- 目录：`logs/`（agent 执行日志，按时间戳分批）、`tasks/`（轮转出来的老任务记录）、
+  `发布归档/`、`资产原件/`
+- 命令：`llmq archive`（目标已记住，直接跑）
+- 分工：**日志和老任务记录归档到 NAS，worktree 直接删不备份**
+  （97% 是 .build 编译产物，源码在 git 分支里）
+
+**两条不能忘的**：
+
+1. **别把 git 仓库放 NAS 上**。macOS 26 对网络卷有独立 TCC 门，launchd 起的
+   worker 没授权访问会**永久挂起**（不是报错，是挂住）—— 和今早 iCloud
+   那次一模一样的失败模式。git 在 SMB 上的文件锁也不可靠，而我们重度依赖 worktree。
+2. **别把 archive 挂进 worker 循环**。同上：worker 是 launchd 起的，
+   碰网络卷有挂死风险。archive 只在人手动跑（或前台会话里跑）。
