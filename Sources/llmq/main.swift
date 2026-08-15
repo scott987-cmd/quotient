@@ -1409,7 +1409,11 @@ func probePlatforms() throws {
             exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, timedOut: r.timedOut) {
             verdict = Ansi.red("不可用")
             detail = f.describe
-            if let cause = CooldownLedger.classify(r.stdout + " " + r.stderr) {
+            // 探测超时同理不判额度：90 秒没答上来说明它慢或者卡了，
+            // 不说明额度打满。
+            if case .timedOut = f {
+                detail += Ansi.dim("  超时，不记冷却")
+            } else if let cause = CooldownLedger.classify(r.stdout + " " + r.stderr) {
                 let cd = CooldownLedger.record(
                     platform: runner.platform, cause: cause, detail: f.describe,
                     knownResetAt: CooldownLedger.parseResetTime(r.stdout + " " + r.stderr))
@@ -1785,7 +1789,17 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 elapsedSeconds: Int(elapsed))
 
             // 把平台侧失败记进冷却账本。下次调度直接跳过，不再白建 worktree。
-            if let cause = CooldownLedger.classify(r.stdout + " " + r.stderr) {
+            //
+            // **超时不判额度。** 超时被杀时，输出是被掐断的半截内容 ——
+            // 拿它做「有没有打满额度」的判断本来就不成立。实测代价：
+            // 火山方舟和 Kimi 各被这么误冻过一次（一次 1 天 16 小时、
+            // 一次 7 小时 45 分），两次的详情都明写着「超时被终止」，
+            // 却记成额度用尽，把能干活的主力平台罚下场。
+            // 超时该做的是换个平台重试（shouldTryNextPlatform 已经是 true），
+            // 不是把平台冻起来。
+            if case .timedOut = failure {
+                print(Ansi.dim("  超时，不记冷却 —— 半截输出判不了额度，换平台重试"))
+            } else if let cause = CooldownLedger.classify(r.stdout + " " + r.stderr) {
                 // 报错原文里带确切重置时间就采信（「reset at 08-17 01:36 UTC」），
                 // 别按退避每小时白撞一次撞到周日。
                 let resetAt = CooldownLedger.parseResetTime(r.stdout + " " + r.stderr)
@@ -4571,6 +4585,8 @@ do {
         try cmdWork(rest)
     case "plan":
         try cmdPlan(rest)
+    case "push":
+        try cmdPush(rest)
     case "playbook":
         try cmdPlaybook(rest)
     case "office":
@@ -4677,5 +4693,46 @@ func cmdPlaybook(_ args: [String]) throws {
 
     default:
         print("用法：llmq playbook [list|show <id>|approve <id>|pause <id>|resume <id>|seed]")
+    }
+}
+
+
+// MARK: - 推送
+
+/// llmq push [check|test <正文>]
+///
+/// 这台 Mac 自己给手机发通知 —— APNs 只要一个 ES256 签名的 JWT，
+/// 签名在哪儿做都行，不需要服务器，也就不用把任务内容交给第三方。
+func cmdPush(_ args: [String]) throws {
+    switch args.first ?? "check" {
+    case "check":
+        for (step, ok, detail) in Push.diagnose() {
+            print((ok ? Ansi.green("✓") : Ansi.red("✗")) + "  "
+                  + step.padding(toLength: max(step.count, 22), withPad: " ", startingAt: 0)
+                  + Ansi.dim(detail))
+        }
+        if Push.Config.load() == nil {
+            print()
+            print(Ansi.dim("""
+            配置长这样（放 ~/.llmq/apns.json，不要进仓库）：
+              {
+                "keyID":    "从 Apple 后台建 Key 时给的 10 位",
+                "teamID":   "7U9AKQ6CJX",
+                "bundleID": "com.longlong.llmquota",
+                "keyFile":  "~/.llmq/AuthKey_XXXXXXXXXX.p8"
+              }
+            """))
+        }
+
+    case "test":
+        let body = args.dropFirst().joined(separator: " ")
+        let n = Push.send(.needsYou,
+                          body: body.isEmpty ? "推送通了。" : body,
+                          subtitle: "来自 " + Paths.machineName())
+        print(n > 0 ? Ansi.green("已推给 \(n) 台设备")
+                    : Ansi.red("一台都没推出去。跑 llmq push check 看卡在哪"))
+
+    default:
+        print("用法：llmq push [check|test <正文>]")
     }
 }

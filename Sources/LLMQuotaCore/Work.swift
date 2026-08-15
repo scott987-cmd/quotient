@@ -1703,10 +1703,17 @@ public enum FailureKind: Sendable {
 
 public enum FailureClassifier {
     /// 这些字样说明是平台/凭据问题，不是任务本身的问题。
+    /// 这些字样足够特异，出现即可判定是平台/凭据问题。
+    ///
+    /// **注意这里没有 quota / insufficient / 额度**。它们太普通了：
+    /// agent 说一句 "insufficient contrast"、或者读一段额度相关的代码，
+    /// 整段输出就命中 —— 实测把火山方舟和 Kimi 各误判罚下场一次。
+    /// 额度类判定统一走 `CooldownLedger.classify`，那里是「同一行内
+    /// 错误信号 + 额度措辞」双条件。
     static let platformMarkers = [
         "not logged in", "oauth", "authenticate", "unauthorized", "401", "403",
-        "invalid api key", "no credentials", "please run /login", "quota", "rate limit",
-        "429", "insufficient", "command not found", "econnrefused", "enotfound",
+        "invalid api key", "no credentials", "please run /login",
+        "command not found", "econnrefused", "enotfound",
     ]
 
     public static func classify(exitCode: Int32, stdout: String, stderr: String,
@@ -1718,6 +1725,12 @@ public enum FailureClassifier {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let brief = String(msg.suffix(200))
         if platformMarkers.contains(where: { text.contains($0) }) {
+            return .platformUnavailable(brief)
+        }
+        // 额度类走统一的双条件判定。放在这里而不是塞进 platformMarkers，
+        // 是因为它需要区分「服务端说打满了」和「agent 随口提了句 quota」——
+        // 单纯的字符串包含做不到这件事。
+        if CooldownLedger.classify(text) == .quotaExhausted {
             return .platformUnavailable(brief)
         }
         return .agentFailed("退出码 \(exitCode)：" + brief)

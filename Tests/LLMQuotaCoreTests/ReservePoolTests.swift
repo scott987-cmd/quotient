@@ -85,3 +85,42 @@ final class CooldownClassifyTests: XCTestCase {
             "Kimi 的原话没有 429，但 refreshed in the next cycle 是明说打满了")
     }
 }
+
+extension CooldownClassifyTests {
+    /// 超时不该判成额度用尽 —— 这是今天误冻两个平台的那条路径。
+    ///
+    /// 火山方舟 1 天 16 小时、Kimi 7 小时 45 分，两次的详情都明写着
+    /// 「超时被终止」。超时被杀时输出是被掐断的半截，拿它判额度不成立。
+    func testTimeoutIsNotQuotaExhaustion() {
+        let f = FailureClassifier.classify(
+            exitCode: -9,
+            stdout: "正在调整对比度… insufficient contrast, 重新生成",
+            stderr: "", timedOut: true)
+        guard case .timedOut = f else {
+            return XCTFail("超时应该判成 timedOut，实际是 \(String(describing: f))")
+        }
+    }
+
+    /// 真额度用尽仍然要判成「平台不可用」，这样才会换平台重试。
+    func testRealQuotaExhaustionStillSwitchesPlatform() {
+        let f = FailureClassifier.classify(
+            exitCode: 1,
+            stdout: "API Error: Request rejected (429) · [已达到 5 小时的使用上限。]",
+            stderr: "", timedOut: false)
+        guard case .platformUnavailable = f else {
+            return XCTFail("真打满要换平台，实际是 \(String(describing: f))")
+        }
+        XCTAssertTrue(f?.shouldTryNextPlatform == true)
+    }
+
+    /// agent 正常输出里提到额度，不该让它被判成平台不可用。
+    func testAgentMentioningQuotaIsJustATaskFailure() {
+        let f = FailureClassifier.classify(
+            exitCode: 1,
+            stdout: "读 QuotaSignal.swift，这段在判额度打满；测试没过",
+            stderr: "", timedOut: false)
+        guard case .agentFailed = f else {
+            return XCTFail("这是任务失败不是平台问题，实际是 \(String(describing: f))")
+        }
+    }
+}
