@@ -79,6 +79,15 @@ final class IdleFillerTests: XCTestCase {
         XCTAssertTrue(opps.isEmpty, "冷却中还塞活：\(opps)")
     }
 
+    /// 填活时先派真需求 —— 空窗只填得下一个，得是最值钱的那个。
+    func testRealDemandOutranksChores() {
+        XCTAssertLessThan(ReservePool.Fact.Rule.reviewFinding.priority,
+                          ReservePool.Fact.Rule.missingDoc.priority,
+                          "审查发现是人读完 diff 写的，补注释是扫出来的格式问题")
+        XCTAssertLessThan(ReservePool.Fact.Rule.todoMarker.priority,
+                          ReservePool.Fact.Rule.noTestReference.priority)
+    }
+
     /// 队列里已经有活 → 不填。调度器自己会派，填了只是插队。
     func testDoesNotFillWhenQueueHasWork() {
         var t = WorkTask(id: "q1", prompt: "已有的活", repo: "/tmp")

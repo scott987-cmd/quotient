@@ -1,0 +1,59 @@
+import XCTest
+@testable import LLMQuotaCore
+
+
+// MARK: - 真需求规则
+
+extension ReservePoolTests {
+    /// TODO 只认注释里的 —— 字符串常量里的 "TODO" 是数据不是欠账。
+    func testTodoOnlyCountsComments() {
+        XCTAssertEqual(ReservePool.todoNote("// TODO: 把重试次数改成可配置"),
+                       "把重试次数改成可配置")
+        XCTAssertEqual(ReservePool.todoNote("    // FIXME 这里的时区判断在夏令时会错"),
+                       "这里的时区判断在夏令时会错")
+        XCTAssertNil(ReservePool.todoNote(#"let rule = "TODO: something""#),
+                     "字符串里的 TODO 不是待办，派下去只会改坏代码")
+        XCTAssertNil(ReservePool.todoNote("// TODO"), "光写 TODO 没说干什么，转不成任务")
+    }
+
+    /// 审查报告的真实格式：`### 3. Foo.swift:91 — 描述（低）`。
+    ///
+    /// 这个测试是拿 ~/dev/Maw/reviews/REVIEW-0f5bba0.md 的真实内容钉的 ——
+    /// 第一版按 `- [ ]` 复选框写解析，对着真报告一条都挖不出来。
+    func testReviewFindingsParseRealReportFormat() throws {
+        XCTAssertNotNil(ReservePool.findingNote(
+            "### 2. Tuning.swift:90 — 注释「十来口」与实际数值不符（低）"))
+        XCTAssertNotNil(ReservePool.findingNote("- [ ] 冷却台账写入没加锁"))
+        XCTAssertNil(ReservePool.findingNote("## 发现"),
+                     "章节标题不是发现 —— 没有文件:行就没法定位，派下去只能瞎猜")
+        XCTAssertNil(ReservePool.findingNote("### 审查方法"))
+    }
+
+    func testReviewFindingsReadRecentReportsOnly() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rp-\(UUID().uuidString)")
+        let reviews = root.appendingPathComponent("reviews")
+        try FileManager.default.createDirectory(at: reviews, withIntermediateDirectories: true)
+        try """
+        # 审查：合并 abc1234
+        ## 发现
+        ### 1. GameScene.swift:113 — 调试入口未做门控（中）
+        正文正文。
+        """.write(to: reviews.appendingPathComponent("REVIEW-abc1234.md"),
+                  atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let facts = ReservePool.reviewFindings(root: root, limit: 10)
+        XCTAssertEqual(facts.count, 1, "挖出的应该只有那条带文件:行的发现：\(facts.map(\.symbol))")
+        XCTAssertTrue(facts[0].symbol.contains("GameScene.swift:113"))
+        XCTAssertTrue(ReservePool.prompt(for: facts[0]).contains("GameScene.swift:113"),
+                      "任务描述里必须带定位信息，否则 agent 得自己找")
+
+        // 报告太老就不看了：问题多半早修了，派下去是白烧额度
+        let old = Date().addingTimeInterval(-20 * 86400)
+        XCTAssertTrue(ReservePool.reviewFindings(root: root, limit: 10,
+                                                 now: Date().addingTimeInterval(20 * 86400)).isEmpty,
+                      "两周前的报告不该再派")
+        _ = old
+    }
+}

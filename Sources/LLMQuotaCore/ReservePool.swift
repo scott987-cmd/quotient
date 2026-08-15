@@ -27,11 +27,40 @@ public enum ReservePool {
             case missingDoc = "missing-doc"
             /// 公开类型在测试里一次都没出现过。
             case noTestReference = "no-test-ref"
+            /// 代码里自己写的 TODO / FIXME。
+            ///
+            /// **这是最靠谱的一类真需求**：写代码的人当场知道这里欠着账，
+            /// 才会留下标记。原来储备池只会扫「缺注释/缺测试」——
+            /// 那是格式问题，不是需求，做完也没人在乎（实测落地率极低）。
+            case todoMarker = "todo"
+            /// 审查报告里列出的问题（reviews/REVIEW-*.md 的条目）。
+            ///
+            /// 审查员每次落地后都会产出报告，那里面全是「有人看过、
+            /// 确认有问题」的条目 —— 比任何自动扫描都准。
+            case reviewFinding = "review-finding"
 
             public var title: String {
                 switch self {
                 case .missingDoc: return "补文档注释"
                 case .noTestReference: return "补测试"
+                case .todoMarker: return "清 TODO"
+                case .reviewFinding: return "修审查发现的问题"
+                }
+            }
+
+            /// 派活优先级，越小越先派。
+            ///
+            /// 排序依据是**有没有人真的想要它**：审查发现是人读完 diff 写下的，
+            /// TODO 是写代码的人自己留的账，这两类有明确的需求方；
+            /// 缺注释缺测试是扫出来的格式问题，做完也未必有人关心
+            ///（实测这类任务落地率最低）。空窗只填得下一个活，
+            /// 那就得是最值钱的那个。
+            public var priority: Int {
+                switch self {
+                case .reviewFinding: return 0
+                case .todoMarker: return 1
+                case .noTestReference: return 2
+                case .missingDoc: return 3
                 }
             }
         }
@@ -86,10 +115,18 @@ public enum ReservePool {
     /// 无人值守路径上，不能因为仓库内容而产生副作用。
     public static func facts(repo: String, limitPerRule: Int = 20) -> [Fact] {
         let root = URL(fileURLWithPath: NSString(string: repo).expandingTildeInPath)
-        let sources = swiftFiles(under: root.appendingPathComponent("Sources"))
-        guard !sources.isEmpty else { return [] }
+        // **别写死 Sources/。** SwiftPM 包是 Sources/，但 Xcode 工程
+        // 把代码放在与产品同名的目录下（Maw/Maw、Greed/Greed）。
+        // 写死的后果实测过：两个游戏仓库扫出 0 条事实，储备池对它们
+        // 完全是瞎的 —— 而它们恰恰是待办最多的仓库。
+        let all = swiftFiles(under: root)
+        let sources = all.filter { !isTestFile($0) }
+        guard !sources.isEmpty else {
+            // 没有 Swift 代码也可能有审查报告（比如纯资源仓库）
+            return reviewFindings(root: root, limit: limitPerRule)
+        }
 
-        let testText = swiftFiles(under: root.appendingPathComponent("Tests"))
+        let testText = all.filter { isTestFile($0) }
             .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
             .joined(separator: "\n")
 
@@ -120,8 +157,87 @@ public enum ReservePool {
                     noTest += 1
                 }
             }
+
+            // TODO / FIXME：写代码的人当场留下的欠账
+            for (i, raw) in lines.enumerated() {
+                guard todoNote(raw) != nil else { continue }
+                guard out.filter({ $0.rule == .todoMarker }).count < limitPerRule else { break }
+                out.append(Fact(rule: .todoMarker, file: rel, line: i + 1,
+                                symbol: todoNote(raw) ?? ""))
+            }
+        }
+        out.append(contentsOf: reviewFindings(root: root, limit: limitPerRule))
+        return out
+    }
+
+    /// 一行里的 TODO/FIXME 注释内容（不是就返回 nil）。
+    ///
+    /// 只认**注释里**的标记：字符串常量里出现 "TODO" 是数据不是欠账
+    ///（比如这个文件自己的规则名）。
+    static func todoNote(_ raw: String) -> String? {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        guard line.hasPrefix("//") else { return nil }
+        let body = line.drop(while: { $0 == "/" }).trimmingCharacters(in: .whitespaces)
+        for marker in ["TODO", "FIXME", "HACK", "XXX"] {
+            guard body.hasPrefix(marker) else { continue }
+            let note = body.dropFirst(marker.count)
+                .trimmingCharacters(in: CharacterSet(charactersIn: ": "))
+            // 光写个 TODO 不说要干什么的，没法转成任务
+            guard note.count >= 8 else { return nil }
+            return String(note.prefix(160))
+        }
+        return nil
+    }
+
+    /// 审查报告里列出的发现。
+    ///
+    /// 审查员每次落地后都会往 `reviews/` 写报告。它的发现是**有人读过
+    /// 完整 diff、逐文件核对过**才写下来的 —— 比任何自动扫描都接近真需求。
+    /// 而在此之前这些报告写完就躺在那儿没人管：40% 的落地率里，
+    /// 审查发现的问题几乎没有一条被转成过任务。
+    ///
+    /// 认两种写法：审查员的标题式发现（`### 3. Foo.swift:91 — 描述（低）`）
+    /// 和普通的未勾选清单项（`- [ ] …`）。
+    /// 只读最近两周改过的报告：更老的问题多半早就修了或已不适用。
+    static func reviewFindings(root: URL, limit: Int,
+                               now: Date = Date()) -> [Fact] {
+        let dir = root.appendingPathComponent("reviews")
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return [] }
+        var out: [Fact] = []
+        for name in names.sorted().reversed() where name.hasSuffix(".md") {
+            let f = dir.appendingPathComponent(name)
+            let mod = (try? f.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate) ?? .distantPast
+            guard now.timeIntervalSince(mod) < 14 * 86400 else { continue }
+            guard let text = try? String(contentsOf: f, encoding: .utf8) else { continue }
+            for (i, raw) in text.components(separatedBy: "\n").enumerated() {
+                guard let note = findingNote(raw) else { continue }
+                out.append(Fact(rule: .reviewFinding,
+                                file: "reviews/" + name, line: i + 1, symbol: note))
+                if out.count >= limit { return out }
+            }
         }
         return out
+    }
+
+    /// 报告里的一行是不是一条发现。
+    ///
+    /// 严重度标注（高/中/低）一并留在描述里 —— 派活时它是优先级信息。
+    static func findingNote(_ raw: String) -> String? {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        if line.hasPrefix("- [ ]") {
+            let note = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            return note.count >= 8 ? String(note.prefix(200)) : nil
+        }
+        // `### 3. GameScene.swift:113-116 — 描述（中）`
+        guard line.hasPrefix("###") else { return nil }
+        let body = line.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
+        // 必须带「文件:行」才算可执行的发现；`## 发现` 这种标题不是。
+        guard body.range(of: #"[A-Za-z0-9_]+\.\w+:\d+"#,
+                         options: .regularExpression) != nil else { return nil }
+        guard body.count >= 12 else { return nil }
+        return String(body.prefix(200))
     }
 
     /// `public func foo(` → ("func", "foo")
@@ -153,9 +269,23 @@ public enum ReservePool {
         guard let e = FileManager.default.enumerator(
             at: dir, includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
-        return e.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }.sorted {
-            $0.path < $1.path
-        }
+        return e.compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" && !isGenerated($0) }
+            .sorted { $0.path < $1.path }
+    }
+
+    /// 构建产物、依赖、工作区 —— 不是我们的代码，扫出来的「待办」全是噪音。
+    static func isGenerated(_ url: URL) -> Bool {
+        let parts = Set(url.pathComponents)
+        return !parts.isDisjoint(with: [".build", "DerivedData", "Pods",
+                                        "Carthage", "worktrees", ".swiftpm",
+                                        "node_modules"])
+    }
+
+    /// 测试文件。目录叫 Tests，或者文件名以 Tests.swift 结尾。
+    static func isTestFile(_ url: URL) -> Bool {
+        url.pathComponents.contains("Tests")
+            || url.lastPathComponent.hasSuffix("Tests.swift")
     }
 
     /// 事实 → 任务描述。**固定模板，事实只填槽位。**
@@ -169,6 +299,15 @@ public enum ReservePool {
             return "为 \(f.file) 里的 `\(f.symbol)` 补单元测试，放进 Tests/。"
                 + "先读懂它的实际行为再写断言，覆盖边界情况。"
                 + "只新增测试，不要改 Sources/ 下的任何文件。"
+        case .todoMarker:
+            return "\(f.file) 第 \(f.line) 行留着一条待办：「\(f.symbol)」。"
+                + "读懂上下文后把它做掉，然后删掉那条 TODO 注释。"
+                + "如果读完发现它已经不成立（需求变了/早就做过了），"
+                + "就只删注释并在提交信息里说明为什么它不再适用。"
+        case .reviewFinding:
+            return "代码审查报告 \(f.file) 里列了一条待修项：「\(f.symbol)」。"
+                + "定位到对应代码把它修掉，补上能复现该问题的测试，"
+                + "然后把报告里那一条从 `- [ ]` 改成 `- [x]`。"
         }
     }
 

@@ -1071,7 +1071,13 @@ func cmdWork(_ args: [String]) throws {
     // 储备任务池：额度快作废时拿来填窗口的低危维护任务。
     // 默认只看不写 —— 生成任务是会烧额度的动作，不该是敲错一个词的后果。
     case "reserve":
-        let repoPath = RepoRegistry.resolve(nil) ?? FileManager.default.currentDirectoryPath
+        let repoArg = rest.firstIndex(of: "--repo").flatMap { i -> String? in
+            let j = rest.index(after: i)
+            return j < rest.endIndex ? rest[j] : nil
+        }
+        let repoPath = RepoRegistry.resolve(repoArg)
+            ?? NSString(string: repoArg ?? FileManager.default.currentDirectoryPath)
+                .expandingTildeInPath
         let limit = rest.firstIndex(of: "--limit").flatMap { i -> Int? in
             let j = rest.index(after: i)
             return j < rest.endIndex ? Int(rest[j]) : nil
@@ -1084,6 +1090,12 @@ func cmdWork(_ args: [String]) throws {
 
         print(Ansi.dim("仓库 \(repoPath)"))
         print(Ansi.dim("扫出 \(all.count) 条事实，其中 \(todo.count) 条还没人做"))
+        var byRule: [String: Int] = [:]
+        for f in todo { byRule[f.rule.title, default: 0] += 1 }
+        if !byRule.isEmpty {
+            print(Ansi.dim("  " + byRule.sorted { $0.value > $1.value }
+                .map { "\($0.key) \($0.value)" }.joined(separator: "、")))
+        }
         guard !todo.isEmpty else { return }
 
         // **排队里还有活就不生成。**

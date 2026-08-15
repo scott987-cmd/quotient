@@ -102,7 +102,9 @@ public enum IdleFiller {
             let path = NSString(string: repo.localPath).expandingTildeInPath
             guard FileManager.default.fileExists(atPath: path) else { continue }
             let facts = ReservePool.facts(repo: path, limitPerRule: 5)
+            // 真需求排前面：审查发现 > TODO > 缺测试 > 缺注释
             let todo = ReservePool.pending(facts, tasks: tasks)
+                .sorted { $0.rule.priority < $1.rule.priority }
             // 挑第一个**不碰高危路径**的 —— 空窗填的是零碎活，
             // 碰构建配置的活要人确认，塞进来只会变成又一个 blocked。
             for f in todo {
