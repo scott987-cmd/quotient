@@ -2364,8 +2364,12 @@ func cmdWorkLoop(_ args: [String]) throws {
         //
         // 推了「10 份产出等你验收」却没地方看，那个数字就是噪音 ——
         // 老板的原话是「显示有 94 个消息但是我也看不到」。
-        phase("同步验收", 25) {
-            Review.publishDigests()
+        // **发布降频到 5 分钟一次。** 它要对每个仓库的每个待审分支跑
+        // git diff / merge-tree，四个仓库十来个分支，一轮就能超过 25 秒 ——
+        // 挂在 30 秒的循环里每轮都卡住，实测日志里全是「本轮跳过它」。
+        // 收结论是廉价的（读几个小 JSON），保持每轮。
+        phase("同步验收", 90) {
+            if Review.shouldRepublish() { Review.publishDigests() }
             for (v, ok) in Review.ingestVerdicts() {
                 print((ok ? Ansi.green("  手机上") : Ansi.red("  手机上（失败）"))
                       + (v.action == "merge" ? "合了 " : "丢了 ") + v.branch)

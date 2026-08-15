@@ -670,3 +670,18 @@ extension Review {
         return applied
     }
 }
+
+extension Review {
+    /// 距离上次发布够久了吗。
+    ///
+    /// 发布一次要对每个仓库的每个待审分支跑 git —— 挂在 30 秒的循环里
+    /// 每轮都超时。而待审集合变化很慢（一个任务跑几分钟），
+    /// 5 分钟一次的新鲜度绰绰有余。
+    public static func shouldRepublish(every: TimeInterval = 300,
+                                       now: Date = Date()) -> Bool {
+        let stamp = Paths.sharedRoot.appendingPathComponent("reviews.json")
+        guard let mod = (try? stamp.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate else { return true }
+        return now.timeIntervalSince(mod) >= every
+    }
+}
