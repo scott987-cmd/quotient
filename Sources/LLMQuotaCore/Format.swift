@@ -84,3 +84,14 @@ public enum Format {
         return String(repeating: "█", count: filled) + String(repeating: "░", count: width - filled)
     }
 }
+
+public extension Format {
+    /// 给归档文件名用的时间戳：2026-08-15-0930。
+    /// 用连字符不用冒号 —— 冒号在某些网络文件系统（SMB）上是非法字符。
+    static func fileStamp(_ d: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd-HHmm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.string(from: d)
+    }
+}

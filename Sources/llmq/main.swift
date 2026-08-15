@@ -430,6 +430,57 @@ func cmdLearn(_ args: [String]) throws {
 /// 「浪费了多少」在没有上限时唯一能站住的口径：完整过去的额度窗口里，
 /// 一次都没用的有多少。取数和聚合在 WasteMeter.assessAll（纯函数），
 /// 这里只负责打印。
+/// `llmq archive [--to <目录>] [--keep-days N] [--dry-run]`
+///
+/// 干完的活归档到 NAS，本地只留还用得着的。默认目标从配置读
+/// （`archiveTarget`），也可以 --to 临时指定。
+func cmdArchive(_ args: [String]) throws {
+    var target: URL?
+    if let i = args.firstIndex(of: "--to"), i + 1 < args.count {
+        target = URL(fileURLWithPath: NSString(string: args[i + 1]).expandingTildeInPath)
+    } else if let saved = ArchiveConfig.target() {
+        target = saved
+    }
+    var keep = 14
+    if let i = args.firstIndex(of: "--keep-days"), i + 1 < args.count,
+       let v = Int(args[i + 1]) { keep = v }
+    let dry = args.contains("--dry-run")
+
+    if target == nil {
+        print(Ansi.yellow("没有归档目标 —— 只清理本地，不备份。"))
+        print(Ansi.dim("  设一次：llmq archive --to /Volumes/<NAS>/llmq-archive --save"))
+    } else {
+        print(Ansi.dim("归档到 " + target!.path))
+    }
+    let r = try Archive.run(target: target, keepDays: keep, dryRun: dry)
+    if dry { print(Ansi.yellow("（--dry-run，什么都没动）")) }
+    print("  日志归档 \(r.archivedLogs) 个"
+          + " · 任务记录归档 \(r.archivedTaskLines) 条"
+          + " · worktree 清掉 \(r.removedWorktrees) 个")
+    let mb = Double(r.freedBytes) / 1024 / 1024
+    print(Ansi.green(String(format: "  本地腾出 %.0f MB", mb)))
+    for n in r.notes { print(Ansi.dim("  " + n)) }
+
+    if args.contains("--save"), let t = target {
+        ArchiveConfig.save(t)
+        print(Ansi.dim("  已记住这个归档目标，以后直接 llmq archive"))
+    }
+}
+
+/// 归档目标存本机（不进 iCloud 共享配置）—— 每台机器的挂载点不一样，
+/// 而且 NAS 路径属于这台机器的环境，不该跟着配置同步到别的机器上。
+enum ArchiveConfig {
+    static var file: URL { Paths.appSupport.appendingPathComponent("archive-target.txt") }
+    static func target() -> URL? {
+        guard let s = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let p = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return p.isEmpty ? nil : URL(fileURLWithPath: p)
+    }
+    static func save(_ url: URL) {
+        try? url.path.write(to: file, atomically: true, encoding: .utf8)
+    }
+}
+
 /// `llmq brief [--since <小时数>]` —— 两个会话共享事实的入口。
 ///
 /// 派活会话和改代码会话各开一个，谁都不必读对方的对话：
@@ -4240,6 +4291,8 @@ do {
         try cmdLearn(rest)
     case "brief":
         cmdBrief(rest)
+    case "archive":
+        try cmdArchive(rest)
     case "waste":
         try cmdWaste()
     case "security":
