@@ -2244,6 +2244,37 @@ func cmdWorkLoop(_ args: [String]) throws {
             }
         }
 
+        // **空窗填活**：窗口快过期还没用够时，主动找个真需求干掉。
+        //
+        // 实测空窗率 Codex 82%、Kimi 69% —— 钱不是花在干活上浪费的，
+        // 是**根本没开工**就过期了。调度只做「有活时挑谁干」是做了一半，
+        // 另一半是「没活时主动找活」。三条闸管着不抢人的额度：
+        // 留白线、人在用就让开、只在窗口尾声（剩 90 分钟内）动手。
+        phase("空窗填活", 30) {
+            let dash = LLMQuota.dashboard()
+            let opps = IdleFiller.opportunities(dashboard: dash)
+            guard let opp = opps.first else { return }
+            guard let work = IdleFiller.findWork(for: opp) else {
+                // 找不到真需求就老实闲着 —— 绝不为了填窗口编任务，
+                // 那只是把「窗口过期」的浪费换成「产出没人要」的浪费。
+                print(Ansi.dim("  空窗 " + opp.platform.displayName
+                               + "（" + opp.reason + "）但没有现成的活可填"))
+                return
+            }
+            let repo = RepoRegistry.all().first(where: { $0.isDefault })?.localPath
+                ?? RepoRegistry.all().first?.localPath
+            guard let repo else { return }
+            print(Ansi.cyan("  空窗填活 ") + opp.platform.displayName
+                  + Ansi.dim("  " + opp.reason))
+            if let outcome = try? TaskIntake.enqueue(
+                prompt: work, repo: NSString(string: repo).expandingTildeInPath,
+                classify: true, split: false, force: false,
+                origin: "idle-filler", preferredPlatform: opp.platform),
+               case .single(let t) = outcome {
+                print(Ansi.dim("    已入队 " + t.id))
+            }
+        }
+
         var incoming: [Inbox.Ingested] = []
         phase("收远程任务", 20) { incoming = Inbox.ingest() }
         for got in incoming {
