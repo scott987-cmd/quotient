@@ -620,22 +620,27 @@ extension Review {
     static func extractEvidence(repo: String, branch: String,
                                 files: [String], digestID: String,
                                 limit: Int = 4) -> [String] {
+        // **平铺，不建子目录。** 镜像的目录推送只看平铺文件
+        //（regularFiles 不递归），放进子目录的话一张都推不过去 ——
+        // 实测抽出来 18 张，iCloud 里一张都没有。
+        // 文件名带上分支标识，用 `__` 隔开。
         let safe = digestID.replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "|", with: "-")
-        let dir = evidenceDir.appendingPathComponent(safe, isDirectory: true)
+        let dir = evidenceDir
         let fm = FileManager.default
-        // 已经抽过就不重复干 —— 这个函数挂在 5 分钟一次的发布里。
-        if let have = try? fm.contentsOfDirectory(atPath: dir.path),
-           !have.filter({ $0.hasSuffix(".jpg") }).isEmpty {
-            return have.filter { $0.hasSuffix(".jpg") }.sorted()
+        let prefix = safe + "__"
+        if let have = try? fm.contentsOfDirectory(atPath: dir.path) {
+            let mine = have.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".jpg") }
+            // 已经抽过就不重复干 —— 这个函数挂在 5 分钟一次的发布里。
+            if !mine.isEmpty { return mine.sorted() }
         }
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
 
         var out: [String] = []
         for f in files.prefix(limit) {
             let base = (f as NSString).lastPathComponent
-            let jpg = ((base as NSString).deletingPathExtension) + ".jpg"
-            let raw = dir.appendingPathComponent("." + base)
+            let jpg = prefix + ((base as NSString).deletingPathExtension) + ".jpg"
+            let raw = dir.appendingPathComponent("." + prefix + base)
             let esc = { (x: String) in
                 "'" + x.replacingOccurrences(of: "'", with: "'\\''") + "'"
             }
