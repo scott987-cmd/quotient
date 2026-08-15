@@ -4640,6 +4640,12 @@ func cmdPlaybook(_ args: [String]) throws {
     let sub = args.first ?? "list"
     let rest = Array(args.dropFirst())
 
+    // 先收一遍手机批的 —— 看清单的时候理应看到最新状态，
+    // 而不是「批了但要等 work loop 跑一轮才认」。
+    for p in Playbook.ingestApprovals() {
+        print(Ansi.green("收到批准：") + p.name)
+    }
+
     switch sub {
     case "list":
         let all = Playbook.all()

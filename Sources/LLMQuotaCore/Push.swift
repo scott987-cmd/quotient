@@ -62,8 +62,7 @@ public enum Push {
 
     // MARK: - 设备清单
 
-    /// 手机把 token 写在 iCloud 镜像目录下的 `push-tokens/`。
-    /// 和 Mac 端推快照过去用的是同一个目录 —— 不另开通道。
+    /// iCloud 那份（手机直接写在这里）。
     public static var mirrorDir: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(
@@ -71,15 +70,28 @@ public enum Push {
                 isDirectory: true)
     }
 
+    /// 手机登记的设备。
+    ///
+    /// **两个地方都读**：镜像同步下来的本地副本（`sharedRoot/push-tokens`）
+    /// 和 iCloud 原件。只读一个都会漏 —— 镜像还没跑到时只有 iCloud 有，
+    /// 而 iCloud 文件可能是没下载的占位符、本地副本反而是全的。
+    /// 同一台设备两边都有时按 token 去重。
     public static func devices(sharedRoot: URL? = nil) -> [Device] {
-        let root = sharedRoot ?? mirrorDir
-        let dir = root.appendingPathComponent("push-tokens")
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
-        else { return [] }
-        return names.filter { $0.hasSuffix(".json") }.compactMap {
-            guard let d = try? Data(contentsOf: dir.appendingPathComponent($0)) else { return nil }
-            return try? JSONDecoder().decode(Device.self, from: d)
+        var seen = Set<String>()
+        var out: [Device] = []
+        for root in [sharedRoot ?? Paths.sharedRoot, mirrorDir] {
+            let dir = root.appendingPathComponent("push-tokens")
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
+            else { continue }
+            for n in names where n.hasSuffix(".json") {
+                guard let d = try? Data(contentsOf: dir.appendingPathComponent(n)),
+                      let dev = try? JSONDecoder().decode(Device.self, from: d),
+                      !seen.contains(dev.token) else { continue }
+                seen.insert(dev.token)
+                out.append(dev)
+            }
         }
+        return out
     }
 
     // MARK: - 发送

@@ -248,8 +248,15 @@ extension Playbook {
         public var note: String?
     }
 
+    /// **必须是 sharedRoot，不是 appSupport。**
+    ///
+    /// 镜像服务同步的本地根是 `Paths.sharedRoot`（= appSupport/shared），
+    /// 手机写来的东西全落在那儿。写成 appSupport/approvals 的后果实测过：
+    /// 老板在手机上批了，文件也确实同步下来了，程序却一直在另一个目录找，
+    /// 清单上永远显示「等你过目」—— 批准像是没生效。
+    /// answers/ inbox/ 这些也都在 sharedRoot 下，别再另开一处。
     static var approvalsDir: URL {
-        Paths.appSupport.appendingPathComponent("approvals", isDirectory: true)
+        Paths.sharedRoot.appendingPathComponent("approvals", isDirectory: true)
     }
 
     /// 收手机批准：应用到清单，然后删掉那个文件（已经生效了，留着只会重复应用）。
