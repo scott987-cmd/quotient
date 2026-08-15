@@ -560,3 +560,113 @@ public enum Review {
         return nil
     }
 }
+
+// MARK: - 发给手机
+
+extension Review {
+    /// 待审产出的手机端视图。
+    ///
+    /// **为什么必须有这个**：系统推了一条「10 份产出等你验收」，而 App 里
+    /// 根本没有对应的页面 —— 老板的原话是「显示有 94 个消息但是我也看不到」。
+    /// 一个数字指向不存在的地方，比不显示更糟。
+    public struct Digest: Codable, Sendable, Identifiable {
+        public var id: String { repo + "|" + branch }
+        public var repo: String
+        public var repoName: String
+        public var branch: String
+        public var platform: String
+        public var subject: String
+        public var prompt: String?
+        public var files: [String]
+        public var insertions: Int
+        public var deletions: Int
+        public var mergesCleanly: Bool
+        public var overlapsWith: [String]
+        public var committedAt: Date?
+        /// agent 交的证据截图（相对仓库根的路径）。
+        public var evidence: [String]
+    }
+
+    /// 手机上的验收结论。写进 `shared/verdicts/<repo>|<branch>.json`，
+    /// Mac 端下一轮读到就执行 —— 和批准项目走 approvals/ 是同一套路子。
+    public struct Verdict: Codable, Sendable {
+        public var repo: String
+        public var branch: String
+        /// merge / discard
+        public var action: String
+        public var reason: String?
+        public var decidedAt: Date
+    }
+
+    /// 把所有仓库的待审产出写给手机。
+    @discardableResult
+    public static func publishDigests(repos: [RepoAlias] = RepoRegistry.all()) -> [Digest] {
+        var out: [Digest] = []
+        for r in repos {
+            let path = NSString(string: r.localPath).expandingTildeInPath
+            guard GitWorkspace.isRepo(path) else { continue }
+            for item in list(repo: path) {
+                out.append(Digest(
+                    repo: path, repoName: r.alias, branch: item.branch,
+                    platform: item.platform, subject: item.subject,
+                    prompt: item.prompt, files: item.files,
+                    insertions: item.insertions, deletions: item.deletions,
+                    mergesCleanly: item.mergesCleanly,
+                    overlapsWith: item.overlapsWith,
+                    committedAt: item.committedAt,
+                    evidence: item.evidence))
+            }
+        }
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+        try? FileManager.default.createDirectory(
+            at: Paths.sharedRoot, withIntermediateDirectories: true)
+        if let d = try? enc.encode(out) {
+            try? d.write(to: Paths.sharedRoot.appendingPathComponent("reviews.json"))
+        }
+        return out
+    }
+
+    static var verdictsDir: URL {
+        Paths.sharedRoot.appendingPathComponent("verdicts", isDirectory: true)
+    }
+
+    /// 收手机上的验收结论并执行。
+    ///
+    /// 和 approvals 一样**不删文件**：verdicts 是双向同步的，本地删掉
+    /// 下一轮就被云端拉回来。改成执行过的记进 `verdicts/.done`，
+    /// 靠它幂等。
+    @discardableResult
+    public static func ingestVerdicts() -> [(Verdict, Bool)] {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: verdictsDir.path)
+        else { return [] }
+        let doneFile = verdictsDir.appendingPathComponent(".done")
+        var done = Set((try? String(contentsOf: doneFile, encoding: .utf8))?
+            .split(separator: "\n").map(String.init) ?? [])
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        var applied: [(Verdict, Bool)] = []
+
+        for name in names where name.hasSuffix(".json") {
+            guard let d = try? Data(contentsOf: verdictsDir.appendingPathComponent(name)),
+                  let v = try? dec.decode(Verdict.self, from: d) else { continue }
+            let key = v.repo + "|" + v.branch + "|" + v.action
+            guard !done.contains(key) else { continue }
+            done.insert(key)
+
+            var ok = false
+            if v.action == "merge" {
+                if case .success = merge(repo: v.repo, branch: v.branch) { ok = true }
+            } else {
+                discard(repo: v.repo, branch: v.branch,
+                        reason: v.reason ?? "手机上丢弃")
+                ok = true
+            }
+            applied.append((v, ok))
+        }
+        try? done.joined(separator: "\n").write(to: doneFile,
+                                                atomically: true, encoding: .utf8)
+        return applied
+    }
+}

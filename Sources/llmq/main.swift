@@ -1318,8 +1318,17 @@ func cmdWork(_ args: [String]) throws {
                 + (dropped.isEmpty ? "" : "，丢弃 \(dropped.count) 份")
                 + String(format: "  落地率 %.0f%%", rate * 100)))
         }
+        // 顺手发给手机 —— 人看得见才谈得上验收。
+        //
+        // **空清单也要发。** 只在有内容时才写文件的话，最后一份被合掉之后
+        // 手机上会一直挂着上一批的旧数据，人点进去看到的是幽灵。
+        let published = Review.publishDigests()
         guard !items.isEmpty else {
-            print(Ansi.dim("没有待审的 agent 分支。")); return
+            print(Ansi.dim("这个仓库没有待审的 agent 分支。"))
+            if !published.isEmpty {
+                print(Ansi.dim("（别的仓库还有 \(published.count) 份，已发给手机）"))
+            }
+            return
         }
         let clean = items.filter(\.mergesCleanly).count
         print(Ansi.bold("\(items.count) 个待审产出")
@@ -2348,6 +2357,18 @@ func cmdWorkLoop(_ args: [String]) throws {
                 if let pid = hit.projectID {
                     Playbook.recordRun(pid, consumedTopic: hit.usedTopic)
                 }
+            }
+        }
+
+        // 把待审产出发给手机，并收回它们的验收结论。
+        //
+        // 推了「10 份产出等你验收」却没地方看，那个数字就是噪音 ——
+        // 老板的原话是「显示有 94 个消息但是我也看不到」。
+        phase("同步验收", 25) {
+            Review.publishDigests()
+            for (v, ok) in Review.ingestVerdicts() {
+                print((ok ? Ansi.green("  手机上") : Ansi.red("  手机上（失败）"))
+                      + (v.action == "merge" ? "合了 " : "丢了 ") + v.branch)
             }
         }
 
@@ -4792,6 +4813,14 @@ func cmdPush(_ args: [String]) throws {
             }
         }
 
+    // llmq push badge [数字] —— 把手机角标改成真实待办数（不响不弹）
+    case "badge":
+        let n = args.dropFirst().first.flatMap { Int($0) }
+            ?? Nudge.pending().reduce(0) { $0 + $1.badge }
+        let sent = Push.syncBadge(n)
+        print(sent > 0 ? Ansi.green("角标已改成 \(n)") + Ansi.dim("（\(sent) 台设备）")
+                       : Ansi.red("没推出去。llmq push check 看卡在哪"))
+
     case "test":
         let body = args.dropFirst().joined(separator: " ")
         let n = Push.send(.needsYou,
@@ -4801,6 +4830,6 @@ func cmdPush(_ args: [String]) throws {
                     : Ansi.red("一台都没推出去。跑 llmq push check 看卡在哪"))
 
     default:
-        print("用法：llmq push [check|pending|test <正文>]")
+        print("用法：llmq push [check|pending|badge [n]|test <正文>]")
     }
 }

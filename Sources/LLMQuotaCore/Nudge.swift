@@ -122,8 +122,16 @@ public enum Nudge {
     /// - Returns: 实际发出去的条数。
     @discardableResult
     public static func run(now: Date = Date()) -> Int {
+        let items = pending(now: now)
+        // **角标要跟真实待办数同步，哪怕这一轮什么都不推。**
+        //
+        // 角标是持久的：设成 94 之后就一直挂着，而新推送被限流挡住时
+        // 没人去改它。人盯着 94 找不到对应的东西，这个数就成了噪音。
+        // 静默推送不响不弹，只把数字改对。
+        Push.syncBadge(items.reduce(0) { $0 + $1.badge })
+
         var sent = 0
-        for item in pending(now: now) {
+        for item in items {
             guard !recentlySent(item.key, now: now) else { continue }
             guard Push.send(item.kind, body: item.body, badge: item.badge) > 0 else { continue }
             remember(item.key, now: now)

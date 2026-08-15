@@ -128,11 +128,36 @@ public enum Push {
         return ok
     }
 
+    /// 只改角标，不弹横幅。
+    ///
+    /// **角标是持久的。** 推送把它设成 94 之后，它就一直挂在图标上 ——
+    /// 除非 App 主动清除，或者被新推送覆盖。而新推送又被两小时限流挡着，
+    /// 于是人盯着一个 94 找不到对应的东西（实测就是这样：判据修好之后
+    /// 真实数是 10，图标上还是 94）。
+    ///
+    /// 所以角标要能**单独同步**，而且这个动作不该打扰人 ——
+    /// 没有 alert 就不会响、不会弹。
+    @discardableResult
+    public static func syncBadge(_ n: Int) -> Int {
+        guard let cfg = Config.load() else { return 0 }
+        let list = devices()
+        guard !list.isEmpty, let jwt = signedJWT(cfg: cfg) else { return 0 }
+        let payload: [String: Any] = ["aps": ["badge": n, "content-available": 1]]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return 0 }
+        var ok = 0
+        for d in list {
+            if post(token: d.token, environment: d.environment,
+                    payload: data, jwt: jwt, cfg: cfg, pushType: "background") { ok += 1 }
+        }
+        return ok
+    }
+
     /// 一次 APNs 投递。用 curl 而不是 URLSession ——
     /// APNs 要求 HTTP/2，而 URLSession 在命令行工具里对 HTTP/2 的支持
     /// 取决于系统版本，curl 是确定的。
     static func post(token: String, environment: String,
-                     payload: Data, jwt: String, cfg: Config) -> Bool {
+                     payload: Data, jwt: String, cfg: Config,
+                     pushType: String = "alert") -> Bool {
         let host = environment == "sandbox"
             ? "api.sandbox.push.apple.com" : "api.push.apple.com"
         let tmp = FileManager.default.temporaryDirectory
@@ -145,8 +170,9 @@ public enum Push {
             "--http2", "-X", "POST",
             "-H", "authorization: bearer " + jwt,
             "-H", "apns-topic: " + cfg.bundleID,
-            "-H", "apns-push-type: alert",
-            "-H", "apns-priority: 10",
+            "-H", "apns-push-type: " + pushType,
+            // 静默推送必须用低优先级，用 10 会被 APNs 直接拒（BadPriority）。
+            "-H", "apns-priority: " + (pushType == "background" ? "5" : "10"),
             "--data-binary", "@" + tmp.path,
             "https://\(host)/3/device/\(token)",
         ], cwd: nil, env: [:], timeout: 20)
