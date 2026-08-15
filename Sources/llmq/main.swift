@@ -430,6 +430,70 @@ func cmdLearn(_ args: [String]) throws {
 /// 「浪费了多少」在没有上限时唯一能站住的口径：完整过去的额度窗口里，
 /// 一次都没用的有多少。取数和聚合在 WasteMeter.assessAll（纯函数），
 /// 这里只负责打印。
+/// `llmq brief [--since <小时数>]` —— 两个会话共享事实的入口。
+///
+/// 派活会话和改代码会话各开一个，谁都不必读对方的对话：
+/// 状态存储是同一份，这条命令把它压成三十秒能读完的一页。
+func cmdBrief(_ args: [String]) {
+    var hours = 2.0
+    if let i = args.firstIndex(of: "--since"), i + 1 < args.count,
+       let v = Double(args[i + 1]) { hours = v }
+    let since = Date().addingTimeInterval(-hours * 3600)
+    let tasks = TaskStore.all()
+
+    print(Ansi.bold("== 最近 \(Int(hours)) 小时发生了什么 =="))
+    let changes = Brief.changes(since: since, tasks: tasks)
+    if changes.isEmpty {
+        print(Ansi.dim("  （没有状态变化）"))
+    }
+    for c in changes.suffix(25) {
+        let mark: String
+        switch c.kind {
+        case "完成", "落地": mark = Ansi.green(c.kind)
+        case "失败", "卡住": mark = Ansi.red(c.kind)
+        case "丢弃": mark = Ansi.dim(c.kind)
+        default: mark = Ansi.cyan(c.kind)
+        }
+        var row = "  " + Format.dateTime(c.at) + "  " + mark + "  " + c.taskID
+        row += Ansi.dim("  " + c.title)
+        if let pl = c.platform { row += Ansi.dim(" · " + pl) }
+        print(row)
+        if let n = c.note, c.kind == "失败" || c.kind == "卡住" {
+            print(Ansi.dim("        " + n))
+        }
+    }
+
+    let s = Brief.snapshot(tasks: tasks)
+    print("")
+    print(Ansi.bold("== 此刻 =="))
+    // 拆成几段拼：整串三元 + 插值在一个表达式里会让类型检查器超时（实测）。
+    var line = "  在跑 \(s.running.count) · 排队 \(s.queued.count) · "
+    line += s.blocked.isEmpty ? "卡住 0" : Ansi.yellow("卡住 \(s.blocked.count)")
+    if s.pendingAsks > 0 { line += Ansi.yellow(" · 等你回话 \(s.pendingAsks)") }
+    print(line)
+    for t in s.running.prefix(5) {
+        let mins = t.startedAt.map { Int(Date().timeIntervalSince($0) / 60) } ?? 0
+        let who = t.platform?.displayName ?? "?"
+        let head = String(t.prompt.prefix(40))
+        print(Ansi.dim("    跑着 " + t.id + " · \(mins) 分钟 · " + who + " · " + head))
+    }
+    for t in s.blocked.prefix(5) {
+        print(Ansi.yellow("    卡住 " + t.id) + Ansi.dim(" · "
+            + String((t.note ?? t.prompt).prefix(70))))
+    }
+    if !s.pendingReview.isEmpty {
+        print("  待审：" + s.pendingReview
+            .map { "\($0.repo) \($0.branches) 条" }.joined(separator: " · "))
+    }
+    if !s.cooling.isEmpty {
+        let cool = s.cooling.map { c -> String in
+            let left = Format.duration(c.until.timeIntervalSinceNow)
+            return c.platform + "（" + c.reason + "，" + left + "后）"
+        }
+        print("  冷却：" + cool.joined(separator: " · "))
+    }
+}
+
 func cmdWaste() throws {
     let snapshots = SnapshotStore.loadAll()
     guard !snapshots.isEmpty else {
@@ -4174,6 +4238,8 @@ do {
         try cmdDashboard(rest)
     case "learn":
         try cmdLearn(rest)
+    case "brief":
+        cmdBrief(rest)
     case "waste":
         try cmdWaste()
     case "security":
