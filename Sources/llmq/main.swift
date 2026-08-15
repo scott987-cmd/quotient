@@ -997,6 +997,53 @@ func cmdWork(_ args: [String]) throws {
         try cmdWorkLoop(rest)
 
     // llmq work autoland on|off|status —— 授权/收回「验收通过的安全产出自动合入」
+    // llmq work evidence <分支> —— 把 agent 交的证据截图抽出来直接看。
+    //
+    // 图在分支里躺着，人要看得先 checkout 或 git show，麻烦到宁可自己重跑 ——
+    // 而「宁可自己重跑」正是产出积压的根源（56% 的完成产出没人来得及审）。
+    // 抽到一个临时目录、打印路径，两秒钟的事。
+    case "evidence":
+        guard let branch = rest.first else {
+            print("用法：llmq work evidence <分支>")
+            print(Ansi.dim("  把该分支里的验收截图抽到临时目录并打印路径"))
+            exit(2)
+        }
+        let repoE = RepoRegistry.resolve(
+            rest.firstIndex(of: "--repo").flatMap { $0 + 1 < rest.count ? rest[$0 + 1] : nil })
+            ?? FileManager.default.currentDirectoryPath
+        let itemsE = Review.list(repo: repoE)
+        guard let hit = itemsE.first(where: { $0.branch == branch || $0.branch.hasSuffix(branch) })
+        else {
+            print(Ansi.red("待审名单里没有 " + branch))
+            print(Ansi.dim("  先看看有哪些：llmq work review --repo <别名>"))
+            exit(1)
+        }
+        guard !hit.evidence.isEmpty else {
+            print(Ansi.yellow("这条分支没有证据截图。"))
+            print(Ansi.dim("  它交活时该自己跑一遍并截图（见仓库 AGENTS.md 的质量门槛）。"))
+            print(Ansi.dim("  只能自己下场：git checkout " + hit.branch))
+            exit(1)
+        }
+        let outDir = NSTemporaryDirectory() + "llmq-evidence-" + hit.taskID
+        try? FileManager.default.createDirectory(
+            atPath: outDir, withIntermediateDirectories: true)
+        var got = 0
+        for f in hit.evidence {
+            let dest = outDir + "/" + (f as NSString).lastPathComponent
+            // **重定向到文件，别让字节过 String。**
+            // PNG 是二进制，经过 String 转换必然损坏（试过：图打不开）。
+            // 用 shell 重定向，git 直接把字节写进文件。
+            let esc = { (x: String) in "'" + x.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+            let cmd = "git show " + esc(hit.branch + ":" + f) + " > " + esc(dest)
+            let r = Proc.run("/bin/sh", ["-c", cmd], cwd: repoE, env: [:], timeout: 30)
+            if r.exitCode == 0,
+               (try? FileManager.default.attributesOfItem(atPath: dest)[.size] as? Int) ?? 0 > 0 {
+                got += 1
+            }
+        }
+        print(Ansi.green("抽出 \(got) 张证据 → ") + outDir)
+        print(Ansi.dim("  open " + outDir))
+
     case "autoland":
         switch rest.first ?? "status" {
         case "on":
@@ -1248,6 +1295,18 @@ func cmdWork(_ args: [String]) throws {
                 + (it.files.count > 3 ? " …" : "")))
             if !it.overlapsWith.isEmpty {
                 print(Ansi.yellow("   和 \(it.overlapsWith.count) 个分支改了同一个文件"))
+            }
+            // **证据优先于代码。**
+            //
+            // 终审最贵的不是判断，是自己重跑一遍（构建+装模拟器+截图，五分钟起）。
+            // agent 收工前本来就该自己跑一遍并截图，那些图就在分支里躺着 ——
+            // 列出来，看图就能判。这是 56% 产出积压的头号解法。
+            if it.evidence.isEmpty {
+                print(Ansi.dim("   （没交证据截图 —— 得自己下场跑一遍才能判）"))
+            } else {
+                print(Ansi.green("   证据 \(it.evidence.count) 张：")
+                      + Ansi.dim(it.evidence.prefix(4).joined(separator: "  ")))
+                print(Ansi.dim("   看图：llmq work evidence " + it.branch))
             }
         }
         print("\n" + Ansi.dim("看改动：git diff main...<分支>"))

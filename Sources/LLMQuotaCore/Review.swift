@@ -33,6 +33,15 @@ public enum Review {
         public var prompt: String?
         public var hasWorktree: Bool
 
+        /// agent 交的**证据截图**（相对仓库根的路径）。
+        ///
+        /// 终审最大的成本不是判断，是**重跑一遍**：xcodegen + build +
+        /// 装模拟器 + 截图，五分钟起步。而 agent 收工前本来就该自己跑一遍
+        /// 并截图（AGENTS.md 的质量门槛要求的），那些图就在分支里躺着。
+        /// 把它们列出来，人看图就能判，不必自己下场 ——
+        /// 实测这是产出积压的头号原因：56% 的完成产出没人来得及审。
+        public var evidence: [String]
+
         public var netLines: Int { insertions - deletions }
     }
 
@@ -104,7 +113,16 @@ public enum Review {
                 mergesCleanly: mergesCleanly(repo: repo, base: base, branch: b),
                 overlapsWith: [],
                 prompt: byID[taskID]?.prompt,
-                hasWorktree: worktrees.contains(b)))
+                hasWorktree: worktrees.contains(b),
+                // 截图就是证据。约定放 docs/evidence/ 或名字里带 shot/screen/
+                // 的图 —— 不硬性要求目录，agent 放哪儿都能认出来，
+                // 少一条会被忘掉的规矩。
+                evidence: stat.files.filter { f in
+                    let l = f.lowercased()
+                    guard l.hasSuffix(".png") || l.hasSuffix(".jpg") else { return false }
+                    return l.contains("evidence") || l.contains("shot")
+                        || l.contains("screen") || l.contains("验收")
+                }))
         }
 
         // 交叉比对文件重叠。O(n²) 但 n 是待审分支数，几十个顶天了。
