@@ -585,6 +585,8 @@ extension Review {
         public var committedAt: Date?
         /// agent 交的证据截图（相对仓库根的路径）。
         public var evidence: [String]
+        /// 已经抽出来放进共享目录的图（文件名，在 `evidence/<id 去斜杠>/` 下）。
+        public var evidenceFiles: [String] = []
     }
 
     /// 手机上的验收结论。写进 `shared/verdicts/<repo>|<branch>.json`，
@@ -596,6 +598,64 @@ extension Review {
         public var action: String
         public var reason: String?
         public var decidedAt: Date
+    }
+
+    /// 证据截图放这儿（手机端按 digest.id 找）。
+    public static var evidenceDir: URL {
+        Paths.sharedRoot.appendingPathComponent("evidence", isDirectory: true)
+    }
+
+    /// 把分支里的证据截图抽出来、压小、放进共享目录。
+    ///
+    /// **只给文件名的验收是走过场。** 老板的原话：「验收只有文字看不到图片，
+    /// 那还不如别让我验收」。他说得对 —— agent 交的是实跑截图
+    ///（Greed 那四张是真的游戏界面），而手机上只显示一行 `docs/evidence/…`，
+    /// 人根本没法判断这活干得怎么样。
+    ///
+    /// 压到宽 800：原图一张 4.7MB，四张就 19MB，走 iCloud 同步会把
+    /// 整个镜像拖垮 —— 而验收只需要看清画面，不需要原分辨率。
+    ///
+    /// - Returns: 抽出来的文件名（相对 evidence/<id>/）。
+    @discardableResult
+    static func extractEvidence(repo: String, branch: String,
+                                files: [String], digestID: String,
+                                limit: Int = 4) -> [String] {
+        let safe = digestID.replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "|", with: "-")
+        let dir = evidenceDir.appendingPathComponent(safe, isDirectory: true)
+        let fm = FileManager.default
+        // 已经抽过就不重复干 —— 这个函数挂在 5 分钟一次的发布里。
+        if let have = try? fm.contentsOfDirectory(atPath: dir.path),
+           !have.filter({ $0.hasSuffix(".jpg") }).isEmpty {
+            return have.filter { $0.hasSuffix(".jpg") }.sorted()
+        }
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        var out: [String] = []
+        for f in files.prefix(limit) {
+            let base = (f as NSString).lastPathComponent
+            let jpg = ((base as NSString).deletingPathExtension) + ".jpg"
+            let raw = dir.appendingPathComponent("." + base)
+            let esc = { (x: String) in
+                "'" + x.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            }
+            // git show 的输出是二进制，走 shell 重定向 —— 不让字节过 String。
+            let cmd = "git show " + esc(branch + ":" + f) + " > " + esc(raw.path)
+            let r = Proc.run("/bin/sh", ["-c", cmd], cwd: repo, env: [:], timeout: 30)
+            guard r.exitCode == 0,
+                  (try? raw.checkResourceIsReachable()) == true else {
+                try? fm.removeItem(at: raw); continue
+            }
+            // sips 转 jpg + 缩宽。失败就退回原图（大是大，总比没有强）。
+            let dest = dir.appendingPathComponent(jpg)
+            let conv = Proc.run("/usr/bin/sips", [
+                "-s", "format", "jpeg", "-s", "formatOptions", "70",
+                "-Z", "800", raw.path, "--out", dest.path],
+                cwd: nil, env: [:], timeout: 30)
+            try? fm.removeItem(at: raw)
+            if conv.exitCode == 0 { out.append(jpg) }
+        }
+        return out.sorted()
     }
 
     /// 把所有仓库的待审产出写给手机。
@@ -614,7 +674,11 @@ extension Review {
                     mergesCleanly: item.mergesCleanly,
                     overlapsWith: item.overlapsWith,
                     committedAt: item.committedAt,
-                    evidence: item.evidence))
+                    evidence: item.evidence,
+                    // 图真抽出来放到共享目录，不然手机上只有一行文件名。
+                    evidenceFiles: extractEvidence(
+                        repo: path, branch: item.branch, files: item.evidence,
+                        digestID: path + "|" + item.branch)))
             }
         }
         let enc = JSONEncoder()

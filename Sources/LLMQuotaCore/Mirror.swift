@@ -121,6 +121,8 @@ public enum MirrorService {
     /// 双向同步 playbook.json —— 后者两边都会改（Mac 改 runs、
     /// 手机改 approvedAt），整文件覆盖必然丢一边。
     static let bidirectionalDirs = ["config", "releases", "approvals", "push-tokens", "verdicts"]
+    /// 只推不拉的目录：证据截图是 Mac 端产的，手机只看。
+    static let pushOnlyDirs = ["evidence"]
 
     /// 永不搬的文件：`.sb-` 半成品（原子写卡在 rename 留下的）、
     /// 心跳文件、一切点开头的文件。
@@ -170,6 +172,14 @@ public enum MirrorService {
             pushIfNewer(localFile: local.appendingPathComponent(name),
                         cloudFile: cloud.appendingPathComponent(name),
                         label: name, stats: &stats)
+        }
+
+        // evidence/：只推不拉。证据截图是 Mac 端从分支里抽的，手机只读。
+        for d in pushOnlyDirs {
+            pushDirNoDelete(
+                localDir: local.appendingPathComponent(d, isDirectory: true),
+                cloudDir: cloud.appendingPathComponent(d, isDirectory: true),
+                label: d, stats: &stats)
         }
 
         // config/ releases/：双向，每文件新者胜。
