@@ -1306,7 +1306,7 @@ public enum GitWorkspace {
     ///   前一步的产出就没了，而且不会有任何报错，
     ///   表现为「第二步的 agent 说找不到第一步说的那些改动」。
     public static func prepare(repo: String, taskID: String, platform: Platform,
-                               graphID: String? = nil) throws -> Workspace {
+                               graphID: String? = nil, base: String = "main") throws -> Workspace {
         // 建 worktree 不该要两分钟。缩短到 45 秒 —— 超过这个数基本就是卡住了，
         // 早点失败早点换平台，比让一个额度槽空等两分钟强。
         let timeoutUsed: TimeInterval = 45
@@ -1319,6 +1319,21 @@ public enum GitWorkspace {
 
         // 图内后续节点：复用，**绝对不能删**。
         if graphID != nil, let live = existingWorkspace(taskID: key), live.branch == branch {
+            // **复用之前先把主干合进来。**
+            //
+            // 工作区是图开跑那一刻从 HEAD 拉的；主干后来前进了它不会知道。
+            // 真实翻车：Greed 的代码基线合进 main 之后，一个重试的节点仍然
+            // 站在「合并前的空 main」上跑 —— agent 把活干得完全正确
+            //（图标裁好、去了 alpha、也提交了），验收却报
+            // 「找不到 project.yml」退出码 1。查了三轮才发现问题不在这次改动，
+            // 而在它脚下那份三小时前的主干。
+            //
+            // 合不上（有冲突）就原样用旧基线：这一步的活可能和冲突无关，
+            // 让它跑完再由人处理冲突，比在这里判死强。
+            let m = git(["merge", "--no-edit", base], in: live.path, timeout: 60)
+            if m.exitCode != 0 {
+                _ = git(["merge", "--abort"], in: live.path)
+            }
             return live
         }
 
