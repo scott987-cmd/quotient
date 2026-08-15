@@ -4777,6 +4777,21 @@ func cmdPush(_ args: [String]) throws {
             """))
         }
 
+    // llmq push pending —— 现在会推什么。只看不发。
+    case "pending":
+        let items = Nudge.pending()
+        if items.isEmpty {
+            print(Ansi.green("此刻没有需要打扰你的事。"))
+            print(Ansi.dim("判据：只推需要你做决定的 —— 方案等过目、产出等验收、"
+                           + "任务被拦下、空窗没活可填。"))
+        } else {
+            for i in items {
+                let muted = Nudge.recentlySent(i.key)
+                print((muted ? Ansi.dim("（静默中）") : Ansi.yellow("会推 "))
+                      + i.body + Ansi.dim("  角标 \(i.badge)"))
+            }
+        }
+
     case "test":
         let body = args.dropFirst().joined(separator: " ")
         let n = Push.send(.needsYou,
@@ -4786,6 +4801,6 @@ func cmdPush(_ args: [String]) throws {
                     : Ansi.red("一台都没推出去。跑 llmq push check 看卡在哪"))
 
     default:
-        print("用法：llmq push [check|test <正文>]")
+        print("用法：llmq push [check|pending|test <正文>]")
     }
 }

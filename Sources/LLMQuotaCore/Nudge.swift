@@ -31,10 +31,22 @@ public enum Nudge {
 
     /// 这条通知最近发过没有。
     ///
-    /// key 里要带上**数量**：待验收从 2 份变成 3 份是新情况，值得再响一次；
-    /// 一直是 3 份就别重复喊。
-    static func recentlySent(_ key: String, now: Date = Date()) -> Bool {
-        history().contains { $0.key == key && now.timeIntervalSince($0.at) < quietFor }
+    /// **按类别限流，key 里不能带数量。**
+    ///
+    /// 第一版让 key 带上数量（`review-92`），想法是「从 2 份变 3 份是新情况，
+    /// 值得再响」。但在一个数字持续增长的场景里，每变一次就是一个新 key ——
+    /// 限流形同虚设，实测连着推了 review-92 / 93 / 94。
+    /// 数量变化写在正文里就够了，不该成为再响一次的理由。
+    public static func recentlySent(_ key: String, now: Date = Date()) -> Bool {
+        let cat = category(of: key)
+        return history().contains {
+            category(of: $0.key) == cat && now.timeIntervalSince($0.at) < quietFor
+        }
+    }
+
+    /// 通知类别。`review-92` → `review`。
+    static func category(of key: String) -> String {
+        key.split(separator: "-").first.map(String.init) ?? key
     }
 
     static func remember(_ key: String, now: Date = Date()) {
