@@ -423,6 +423,11 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
     public var health: QuotaHealth
     /// true 表示这个数字来自平台官方回报，不是本地推算。
     public var isOfficial: Bool
+    /// **仅供参考：显示，但不参与「这个平台还能不能派活」的判断。**
+    ///
+    /// MiniMax 的视频额度用光了不代表跑不了文本任务。拿它去拦调度，
+    /// 会因为「今天生了 3 张图」把整个平台冻住 —— 而它还是本机的分诊器。
+    public var advisory: Bool = false
     public var sourceNote: String
     /// 各机器的用量拆分，用于"哪台电脑在吃额度"。
     public var byMachine: [String: Double]
@@ -453,8 +458,10 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
         isOfficial: Bool,
         sourceNote: String,
         byMachine: [String: Double] = [:],
-        observedFloor: Double? = nil
+        observedFloor: Double? = nil,
+        advisory: Bool = false
     ) {
+        self.advisory = advisory
         self.observedFloor = observedFloor
         self.platform = platform
         self.planName = planName

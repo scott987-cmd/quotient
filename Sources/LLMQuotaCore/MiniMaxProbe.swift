@@ -47,37 +47,54 @@ public enum MiniMaxProbe {
 
         var out: [OfficialQuota] = []
         for m in remains {
-            // 只关心文本生成那条。video/music 之类走的是另一套配额，
-            // 混进来会让「MiniMax 还剩多少」这个问题没法回答 ——
-            // 视频额度用光了不代表跑不了编码任务。
             let name = (m.model_name ?? "").lowercased()
-            guard name.isEmpty || name == "general" || name.contains("text") else { continue }
+            // **文本那条决定「能不能派活」，其余的只是让人看见。**
+            //
+            // 原来直接把 video/music 整个丢掉，理由是「视频额度用光了
+            // 不代表跑不了编码任务」—— 判断逻辑上对，但代价是老板在手机上
+            // 完全看不到生图额度用了多少，而那恰恰是 MiniMax 的主要用途
+            //（实测 video 周窗 12/21 次，一条都没被采进来）。
+            //
+            // 改成都采，非文本的标 advisory：报表里显示，调度里不参与判断。
+            let isText = name.isEmpty || name == "general" || name.contains("text")
+            let prefix = isText ? "" : (name + " ")
 
             if let pct = m.current_interval_remaining_percent,
                let end = m.end_time, let start = m.start_time {
                 let minutes = Int((end - start) / 1000 / 60)
                 out.append(OfficialQuota(
-                    id: "interval",
-                    label: CodexAdapter.windowLabel(minutes: minutes, fallback: "当前窗口"),
+                    id: isText ? "interval" : "interval-" + name,
+                    label: prefix + CodexAdapter.windowLabel(minutes: minutes,
+                                                             fallback: "当前窗口"),
                     usedPercent: max(0, min(100, 100 - pct)),
                     windowMinutes: minutes > 0 ? minutes : 300,
                     resetsAt: Date(timeIntervalSince1970: end / 1000),
-                    planType: countHint(m.current_interval_usage_count,
-                                        m.current_interval_total_count),
-                    observedAt: now))
+                    planType: "MiniMax",
+                    observedAt: now,
+                    // 官方一直在给绝对次数。「还能生 9 张图」比「已用 58%」
+                    // 有用得多 —— 之前它只被塞进一个字符串提示里。
+                    usedCount: m.current_interval_usage_count.map(Double.init),
+                    totalCount: m.current_interval_total_count
+                        .flatMap { $0 > 0 ? Double($0) : nil },
+                    countUnit: "次",
+                    advisory: !isText))
             }
             if let pct = m.current_weekly_remaining_percent,
                let end = m.weekly_end_time, let start = m.weekly_start_time {
                 let minutes = Int((end - start) / 1000 / 60)
                 out.append(OfficialQuota(
-                    id: "weekly",
-                    label: "每周",
+                    id: isText ? "weekly" : "weekly-" + name,
+                    label: prefix + "每周",
                     usedPercent: max(0, min(100, 100 - pct)),
                     windowMinutes: minutes > 0 ? minutes : 10080,
                     resetsAt: Date(timeIntervalSince1970: end / 1000),
-                    planType: countHint(m.current_weekly_usage_count,
-                                        m.current_weekly_total_count),
-                    observedAt: now))
+                    planType: "MiniMax",
+                    observedAt: now,
+                    usedCount: m.current_weekly_usage_count.map(Double.init),
+                    totalCount: m.current_weekly_total_count
+                        .flatMap { $0 > 0 ? Double($0) : nil },
+                    countUnit: "次",
+                    advisory: !isText))
             }
         }
         return out

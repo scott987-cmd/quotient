@@ -336,6 +336,22 @@ public struct OfficialQuota: Codable, Sendable, Hashable {
     public var planType: String?
     /// 这条额度是什么时候被观测到的 —— 日志是历史记录，可能已经过时。
     public var observedAt: Date
+    /// 官方给的**绝对计数**（用了几次 / 一共几次），有就带上。
+    ///
+    /// 百分比够用来判断「快满了没有」，但不够用来做决定：
+    /// 「已用 58%」不告诉你还能生几张图，「12 / 21 次」告诉你。
+    /// MiniMax 的 `mmx quota show` 一直在给这两个数，我们只取了百分比 ——
+    /// 手上有更好的数据却扔掉了。
+    public var usedCount: Double?
+    public var totalCount: Double?
+    /// 计数的单位（"次"）。不同平台可能不一样，别写死在显示层。
+    public var countUnit: String?
+    /// **仅供参考：显示，但不参与「这个平台还能不能派活」的判断。**
+    ///
+    /// MiniMax 的视频额度用光了，不代表跑不了文本任务 —— 拿它去拦调度
+    /// 会把一个能干活的平台冻住。但完全不采又会让人看不见生图用了多少
+    /// （那是它的主要用途）。所以：采、显示、不参与判断。
+    public var advisory: Bool = false
 
     public init(
         id: String,
@@ -344,7 +360,11 @@ public struct OfficialQuota: Codable, Sendable, Hashable {
         windowMinutes: Int,
         resetsAt: Date? = nil,
         planType: String? = nil,
-        observedAt: Date
+        observedAt: Date,
+        usedCount: Double? = nil,
+        totalCount: Double? = nil,
+        countUnit: String? = nil,
+        advisory: Bool = false
     ) {
         self.id = id
         self.label = label
@@ -353,6 +373,10 @@ public struct OfficialQuota: Codable, Sendable, Hashable {
         self.resetsAt = resetsAt
         self.planType = planType
         self.observedAt = observedAt
+        self.usedCount = usedCount
+        self.totalCount = totalCount
+        self.countUnit = countUnit
+        self.advisory = advisory
     }
 
     /// 观测已经太旧就别拿来当真 —— 窗口早就滚过去了。

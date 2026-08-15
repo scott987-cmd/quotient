@@ -135,3 +135,40 @@ final class PlaybookTopicTests: XCTestCase {
         XCTAssertNil(Playbook.nextWork(for: .codex, projects: [project(backlog: ["x"])]))
     }
 }
+
+/// MiniMax 的生图额度：要看得见，但不能拦下文本任务。
+final class AdvisoryQuotaTests: XCTestCase {
+    private func status(label: String, advisory: Bool) -> QuotaStatus {
+        QuotaStatus(
+            platform: .minimax, planName: "p", limitID: "l", label: label,
+            metric: .requests, kind: .periodic, used: 3, limit: 3,
+            usedFraction: 1.0, windowStart: Date(),
+            resetsAt: Date().addingTimeInterval(3600),
+            windowElapsedFraction: 0.5, projectedUsedFraction: 1.0,
+            projectedWaste: 0, health: .exhausted, isOfficial: true,
+            sourceNote: "test", advisory: advisory)
+    }
+
+    /// 视频额度用光了不该把整个平台拦在场外 ——
+    /// MiniMax 还是本机的分诊器，冻住它整条调度都受影响。
+    func testAdvisoryExhaustionDoesNotBlockDispatch() {
+        let video = status(label: "video 1 天", advisory: true)
+        let text = status(label: "4 小时", advisory: false)
+        XCTAssertNil([video].first { $0.health == .exhausted && !$0.advisory },
+                     "video 满了不该算作平台不可用")
+        XCTAssertNotNil([video, text].first { $0.health == .exhausted && !$0.advisory },
+                        "文本额度真满了还是要拦")
+    }
+
+    /// 绝对计数比百分比有用：「还能生几张」vs「已用 58%」。
+    func testAbsoluteCountsSurviveIntoStatus() {
+        let q = OfficialQuota(
+            id: "weekly-video", label: "video 每周", usedPercent: 58,
+            windowMinutes: 10080, resetsAt: Date().addingTimeInterval(86400),
+            planType: "MiniMax", observedAt: Date(),
+            usedCount: 12, totalCount: 21, countUnit: "次", advisory: true)
+        XCTAssertEqual(q.usedCount, 12)
+        XCTAssertEqual(q.totalCount, 21)
+        XCTAssertTrue(q.advisory)
+    }
+}

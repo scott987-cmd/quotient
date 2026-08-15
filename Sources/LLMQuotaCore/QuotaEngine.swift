@@ -238,15 +238,25 @@ public struct QuotaEngine: Sendable {
         var note = "平台回报，截至 \(observedText)"
         if let p = q.planType { note = "\(p) 档 · " + note }
 
+        // **官方给了绝对计数就用绝对计数。**
+        //
+        // 百分比够判断「快满了没有」，不够做决定：「已用 58%」不告诉你
+        // 还能生几张图，「12 / 21 次」告诉你。MiniMax 一直在给这两个数。
+        let hasCount = q.usedCount != nil && q.totalCount != nil
+        if hasCount {
+            note += "（" + Format.compact(q.usedCount ?? 0) + "/"
+                + Format.compact(q.totalCount ?? 0) + (q.countUnit ?? "") + "）"
+        }
+
         return QuotaStatus(
             platform: plan.platform,
             planName: plan.planName,
             limitID: "official-\(q.id)",
             label: q.label,
-            metric: .percent,
+            metric: hasCount ? .requests : .percent,
             kind: .periodic,
-            used: q.usedPercent,
-            limit: 100,
+            used: hasCount ? (q.usedCount ?? 0) : q.usedPercent,
+            limit: hasCount ? (q.totalCount ?? 100) : 100,
             usedFraction: usedFraction,
             windowStart: start,
             resetsAt: resets,
@@ -255,7 +265,8 @@ public struct QuotaEngine: Sendable {
             projectedWaste: projected.map { max(0, 100 - $0 * 100) },
             health: health,
             isOfficial: true,
-            sourceNote: note
+            sourceNote: note,
+            advisory: q.advisory
         )
     }
 

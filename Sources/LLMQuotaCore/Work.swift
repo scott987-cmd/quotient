@@ -487,7 +487,12 @@ public struct WorkScheduler: Sendable {
             // Codex 拦在场外整晚，而真正的契约是留白线（实际用量）。
             // 现在：实际用量还没碰调度停手线就放行，外推只作参考；
             // 真到线了自有 reserve 闸拦（下面那道）。
-            if let bad = report.statuses.first(where: { $0.health == .exhausted }) {
+            // advisory 的不算 —— MiniMax 的视频额度用光了，不代表
+            // 跑不了文本任务。不排除的话，「今天生了 3 张图」就会把
+            // 整个平台拦在场外，而它还是本机的分诊器。
+            if let bad = report.statuses.first(where: {
+                $0.health == .exhausted && !$0.advisory
+            }) {
                 rejected.append(Rejection(
                     platform: p,
                     reason: "\(bad.label)额度\(bad.health.displayName)"

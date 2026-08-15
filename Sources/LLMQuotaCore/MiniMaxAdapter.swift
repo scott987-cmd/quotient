@@ -101,7 +101,14 @@ public struct MiniMaxQuotaAdapter: UsageAdapter {
                     windowMinutes: minutes,
                     resetsAt: Date(timeIntervalSince1970: e / 1000),
                     planType: "MiniMax",
-                    observedAt: now))
+                    observedAt: now,
+                    // 官方一直在给绝对次数，之前只取了百分比 —— 手上有更好的
+                    // 数据却扔掉了。total 为 0 表示这个模型不按次数限
+                    //（general 就是），那种情况下带上没意义。
+                    usedCount: JSONHelp.double(m["current_interval_usage_count"]),
+                    totalCount: JSONHelp.double(m["current_interval_total_count"])
+                        .flatMap { $0 > 0 ? $0 : nil },
+                    countUnit: "次"))
             }
 
             if let s = JSONHelp.double(m["weekly_start_time"]),
@@ -114,7 +121,11 @@ public struct MiniMaxQuotaAdapter: UsageAdapter {
                     windowMinutes: Int((e - s) / 60000),
                     resetsAt: Date(timeIntervalSince1970: e / 1000),
                     planType: "MiniMax",
-                    observedAt: now))
+                    observedAt: now,
+                    usedCount: JSONHelp.double(m["current_weekly_usage_count"]),
+                    totalCount: JSONHelp.double(m["current_weekly_total_count"])
+                        .flatMap { $0 > 0 ? $0 : nil },
+                    countUnit: "次"))
             }
         }
         return ParsedFile(events: [], quotas: quotas, lastEventAt: quotas.isEmpty ? nil : now)
