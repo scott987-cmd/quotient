@@ -2557,6 +2557,33 @@ func cmdSecurity() throws {
     if crit > 0 { exit(1) }
 }
 
+/// 磁盘上的角色配置和代码里的默认值哪些不一样。
+///
+/// 这是个真咬过人的坑：把 volcark 从「新人」升成「审查员」改在了
+/// `AgentRoles.defaults()` 里，而磁盘上存着一份旧 roles.json ——
+/// 保存的配置永远盖过默认值，于是升级**一整天没生效**，
+/// 它继续以「新人·只接低危」的身份被排除在所有常规任务之外，
+/// 而排除理由还理直气壮地写着「新人最多只接低危的活」。
+///
+/// 覆盖本身是对的（人调过的设置不该被升级冲掉），错的是**没人告诉你**
+/// 它在覆盖什么。所以 doctor 把差异列出来：改默认值没生效时一眼看见。
+func roleDrift() -> [String] {
+    let saved = AgentRoles.all()
+    var out: [String] = []
+    for d in AgentRoles.defaults() {
+        guard let s = saved[d.platform] else { continue }
+        var diffs: [String] = []
+        if s.title != d.title { diffs.append("岗位 \(s.title)≠默认 \(d.title)") }
+        if s.maxRisk != d.maxRisk {
+            diffs.append("风险上限 \(s.maxRisk.displayName)≠默认 \(d.maxRisk.displayName)")
+        }
+        if !diffs.isEmpty {
+            out.append(d.platform.displayName + "：" + diffs.joined(separator: "、"))
+        }
+    }
+    return out
+}
+
 func cmdDoctor(tidy: Bool = false) throws {
     if tidy {
         let d = Debris.scan(root: Inbox.root)
@@ -2780,6 +2807,17 @@ func cmdDoctor(tidy: Bool = false) throws {
         print(Ansi.dim("    读不动 ≠ 那台机器没有任务。清理不会碰它们（只删确定是旧的）。"))
     }
     print("")
+
+    // 角色配置漂移：改了代码默认值但被磁盘配置盖住时点名，
+    // 否则「升级了却没生效」只能靠人偶然发现（真发生过，一整天）。
+    let drift = roleDrift()
+    if !drift.isEmpty {
+        print(Ansi.bold("角色配置") + Ansi.dim("（磁盘上存的盖过代码默认值）"))
+        for d in drift { print(Ansi.yellow("  ⚠︎ ") + d) }
+        print(Ansi.dim("  人调过的设置不该被升级冲掉，所以覆盖是对的 —— "
+                       + "但改了默认值没生效时得看得见。"))
+        print(Ansi.dim("  要用新默认值：删掉 shared/config/roles.json 里对应那条。"))
+    }
 
     print(Ansi.bold("调度范围"))
     print("  自动调度" + Ansi.green("只在本机") + "选平台，"
