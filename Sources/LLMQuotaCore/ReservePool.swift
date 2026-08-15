@@ -51,7 +51,7 @@ public enum ReservePool {
             /// 派活优先级，越小越先派。
             ///
             /// 排序依据是**有没有人真的想要它**：审查发现是人读完 diff 写下的，
-            /// TODO 是写代码的人自己留的账，这两类有明确的需求方；
+            /// 代码里的待办标记是作者自己留的账，这两类有明确的需求方；
             /// 缺注释缺测试是扫出来的格式问题，做完也未必有人关心
             ///（实测这类任务落地率最低）。空窗只填得下一个活，
             /// 那就得是最值钱的那个。
@@ -176,7 +176,7 @@ public enum ReservePool {
     ///（比如这个文件自己的规则名）。
     static func todoNote(_ raw: String) -> String? {
         let line = raw.trimmingCharacters(in: .whitespaces)
-        guard line.hasPrefix("//") else { return nil }
+        guard line.hasPrefix("//"), !line.hasPrefix("///") else { return nil }
         let body = line.drop(while: { $0 == "/" }).trimmingCharacters(in: .whitespaces)
         for marker in ["TODO", "FIXME", "HACK", "XXX"] {
             guard body.hasPrefix(marker) else { continue }
