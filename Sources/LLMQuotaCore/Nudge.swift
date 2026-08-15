@@ -60,13 +60,24 @@ public enum Nudge {
         }
 
         // 2. 产出等验收
+        //
+        // **必须问 git，不能只看任务状态。** 第一版判据是
+        // 「done + 没丢弃 + 有分支」—— 那把历史上所有完成过的任务都算了进来，
+        // 包括早就合入 main 的。实测推出去一条「92 份产出等你验收」，
+        // 而 `llmq work review` 同时说「没有待审的 agent 分支」。
+        // 一个假的 92 比不推更糟：人点开发现什么都没有，下次就不信这个数了。
         let tasks = TaskStore.all()
-        let awaiting = tasks.filter {
-            $0.state == .done && $0.discardedAt == nil && $0.branch != nil
+        let awaiting = RepoRegistry.all().flatMap { repo -> [Review.Item] in
+            let path = NSString(string: repo.localPath).expandingTildeInPath
+            guard GitWorkspace.isRepo(path) else { return [] }
+            return Review.list(repo: path)
         }
         if !awaiting.isEmpty {
             out.append(("review-\(awaiting.count)", .needsYou,
-                        "\(awaiting.count) 份产出等你验收", awaiting.count))
+                        awaiting.count == 1
+                            ? "1 份产出等你验收：" + awaiting[0].subject.prefix(40)
+                            : "\(awaiting.count) 份产出等你验收",
+                        awaiting.count))
         }
 
         // 3. 有活被拦下来等放行（高危 / 碰钱 / 碰账号）

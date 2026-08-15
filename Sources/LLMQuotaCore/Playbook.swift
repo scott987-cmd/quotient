@@ -76,8 +76,15 @@ public enum Playbook {
         }
     }
 
+    /// **住在 sharedRoot，不是 appSupport。**
+    ///
+    /// 镜像服务只推 `sharedRoot` 下的东西（dashboard.json、office.json、
+    /// repos.json 都在那儿）。写在 appSupport 的后果实测过：老板在手机上
+    /// 批了，Mac 这边生效了，**手机上却永远显示「等你过目」** ——
+    /// 因为手机读的是 iCloud 那份，而那份从来没被更新过。
+    /// 同一个错误今天犯了两次（approvals 目录也是），记在这儿。
     static var path: URL {
-        Paths.appSupport.appendingPathComponent("playbook.json")
+        Paths.sharedRoot.appendingPathComponent("playbook.json")
     }
 
     public static func all() -> [Project] {
@@ -88,6 +95,8 @@ public enum Playbook {
     }
 
     public static func save(_ projects: [Project]) {
+        try? FileManager.default.createDirectory(
+            at: Paths.sharedRoot, withIntermediateDirectories: true)
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -286,8 +295,20 @@ extension Playbook {
                     dirty = true
                 }
             }
-            // 不管有没有生效都删：留着只会每轮重复读一次
-            try? fm.removeItem(at: f)
+            // **不删文件。**
+            //
+            // approvals 是双向同步的：本地删掉，下一轮镜像就从云端把它
+            // 拉回来（syncBidirectional 见到「云端有、本地没有」就 pull）。
+            // 于是「删了又回来」每轮循环一次，日志里反复出现同一条批准。
+            //
+            // 幂等就够了：上面那个 `approvedAt == nil` 判据保证只生效一次。
+            // 文件留着无害，超过 30 天的在这里顺手清掉 ——
+            // 那时候两边都早过期了，删了不会再被拉回来。
+            if let mod = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate,
+               Date().timeIntervalSince(mod) > 30 * 86400 {
+                try? fm.removeItem(at: f)
+            }
         }
         if dirty { save(list) }
         return applied
