@@ -71,15 +71,45 @@ public enum Archive {
             let stamp = Format.fileStamp(now)
             let dest = target.appendingPathComponent("logs/\(stamp)", isDirectory: true)
             if !dryRun { try? fm.createDirectory(at: dest, withIntermediateDirectories: true) }
+            var failed = 0
+            var firstError = ""
             for f in logs where f.pathExtension == "log" {
                 let size = (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                 if !dryRun {
                     let to = dest.appendingPathComponent(f.lastPathComponent)
                     try? fm.removeItem(at: to)
-                    guard (try? fm.moveItem(at: f, to: to)) != nil else { continue }
+                    // **不能用 moveItem 往 SMB 上搬。**
+                    //
+                    // macOS 的扩展属性（com.apple.provenance 等）在 SMB 上写不了，
+                    // Foundation 的 moveItem/copyItem 会因此整体失败 ——
+                    // 而 `mv` 命令只是打个警告照样搬完，两者严格程度不同。
+                    // 所以：读字节 → 写过去 → 删本地，绕开属性复制。
+                    // 校验写成功再删本地，别把「搬走了」和「弄丢了」混为一谈。
+                    do {
+                        let data = try Data(contentsOf: f)
+                        try data.write(to: to)
+                        let written = (try? to.resourceValues(
+                            forKeys: [.fileSizeKey]).fileSize) ?? 0
+                        guard written == data.count else {
+                            failed += 1
+                            if firstError.isEmpty { firstError = "写入不完整：\(f.lastPathComponent)" }
+                            continue
+                        }
+                        try fm.removeItem(at: f)
+                    } catch {
+                        failed += 1
+                        if firstError.isEmpty {
+                            firstError = f.lastPathComponent + " → " + error.localizedDescription
+                        }
+                        continue
+                    }
                 }
                 r.archivedLogs += 1
                 r.freedBytes += Int64(size)
+            }
+            // 失败要说出来。静默跳过会让「归档 0 个」看起来像「本来就没有」。
+            if failed > 0 {
+                r.notes.append("有 \(failed) 个日志没搬成：" + firstError)
             }
         }
 
