@@ -145,7 +145,17 @@ public struct TaskProfile: Codable, Sendable {
     /// 而重跑一次的代价远高于多等二十分钟。简单和常规档维持 20 分钟，
     /// 它们跑到那么久基本就是卡住了，早点换人比干等强。
     public var timeout: TimeInterval {
-        let capMinutes = tier == .complex ? 40 : 20
+        // 上限按档次分层。**别把三倍预算掐回一倍出头** ——
+        // 分诊估 15 分钟的常规任务，三倍是 45 分钟（估时天生乐观，
+        // 三倍就是为此留的），而旧的 20 分钟硬顶只给到 1.3 倍，
+        // 等于把留的余量又收回去了。实测被它掐死两次：
+        // 一次实玩验收正翻牌翻到一半，一次视觉验收正在抓截图。
+        let capMinutes: Int
+        switch tier {
+        case .trivial:  capMinutes = 20   // 改注释改文案，跑那么久就是卡住了
+        case .standard: capMinutes = 30
+        case .complex:  capMinutes = 45   // 整包任务住在这一档
+        }
         return TimeInterval(max(180, min(estimatedMinutes * 3, capMinutes) * 60))
     }
 }
