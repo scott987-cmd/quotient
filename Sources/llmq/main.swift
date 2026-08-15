@@ -1070,6 +1070,31 @@ func cmdWork(_ args: [String]) throws {
     //
     // 储备任务池：额度快作废时拿来填窗口的低危维护任务。
     // 默认只看不写 —— 生成任务是会烧额度的动作，不该是敲错一个词的后果。
+    // llmq work idle
+    //
+    // 空窗填活的**决策可视化**：现在有哪些窗口快过期、会不会填、填什么。
+    // 只看不做 —— 一个会自动花钱的东西，必须有办法在它花钱之前看清它想干嘛。
+    case "idle":
+        let dash = LLMQuota.dashboard()
+        let opps = IdleFiller.opportunities(dashboard: dash)
+        if opps.isEmpty {
+            print(Ansi.dim("此刻没有「快过期又没用够」的窗口。"))
+            print(Ansi.dim("判据：窗口剩不到 "
+                           + Format.duration(IdleFiller.Policy.fillWithin)
+                           + "、已用低于 \(Int(IdleFiller.Policy.idleBelow * 100))%、"
+                           + "且平台不在冷却/静音/指挥岗。"))
+            break
+        }
+        for o in opps {
+            print(Ansi.bold(o.platform.displayName) + Ansi.dim("  " + o.reason))
+            if let w = IdleFiller.findWork(for: o) {
+                print(Ansi.green("  会填：") + w.prefix(90) + "…")
+            } else {
+                print(Ansi.dim("  不填：没有现成的真需求。"
+                               + "（储备池空 or 队列里还有活 —— 绝不为了填窗口编任务）"))
+            }
+        }
+
     case "reserve":
         let repoArg = rest.firstIndex(of: "--repo").flatMap { i -> String? in
             let j = rest.index(after: i)
@@ -1337,7 +1362,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|approve|retry|discard|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|idle|approve|retry|discard|log]")
         exit(2)
     }
 }
