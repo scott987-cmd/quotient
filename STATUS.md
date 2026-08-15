@@ -18,7 +18,7 @@
 | CLI + 菜单栏 | `Sources/llmq`、`Sources/LLMQuotaBarApp` | `llmq --help` |
 | **跨机 mTLS 分发** | `ClusterNet.swift`、`ClusterProtocol.swift` | `llmq cluster ping <节点>` 回「通了…协议 v1」 |
 | **上限学习器** | `LimitLearner.swift` | `llmq learn` 输出反解表（官方百分比反解 + 下限估计） |
-| **储备任务池** | `ReservePool.swift` | `llmq work reserve` 列出扫到的结构化事实 |
+| **储备任务池** | `ReservePool.swift` | `llmq work reserve` 列出扫到的结构化事实；`ReservePoolTests` 证明 `///` 文档说明不会被当成待办 |
 | **评审落地闸门** | `Review.swift` | `llmq work review --auto` 在临时 worktree 里验证合并结果 |
 | **高危路径闸** | `Work.swift` `riskyPathsTouched` | 改到 `*.sh`/`Package.swift`/`Tools/**` 不提交、转人工 |
 | **高危改动审批** | `Approval.swift` | `llmq work approve <id>`；手机上点按钮走同一函数 |

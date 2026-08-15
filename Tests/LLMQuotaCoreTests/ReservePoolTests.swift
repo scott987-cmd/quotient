@@ -11,6 +11,8 @@ extension ReservePoolTests {
                        "把重试次数改成可配置")
         XCTAssertEqual(ReservePool.todoNote("    // FIXME 这里的时区判断在夏令时会错"),
                        "这里的时区判断在夏令时会错")
+        XCTAssertNil(ReservePool.todoNote("/// TODO 是写代码的人自己留的账"),
+                     "文档正文里的规则名不是待办，不应该递归生成任务")
         XCTAssertNil(ReservePool.todoNote(#"let rule = "TODO: something""#),
                      "字符串里的 TODO 不是待办，派下去只会改坏代码")
         XCTAssertNil(ReservePool.todoNote("// TODO"), "光写 TODO 没说干什么，转不成任务")
