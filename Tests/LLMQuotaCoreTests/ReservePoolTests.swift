@@ -57,3 +57,31 @@ extension ReservePoolTests {
         _ = old
     }
 }
+
+/// 冷却误判 —— 每一条误判都等于白冻一个能用的平台。
+final class CooldownClassifyTests: XCTestCase {
+    /// 实际烧过钱的那一次：火山方舟跑游戏任务超时，输出里有 "insufficient
+    /// contrast"，整段命中 "insufficient" → 被冻 1 天 16 小时。
+    func testAgentProseDoesNotFreezeAPlatform() {
+        XCTAssertNil(CooldownLedger.classify(
+            "checking palette: insufficient contrast between player and background"))
+        XCTAssertNil(CooldownLedger.classify(
+            "读 QuotaSignal.swift：这段是判断额度打满的关键词表"),
+            "在这个项目里 agent 天天写「额度」，不能因此冻掉它自己的平台")
+        XCTAssertNil(CooldownLedger.classify("+ let quotaWords = [\"quota\"]"))
+        XCTAssertNil(CooldownLedger.classify("超时被终止"))
+    }
+
+    /// 服务端真说打满了，还是要认出来。
+    func testRealServerRejectionIsStillCaught() {
+        XCTAssertEqual(CooldownLedger.classify(
+            "API Error: Request rejected (429) · [已达到 5 小时的使用上限。]"),
+            .quotaExhausted)
+        XCTAssertEqual(CooldownLedger.classify(
+            "429 token-plan 1-week quota exhausted; resets 08-17"), .quotaExhausted)
+        XCTAssertEqual(CooldownLedger.classify(
+            ". Your quota will be refreshed in the next cycle. To continue now, "
+            + "purchase extra usage or upgrade your plan"), .quotaExhausted,
+            "Kimi 的原话没有 429，但 refreshed in the next cycle 是明说打满了")
+    }
+}

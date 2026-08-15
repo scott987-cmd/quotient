@@ -96,6 +96,18 @@ func cmdCollect(verbose: Bool) throws {
         print(Ansi.dim("    来源：" + hit.message.prefix(90)))
     }
 
+    // **撞顶的那一刻是估上限唯一的已知点，别学完就扔。**
+    //
+    // 冷却台账每个平台只留最新一条，撞过几次全被覆盖 —— 最硬的证据保留
+    // 时间最短。这里在采集后补一次快照：此刻处于「打满」冷却中的平台，
+    // 窗口用量就是它的上限。撞顶后请求全被拒、用量不再涨，所以事后采样
+    // 反而比抢在那一毫秒更干净。
+    for ob in QuotaCeiling.capture(dashboard: LLMQuota.dashboard()) {
+        print(Ansi.cyan("  撞顶采样：") + ob.platform.displayName
+              + " " + ob.windowLabel
+              + Ansi.dim("  \(ob.usage.first?.key ?? "")≈\(Int(ob.usage.first?.value ?? 0))"))
+    }
+
     let detected = snap.platforms.filter(\.detected)
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     print("检测到 \(detected.count) 个平台的数据源，快照已写入：")

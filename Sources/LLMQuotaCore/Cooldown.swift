@@ -181,9 +181,38 @@ public enum CooldownLedger {
     /// "no longer supported" 里也含 "not found"，顺序反了会把永久故障降级成临时故障。
     public static func classify(_ text: String) -> Cooldown.Cause? {
         let t = text.lowercased()
-        let quota = ["quota", "rate limit", "429", "usage limit", "insufficient",
-                     "refreshed in the next cycle", "upgrade your plan", "额度", "配额"]
-        if quota.contains(where: { t.contains($0) }) { return .quotaExhausted }
+        let lines = t.split(separator: "\n").map(String.init)
+
+        // **额度用尽要「错误信号 + 额度措辞」同时出现在同一行。**
+        //
+        // 早先是对整段输出做关键词包含判断，代价实测到了：火山方舟跑一个
+        // 游戏任务超时被杀，45 分钟的输出里撞上 "insufficient"（英文里
+        // "insufficient contrast"「对比度不足」这种说法极常见），整段就被
+        // 判成额度用尽 —— 一个还能用的平台被冻了 1 天 16 小时。
+        // 在这个项目里更糟：agent 天天读写额度相关的代码和文档，
+        // 输出里必然出现「额度」「quota」，等于让干活的人自己把自己冻上。
+        //
+        // 双条件之后，误报要求同一行里既有 HTTP 错误码/明确的拒绝措辞，
+        // 又有额度措辞 —— 那基本只有服务端自己会这么说话。
+        let errorSignals = ["429", "rate_limit", "ratelimit", "error", "rejected",
+                            "exhausted", "exceeded", "已达到", "用尽", "超出"]
+        // 这些词单独出现毫无意义（"quota" 在这个项目的代码里满地都是），
+        // 必须配合上面的错误信号才作数。
+        let quotaWords = ["quota", "usage limit", "insufficient", "配额", "额度",
+                          "使用上限", "限额"]
+        for line in lines {
+            guard errorSignals.contains(where: { line.contains($0) }),
+                  quotaWords.contains(where: { line.contains($0) }) else { continue }
+            return .quotaExhausted
+        }
+        // 整段里出现明确到不可能误伤的措辞，也认。
+        // 只有服务端会这么说话的整句，单条件即可 —— agent 的正常输出里
+        // 不会冒出「购买额外用量」这种话。
+        let unambiguous = ["rate limit exceeded", "quota exhausted",
+                           "you've reached your usage limit",
+                           "refreshed in the next cycle", "upgrade your plan",
+                           "purchase extra usage", "已达到 5 小时的使用上限"]
+        if unambiguous.contains(where: { t.contains($0) }) { return .quotaExhausted }
 
         let auth = ["not logged in", "oauth", "authenticate", "unauthorized", "401", "403",
                     "invalid api key", "no credentials", "please run /login"]
