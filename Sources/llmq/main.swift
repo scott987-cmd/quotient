@@ -3842,6 +3842,30 @@ func cmdRelease(_ rest: [String]) throws {
         if let i = rest.firstIndex(of: "--notes"), i + 1 < rest.count { notes = rest[i + 1] }
         let node = ClusterConfigStore.load()?.nodeName ?? Paths.machineName()
 
+        // **有任务在跑就不许发布。**
+        //
+        // 发布会重启常驻服务，正在执行的 agent 进程连带被杀 —— 产出即时丢失，
+        // 任务被标中断（≤2 次自动重排，第 3 次判死）。一晚上踩了四次，
+        // 其中一次差点毁掉 26 分钟的图节点产出。
+        //
+        // 靠「发布前记得检查」是防不住的：我自己写完这条纪律，
+        // 十分钟后就又发了一次。所以改成程序拦 —— 纪律要变成机制才算数。
+        // 真急着发（比如修的正是让任务卡死的那个 bug）加 --force。
+        if !rest.contains("--force") {
+            let running = TaskStore.all().filter { $0.state == .running }
+            if !running.isEmpty {
+                print(Ansi.red("有 \(running.count) 个任务正在跑，发布会把它们杀掉："))
+                for t in running.prefix(5) {
+                    let mins = t.startedAt.map { Int(Date().timeIntervalSince($0) / 60) } ?? 0
+                    let who = t.platform?.displayName ?? "?"
+                    print(Ansi.dim("  " + t.id + " · \(mins) 分钟 · " + who
+                                   + " · " + String(t.prompt.prefix(40))))
+                }
+                print(Ansi.dim("等它们跑完（llmq brief 看进度），或者 --force 强发。"))
+                exit(1)
+            }
+        }
+
         print(Ansi.dim("编译通用二进制（Intel + Apple Silicon）…"))
         let repo = FileManager.default.currentDirectoryPath
         guard FileManager.default.fileExists(atPath: repo + "/Package.swift") else {
