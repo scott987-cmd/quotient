@@ -188,6 +188,40 @@ public enum Push {
 
     // MARK: - 自检
 
+    /// 不用真设备也能验证签名通不通。
+    ///
+    /// 拿一个全 0 的假 token 发一次，看 APNs 回什么：
+    /// - `BadDeviceToken` → **签名是对的**，Apple 收下并验过了 JWT，
+    ///   只是这个设备不存在。整条链路除了真 token 以外全通。
+    /// - `InvalidProviderToken` → 签名/keyID/teamID 有问题
+    /// - `TopicDisallowed` → bundleID 不对，或者 App ID 没开推送能力
+    ///
+    /// 这个区分很值钱：没它的话，推不出去只能干瞪眼猜是哪一环。
+    public static func probeSignature() -> (ok: Bool, reason: String) {
+        guard let cfg = Config.load() else { return (false, "没有配置") }
+        guard let jwt = signedJWT(cfg: cfg) else { return (false, "签不出 JWT，检查 .p8") }
+        let fake = String(repeating: "0", count: 64)
+        let r = Proc.run("/usr/bin/curl", [
+            "-s", "--http2", "-X", "POST",
+            "-H", "authorization: bearer " + jwt,
+            "-H", "apns-topic: " + cfg.bundleID,
+            "-H", "apns-push-type: alert",
+            "-d", #"{"aps":{"alert":"probe"}}"#,
+            "https://api.push.apple.com/3/device/" + fake,
+        ], cwd: nil, env: [:], timeout: 20)
+        let body = r.stdout
+        if body.contains("BadDeviceToken") {
+            return (true, "签名通过（Apple 验过 JWT 了，只是探测用的假 token 不存在）")
+        }
+        if body.contains("InvalidProviderToken") {
+            return (false, "JWT 被拒：keyID / teamID / .p8 对不上")
+        }
+        if body.contains("TopicDisallowed") {
+            return (false, "bundleID 不对，或者 App ID 没开推送能力")
+        }
+        return (false, body.isEmpty ? "没有响应" : String(body.prefix(120)))
+    }
+
     /// 推送这条路通不通，卡在哪一步。
     public static func diagnose() -> [(step: String, ok: Bool, detail: String)] {
         var out: [(String, Bool, String)] = []
@@ -202,6 +236,10 @@ public enum Push {
             if key != nil {
                 out.append(("JWT 签名", signedJWT(cfg: cfg) != nil, "ES256"))
             }
+        }
+        if cfg != nil {
+            let probe = probeSignature()
+            out.append(("APNs 握手", probe.ok, probe.reason))
         }
         let devs = devices()
         out.append(("手机登记的设备", !devs.isEmpty,
