@@ -802,6 +802,48 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.dim("  解冻 " + x.id + "  " + (x.note ?? "")))
         }
 
+    case "done":
+        // **人在系统外把活办了，系统得能知道。**
+        //
+        // 原来只有 retry / discard / approve —— 全都假设「工作要么由 agent
+        // 完成，要么不做了」。但现实里第三种情况天天发生：人手动合了分支、
+        // 人自己把 bug 修了、或者上游卡死时人绕过去解决了。
+        //
+        // 这时候图节点会永远冻在 blocked，而且理由具有误导性：
+        // 「上游『生成 Assets.xcassets』失败了」—— 可那个活早就完成并
+        // 合进主干了，只是我合的时候没走任务系统。看板上五个「卡住」全是
+        // 这种僵尸，人得挨个回忆才知道哪些是真卡、哪些已经办完了。
+        //
+        // discard 不能替代它：丢弃的语义是「这活不做了」，会污染落地率统计，
+        // 下游也不会解冻。done 才是对的语义 —— 活办完了，接着往下走。
+        guard let id = rest.first else {
+            print("用法：llmq work done <任务id|图id> [说明]")
+            print(Ansi.dim("  人在系统外办完的活（手动合并/自己修好/绕过去了）标完成，"))
+            print(Ansi.dim("  下游节点会自动解冻。别用 discard —— 那是「不做了」的意思。"))
+            exit(2)
+        }
+        let why = rest.count > 1 ? rest[1...].joined(separator: " ") : "人工确认已完成"
+        let allDone = TaskStore.all()
+        let hits = allDone.filter { $0.id == id || $0.graphID == id }
+        guard !hits.isEmpty else { print(Ansi.red("找不到 " + id)); exit(1) }
+        var n = 0
+        for var t in hits where t.state != .done {
+            t.state = .done
+            t.endedAt = Date()
+            t.pendingAsk = nil          // 挂着的提问一起收掉，别留在手机上
+            t.note = "人工标完成：" + why
+            try? TaskStore.append(t)
+            n += 1
+            print(Ansi.green("已标完成 ") + t.id + Ansi.dim("  " + String(t.prompt.prefix(50))))
+        }
+        if n == 0 { print(Ansi.dim("这些任务本来就是 done，没动。")) }
+        // 标完立刻对账：下游该解冻的解冻，省得人再敲一条命令。
+        let thawed = TaskGraph.reconcile(TaskStore.all())
+        for t in thawed where t.state == .queued {
+            print(Ansi.dim("  解冻 " + t.id + "  上游办完了，重新排队"))
+            try? TaskStore.append(t)
+        }
+
     case "discard":
         // 丢弃原来只能从手机的审批界面走 —— 而那个界面只覆盖
         // 「跑完了、碰到高危路径、在等你点」这一种情况。
