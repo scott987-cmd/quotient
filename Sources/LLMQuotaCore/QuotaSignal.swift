@@ -34,6 +34,29 @@ public enum QuotaSignal {
     /// 平台冻起来，那比漏报更糟（漏报只是少知道一件事，错报是主动少干活）。
     static func looksExhausted(_ line: String) -> Bool {
         let l = line.lowercased()
+
+        // **先排掉 agent 自己干的事。**
+        //
+        // 会话日志一行是一整个 JSON，里面装着 agent 执行的 Bash 命令、
+        // 读到的文件内容、写出的代码。在这个项目里那几乎必然包含额度关键词。
+        //
+        // 实测（最讽刺的一次）：我在修「额度关键词误判」这个 bug 的过程中，
+        // 跑的 grep 命令被记进 ~/.claude 日志，这里扫到关键词，
+        // 把 Claude 判成额度打满冻了起来 —— 修 bug 的过程触发了同一个 bug。
+        // Claude 还是本机的指挥兼架构师，冻住它等于高危任务全线停摆。
+        let agentActions = ["\"type\":\"tool_use\"", "\"type\":\"tool_result\"",
+                            "\"name\":\"bash\"", "\"name\":\"read\"",
+                            "\"name\":\"grep\"", "\"name\":\"edit\"",
+                            "\"name\":\"write\"", "llm.request"]
+        if agentActions.contains(where: { l.contains($0) }) { return false }
+
+        // 必须是**服务端说的话**。散装关键词不作数 ——
+        // 这些标记只会出现在平台自己返回的错误里。
+        let serverMarkers = ["api error", "request rejected", "isapierrormessage",
+                             "rate_limit_error", "\"type\":\"error\"",
+                             "http 429", "status: 429", "(429)"]
+        guard serverMarkers.contains(where: { l.contains($0) }) else { return false }
+
         // 429 单独出现不算数：正常重试里也会有。要配合额度类措辞。
         let hasCode = l.contains("429") || l.contains("rate_limit")
             || l.contains("ratelimit")

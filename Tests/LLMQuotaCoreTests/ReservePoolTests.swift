@@ -176,3 +176,25 @@ extension CooldownClassifyTests {
                        "别再把 UUID 头部当成错误消息存进台账")
     }
 }
+
+extension CooldownClassifyTests {
+    /// agent 自己跑的命令不是额度信号。
+    ///
+    /// 这条测试的样本是真的：修「额度关键词误判」的过程中，我跑的 grep
+    /// 被记进 ~/.claude 日志，QuotaSignal 扫到关键词把 Claude 冻了起来。
+    func testAgentToolCallsAreNotQuotaSignals() {
+        XCTAssertFalse(QuotaSignal.looksExhausted(
+            #"{"type":"tool_use","name":"Bash","input":{"command":"grep -n 429 额度 Cooldown.swift"}}"#))
+        XCTAssertFalse(QuotaSignal.looksExhausted(
+            #"{"type":"llm.request","kind":"loop","provider":"openai","note":"quota"}"#))
+        XCTAssertFalse(QuotaSignal.looksExhausted(
+            #"{"type":"tool_result","content":"429 rate_limit quota exhausted"}"#),
+            "读到别的文件里写着 429，不代表自己被限流了")
+    }
+
+    /// 服务端真的拒绝了，还是要认出来。
+    func testServerRejectionIsStillASignal() {
+        XCTAssertTrue(QuotaSignal.looksExhausted(
+            #"{"type":"assistant","message":{"content":"API Error: Request rejected (429) · [1308][已达到 5 小时的使用上限。]"},"isApiErrorMessage":true}"#))
+    }
+}
