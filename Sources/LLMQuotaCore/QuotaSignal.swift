@@ -32,38 +32,73 @@ public enum QuotaSignal {
     ///
     /// 只认高置信关键词，宁可漏也不错报 —— 错报的代价是把一个还能用的
     /// 平台冻起来，那比漏报更糟（漏报只是少知道一件事，错报是主动少干活）。
+    /// 这一行是不是**服务端真的拒绝了我们**。
+    ///
+    /// ## 为什么不能用关键词匹配
+    ///
+    /// 会话日志一行是一整个 JSON，装着 agent 执行的命令、读到的文件、
+    /// 写出的代码、甚至它的思考过程。在一个**专门处理额度**的项目里，
+    /// 这些内容几乎必然包含「额度」「429」「quota」。
+    ///
+    /// 今天连撞三次，一次比一次讽刺：
+    /// 1. agent 跑的 grep 命令被当成额度信号
+    /// 2. 加了「服务端措辞」过滤后，agent 的**思考内容**又中了 ——
+    ///    因为它在思考里引用了那句错误消息
+    /// 3. 查到的所谓「真 429 行」其实是 `type: user` 的工具结果，
+    ///    也就是某个工具读到的文本
+    ///
+    /// 结论：**内容判断在自指场景下永远不安全**，必须看结构。
+    ///
+    /// ## 现在的判据
+    ///
+    /// 1. 这一行能解析成 JSON，且 `type` 是模型侧的消息（assistant/system），
+    ///    不是 user/tool_result —— 后者装的是我们喂进去的东西
+    /// 2. 文本部分（跳过 thinking 块）里有服务端专有措辞 + 429 + 额度词
+    /// 3. 调用方只看文件尾部：**真打满之后会话就断了**，
+    ///    所以信号必然在最后几条里。中间出现的都是内容不是事件。
     static func looksExhausted(_ line: String) -> Bool {
-        let l = line.lowercased()
+        guard let data = line.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
 
-        // **先排掉 agent 自己干的事。**
-        //
-        // 会话日志一行是一整个 JSON，里面装着 agent 执行的 Bash 命令、
-        // 读到的文件内容、写出的代码。在这个项目里那几乎必然包含额度关键词。
-        //
-        // 实测（最讽刺的一次）：我在修「额度关键词误判」这个 bug 的过程中，
-        // 跑的 grep 命令被记进 ~/.claude 日志，这里扫到关键词，
-        // 把 Claude 判成额度打满冻了起来 —— 修 bug 的过程触发了同一个 bug。
-        // Claude 还是本机的指挥兼架构师，冻住它等于高危任务全线停摆。
-        let agentActions = ["\"type\":\"tool_use\"", "\"type\":\"tool_result\"",
-                            "\"name\":\"bash\"", "\"name\":\"read\"",
-                            "\"name\":\"grep\"", "\"name\":\"edit\"",
-                            "\"name\":\"write\"", "llm.request"]
-        if agentActions.contains(where: { l.contains($0) }) { return false }
+        // 只认模型侧的消息。user / tool_result 里装的是我们喂进去的东西 ——
+        // 我们读了一个写着 429 的文件，不代表我们被限流了。
+        let type = (obj["type"] as? String)?.lowercased() ?? ""
+        guard type == "assistant" || type == "system" || type == "error" else { return false }
 
-        // 必须是**服务端说的话**。散装关键词不作数 ——
-        // 这些标记只会出现在平台自己返回的错误里。
-        let serverMarkers = ["api error", "request rejected", "isapierrormessage",
-                             "rate_limit_error", "\"type\":\"error\"",
-                             "http 429", "status: 429", "(429)"]
-        guard serverMarkers.contains(where: { l.contains($0) }) else { return false }
+        let text = plainText(of: obj).lowercased()
+        guard !text.isEmpty else { return false }
 
-        // 429 单独出现不算数：正常重试里也会有。要配合额度类措辞。
-        let hasCode = l.contains("429") || l.contains("rate_limit")
-            || l.contains("ratelimit")
-        guard hasCode else { return false }
+        let serverMarkers = ["api error", "request rejected", "rate_limit_error"]
+        guard serverMarkers.contains(where: { text.contains($0) }) else { return false }
+        guard text.contains("429") || text.contains("rate_limit") else { return false }
         let quotaWords = ["使用上限", "限额", "额度", "quota", "exhaust",
                           "usage limit", "insufficient"]
-        return quotaWords.contains { l.contains($0.lowercased()) }
+        return quotaWords.contains { text.contains($0) }
+    }
+
+    /// 一条消息里**模型说出来的文字**，跳过 thinking 和工具调用。
+    ///
+    /// thinking 必须跳过：模型在思考里引用一句错误消息，不等于真的撞上了。
+    static func plainText(of obj: [String: Any]) -> String {
+        var out = ""
+        func walk(_ any: Any) {
+            if let s = any as? String { out += s + " "; return }
+            if let arr = any as? [Any] { arr.forEach(walk); return }
+            guard let d = any as? [String: Any] else { return }
+            let kind = (d["type"] as? String)?.lowercased() ?? ""
+            // thinking：模型的内心活动，不是发生过的事
+            // tool_use / tool_result：agent 干的事和读到的东西
+            if ["thinking", "tool_use", "tool_result", "redacted_thinking"].contains(kind) {
+                return
+            }
+            if let t = d["text"] as? String { out += t + " " }
+            if let c = d["content"] { walk(c) }
+            if let m = d["message"] { walk(m) }
+        }
+        if let m = obj["message"] { walk(m) }
+        if let c = obj["content"] { walk(c) }
+        return out
     }
 
     /// 从整行日志里抠出**服务端那句话**。
@@ -148,8 +183,11 @@ public enum QuotaSignal {
                 guard now.timeIntervalSince(mod) < within else { continue }
                 guard let text = try? String(contentsOf: f, encoding: .utf8) else { continue }
                 let lines = text.split(separator: "\n")
-                // 从后往前找：最近的那条才算数
-                for line in lines.reversed().prefix(400) {
+                // **只看最后几条。** 真打满之后会话就断了 —— 信号必然在尾部。
+                // 中间出现的额度字样是内容不是事件（agent 读了一个写着 429
+                // 的文件、或者在讨论额度代码）。看 400 行等于把整个会话
+                // 的内容都当成候选信号。
+                for line in lines.reversed().prefix(12) {
                     let s = String(line)
                     guard looksExhausted(s) else { continue }
                     // **打满记在谁头上，看这个文件里跑的是谁的模型。**

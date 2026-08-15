@@ -178,23 +178,24 @@ extension CooldownClassifyTests {
 }
 
 extension CooldownClassifyTests {
-    /// agent 自己跑的命令不是额度信号。
-    ///
-    /// 这条测试的样本是真的：修「额度关键词误判」的过程中，我跑的 grep
-    /// 被记进 ~/.claude 日志，QuotaSignal 扫到关键词把 Claude 冻了起来。
-    func testAgentToolCallsAreNotQuotaSignals() {
+    /// 日志里提到额度 ≠ 撞上额度。今天连撞三次的那条路径。
+    func testOnlyModelSideRejectionsCount() {
+        // 1. agent 跑的命令
         XCTAssertFalse(QuotaSignal.looksExhausted(
-            #"{"type":"tool_use","name":"Bash","input":{"command":"grep -n 429 额度 Cooldown.swift"}}"#))
+            #"{"type":"user","message":{"content":[{"type":"tool_result","content":"API Error: Request rejected (429) 已达到使用上限"}]}}"#),
+            "工具读到的文本不是我们自己撞的")
+        // 2. 模型的思考内容里引用了错误消息
         XCTAssertFalse(QuotaSignal.looksExhausted(
-            #"{"type":"llm.request","kind":"loop","provider":"openai","note":"quota"}"#))
+            #"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"API Error: Request rejected (429) 已达到 5 小时的使用上限——这就是要修的那条"}]}}"#),
+            "模型在思考里引用一句错误消息，不等于真撞上了")
+        // 3. 纯粹的工具调用
         XCTAssertFalse(QuotaSignal.looksExhausted(
-            #"{"type":"tool_result","content":"429 rate_limit quota exhausted"}"#),
-            "读到别的文件里写着 429，不代表自己被限流了")
+            #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"grep 429 额度 quota"}}]}}"#))
     }
 
     /// 服务端真的拒绝了，还是要认出来。
     func testServerRejectionIsStillASignal() {
         XCTAssertTrue(QuotaSignal.looksExhausted(
-            #"{"type":"assistant","message":{"content":"API Error: Request rejected (429) · [1308][已达到 5 小时的使用上限。]"},"isApiErrorMessage":true}"#))
+            #"{"type":"assistant","message":{"content":[{"type":"text","text":"API Error: Request rejected (429) · [1308][已达到 5 小时的使用上限。您的限额将在 2026-08-15 12:00:47 重置。]"}]}}"#))
     }
 }
