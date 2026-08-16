@@ -39,6 +39,19 @@ public struct AgentRole: Codable, Sendable {
     public var prefers: [TaskProfile.Tier]
     public var note: String
 
+    /// 能不能派活给它。**由 Mac 端算，不让客户端猜。**
+    ///
+    /// 手机上原来自己判断「platform != minimax 就能派」，那条写于
+    /// MiniMax 只会文本聊天的年代 —— 而它现在有三个执行器，
+    /// 媒体（生图/生乐）和评审都写文件。结果是办公室里点它的
+    /// 「点名让他干一件活」毫无反应，而它明明能干活。
+    ///
+    /// 能力会变，客户端的判断会过期，而客户端要走审核 ——
+    /// 所以这种事实一律由服务端下发。
+    public var canTakeWork: Bool = true
+    /// 不能派活时说清为什么。空字符串表示能派。
+    public var cannotTakeWorkReason: String = ""
+
     /// 在这些机器上不派活给它。存机器名（`llmq machines` 里看到的那个），
     /// 不存 machineID —— 后者是一串 UUID，配置文件里没法读。
     ///
@@ -263,6 +276,15 @@ public enum AgentRoles {
     private static var cached: [Platform: AgentRole]?
     private static var cachedAt: Date?
 
+    /// 这个平台上有没有**能写文件**的执行器。
+    ///
+    /// 问真实的执行器清单，不写死平台名 —— MiniMax 就是被写死坑过的：
+    /// 它从「只会文本聊天」长成了三个执行器（文本/媒体/评审），
+    /// 而手机上那条 `platform != "minimax"` 停在了原地。
+    static func hasEditingRunner(_ p: Platform) -> Bool {
+        RunnerRegistry.all.contains { $0.platform == p && $0.canEdit }
+    }
+
     public static func all() -> [Platform: AgentRole] {
         if let cached, let cachedAt, Date().timeIntervalSince(cachedAt) < 30 { return cached }
         var out = Dictionary(defaults().map { ($0.platform, $0) }, uniquingKeysWith: { a, _ in a })
@@ -287,6 +309,7 @@ public enum AgentRoles {
                 FileHandle.standardError.write(Data(
                     "roles.json 里有 \(bad) 条解不出来，已跳过（其余照常生效）\n".utf8))
             }
+            out = withCapabilities(out)
             cached = out; cachedAt = Date()
             return out
         }
@@ -297,8 +320,25 @@ public enum AgentRoles {
             // 然后 role(for:) 返回 nil、风险闸门失效，静默放行。
             for r in saved { out[r.platform] = r }
         }
+        out = withCapabilities(out)
         cached = out
         cachedAt = Date()
+        return out
+    }
+
+    /// 把「能不能派活」按真实执行器算出来填进去。
+    ///
+    /// **磁盘配置不该决定这件事** —— 它是代码能力的事实，
+    /// 不是人的偏好。人能配的是「愿不愿意派」（muted），
+    /// 不是「能不能派」。
+    static func withCapabilities(_ roles: [Platform: AgentRole]) -> [Platform: AgentRole] {
+        var out = roles
+        for (p, var r) in roles {
+            r.canTakeWork = hasEditingRunner(p)
+            r.cannotTakeWorkReason = r.canTakeWork ? ""
+                : "这个平台上没有能改文件的执行器"
+            out[p] = r
+        }
         return out
     }
 
