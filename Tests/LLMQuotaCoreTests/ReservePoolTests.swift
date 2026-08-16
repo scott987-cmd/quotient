@@ -201,3 +201,40 @@ extension CooldownClassifyTests {
             #"{"type":"assistant","message":{"content":[{"type":"text","text":"API Error: Request rejected (429) · [1308][已达到 5 小时的使用上限。您的限额将在 2026-08-15 12:00:47 重置。]"}]}}"#))
     }
 }
+
+/// 跨机同步的结构体必须对「老版本写的、缺新字段」的数据免疫。
+final class SnapshotCompatTests: XCTestCase {
+    /// 这是真实事故的最小复现：给 OfficialQuota 加了 advisory 字段之后，
+    /// 另一台机器（还没升级）写的快照解不出来，整台机器从 dashboard 消失，
+    /// 调度以为它上面的平台全没在用。
+    ///
+    /// 根因是 Swift 合成的 Decodable **不用属性默认值** ——
+    /// `var advisory = false` 不代表缺这个键时会填 false，而是直接抛错。
+    func testOldQuotaWithoutNewFieldsStillDecodes() throws {
+        let json = """
+        {"id":"weekly","label":"每周","usedPercent":13,"windowMinutes":10080,
+         "observedAt":"2026-08-16T06:33:37Z"}
+        """
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let q = try dec.decode(OfficialQuota.self, from: Data(json.utf8))
+        XCTAssertEqual(q.id, "weekly")
+        XCTAssertFalse(q.advisory, "缺 advisory 要当成 false，不是解码失败")
+        XCTAssertNil(q.usedCount)
+        XCTAssertNil(q.countUnit)
+    }
+
+    /// 新字段写出去也要能读回来 —— 别只顾着兼容旧的。
+    func testNewFieldsRoundTrip() throws {
+        let q = OfficialQuota(
+            id: "weekly-video", label: "video 每周", usedPercent: 58,
+            windowMinutes: 10080, observedAt: Date(),
+            usedCount: 12, totalCount: 21, countUnit: "次", advisory: true)
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        let back = try dec.decode(OfficialQuota.self, from: try enc.encode(q))
+        XCTAssertEqual(back.usedCount, 12)
+        XCTAssertEqual(back.totalCount, 21)
+        XCTAssertTrue(back.advisory)
+    }
+}

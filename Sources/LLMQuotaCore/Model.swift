@@ -353,6 +353,28 @@ public struct OfficialQuota: Codable, Sendable, Hashable {
     /// （那是它的主要用途）。所以：采、显示、不参与判断。
     public var advisory: Bool = false
 
+    // **加字段必须自己写 init(from:)。**
+    //
+    // Swift 合成的 Decodable **不会用属性默认值** —— 老快照里没有
+    // `advisory` 这个键，解码就直接抛 keyNotFound，整份快照作废。
+    // 实测后果：另一台机器还在正常采集、文件也同步过来了，
+    // 而汇总里它凭空消失，调度以为那台机器上的平台全都没在用。
+    // 跨机同步的结构体只要还会被老版本写出来，就得对缺字段免疫。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        label = try c.decode(String.self, forKey: .label)
+        usedPercent = try c.decode(Double.self, forKey: .usedPercent)
+        windowMinutes = try c.decode(Int.self, forKey: .windowMinutes)
+        resetsAt = try c.decodeIfPresent(Date.self, forKey: .resetsAt)
+        planType = try c.decodeIfPresent(String.self, forKey: .planType)
+        observedAt = try c.decode(Date.self, forKey: .observedAt)
+        usedCount = try c.decodeIfPresent(Double.self, forKey: .usedCount)
+        totalCount = try c.decodeIfPresent(Double.self, forKey: .totalCount)
+        countUnit = try c.decodeIfPresent(String.self, forKey: .countUnit)
+        advisory = try c.decodeIfPresent(Bool.self, forKey: .advisory) ?? false
+    }
+
     public init(
         id: String,
         label: String,

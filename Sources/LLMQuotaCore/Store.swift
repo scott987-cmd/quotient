@@ -105,6 +105,7 @@ public enum SnapshotStore {
 
     /// 读取所有机器的快照。同一台机器（machineID 相同）只保留最新的一份。
     public static func loadAll() -> [MachineSnapshot] {
+        decodeFailures = []
         var found: [String: MachineSnapshot] = [:]
         for dir in [Paths.snapshotsDir, Paths.localSnapshotsDir] {
             for snap in load(from: dir) {
@@ -115,6 +116,9 @@ public enum SnapshotStore {
         return found.values.sorted { $0.machineName < $1.machineName }
     }
 
+    /// 最近一次 loadAll 里解不出来的快照。诊断用（`llmq mirror`）。
+    public private(set) nonisolated(unsafe) static var decodeFailures: [(file: String, error: String)] = []
+
     private static func load(from dir: URL) -> [MachineSnapshot] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
@@ -124,10 +128,17 @@ public enum SnapshotStore {
         var out: [MachineSnapshot] = []
         let decoder = SnapshotCoding.decoder()
         for url in entries where url.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: url),
-                  let snap = try? decoder.decode(MachineSnapshot.self, from: data)
-            else { continue }
-            out.append(snap)
+            guard let data = try? Data(contentsOf: url) else { continue }
+            do {
+                out.append(try decoder.decode(MachineSnapshot.self, from: data))
+            } catch {
+                // **解码失败不能静默跳过。**
+                //
+                // 症状是「另一台机器凭空消失」：文件在、时间新、结构看着也对，
+                // 而汇总里就是没有它 —— 调度于是以为那台机器上的平台都没在用。
+                // 实测排查了半小时才定位到是解码问题，因为原来这里是 `try?`。
+                decodeFailures.append((url.lastPathComponent, "\(error)"))
+            }
         }
 
         // 别的机器写的快照，在本机可能还只是个未下载的占位符（.xxx.json.icloud）。

@@ -4905,6 +4905,33 @@ func cmdMirror(_ args: [String]) throws {
         }
     }
 
+    // **汇总真的读到了几台。** 文件在、时间新，不代表汇总认它 ——
+    // 解码失败是静默跳过的（try? decode），症状就是「机器凭空消失」。
+    print()
+    print(Ansi.bold("汇总读到的机器"))
+    let snaps = SnapshotStore.loadAll()
+    if snaps.isEmpty {
+        print(Ansi.red("  一台都没读到"))
+    }
+    for s in snaps {
+        let age = Date().timeIntervalSince(s.generatedAt)
+        print("  " + (age < 3600 ? Ansi.green("●") : Ansi.dim("○")) + " "
+              + s.machineName + Ansi.dim("  采集于 " + Format.duration(age) + "前"
+                                         + "  " + s.machineID.prefix(8)))
+    }
+    // 目录里有几个文件，和汇总认了几台，对不上就是解码出了问题。
+    let onDisk = [Paths.snapshotsDir, Paths.localSnapshotsDir].flatMap { d -> [String] in
+        ((try? FileManager.default.contentsOfDirectory(atPath: d.path)) ?? [])
+            .filter { $0.hasSuffix(".json") }
+    }
+    let uniqueFiles = Set(onDisk).count
+    if uniqueFiles > snaps.count {
+        print(Ansi.red("  ✗ 磁盘上有 \(uniqueFiles) 份快照，汇总只认了 \(snaps.count) 台"))
+    }
+    for (file, err) in SnapshotStore.decodeFailures {
+        print(Ansi.red("  ✗ 解不出 " + String(file.prefix(12))) + Ansi.dim("  " + err.prefix(220)))
+    }
+
     guard args.contains("--run") else {
         print()
         print(Ansi.dim("跑一次同步并打印错误：llmq mirror --run"))
