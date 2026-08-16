@@ -2392,6 +2392,7 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 改它们不需要重新上架 —— 而上架一次要走几天审核。
         phase("下发视图", 60) {
             ViewFeed.publish(ViewFeed.nowPage())
+            ViewFeed.publish(ViewFeed.boardPage())
             for inv in ViewFeed.pendingInvocations() {
                 guard let done = runInvocation(inv) else {
                     print(Ansi.dim("  不认识的动作：" + inv.id))
@@ -4661,7 +4662,7 @@ do {
     case "view":
         // llmq view [now] —— 手动生成一次下发内容并打印摘要。
         // 调试用：改了组装逻辑之后不用等 work loop 那一轮。
-        let page = ViewFeed.nowPage()
+        let page = rest.first == "board" ? ViewFeed.boardPage() : ViewFeed.nowPage()
         _ = ViewFeed.publish(page)
         print(Ansi.bold("已下发 " + page.page)
               + Ansi.dim("  \(page.sections.count) 个区块"))

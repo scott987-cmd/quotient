@@ -304,3 +304,72 @@ extension ViewFeed {
         return Page(page: "now", sections: sections, now: now)
     }
 }
+
+// MARK: - 看板页
+
+extension ViewFeed {
+    /// 看板：各平台窗口 + 任务吞吐 + 机器心跳。
+    ///
+    /// 排序规则（「最该看」）在这里，不在客户端 ——
+    /// 以前改一次排序就要重新上架。
+    public static func boardPage(dashboard: Dashboard = LLMQuota.dashboard(),
+                                 now: Date = Date()) -> Page {
+        var sections: [Section] = []
+
+        // 机器心跳。超过两轮采集没到就算掉线 —— 一轮可能只是 iCloud 慢了半拍。
+        let stale: TimeInterval = 30 * 60
+        let machines = SnapshotStore.loadAll()
+        if !machines.isEmpty {
+            sections.append(Section(
+                kind: "facts", title: "机器心跳",
+                facts: machines.map { m in
+                    let age = now.timeIntervalSince(m.generatedAt)
+                    return Fact(key: m.machineName,
+                                value: Format.duration(age) + "前",
+                                tone: age > stale ? .warn : .good)
+                }))
+        }
+
+        // 额度窗口，按「最该看」排：已用尽 > 快过期还空着 > 其余
+        let all = dashboard.reports.flatMap { r in r.statuses.map { (r.platform, $0) } }
+        let ranked = all.sorted { a, b in
+            func rank(_ s: QuotaStatus) -> Int {
+                if s.health == .exhausted { return 0 }
+                if s.health == .wasting { return 1 }
+                if s.health == .atRisk { return 2 }
+                return 3
+            }
+            if rank(a.1) != rank(b.1) { return rank(a.1) < rank(b.1) }
+            return (a.1.resetsAt ?? .distantFuture) < (b.1.resetsAt ?? .distantFuture)
+        }
+        if !ranked.isEmpty {
+            sections.append(Section(
+                kind: "meters", title: "额度窗口", note: "按「最该看」排序",
+                meters: ranked.prefix(10).map { platform, s in
+                    Meter(label: platform.displayName + " · " + s.label,
+                          fraction: s.usedFraction ?? 0,
+                          tone: s.health == .exhausted ? .danger
+                              : (s.health == .wasting ? .warn
+                                 : (s.health == .atRisk ? .warn : .good)),
+                          right: s.resetsAt.map {
+                              Format.duration($0.timeIntervalSince(now)) + "后重置" })
+                }))
+        }
+
+        // 任务吞吐
+        let tasks = TaskStore.all()
+        let day = tasks.filter { now.timeIntervalSince($0.createdAt) < 86400 }
+        sections.append(Section(
+            kind: "facts", title: "24 小时",
+            facts: [
+                Fact(key: "跑完", value: "\(day.filter { $0.state == .done }.count)",
+                     tone: .good),
+                Fact(key: "失败", value: "\(day.filter { $0.state == .failed }.count)",
+                     tone: day.contains { $0.state == .failed } ? .warn : .neutral),
+                Fact(key: "在跑", value: "\(tasks.filter { $0.state == .running }.count)"),
+                Fact(key: "排队", value: "\(tasks.filter { $0.state == .queued }.count)"),
+            ]))
+
+        return Page(page: "board", sections: sections, now: now)
+    }
+}
