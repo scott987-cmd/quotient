@@ -45,6 +45,12 @@ public enum MiniMaxProbe {
               let remains = resp.model_remains
         else { return [] }
 
+        // **mmx 报的重置时间不可全信。** 实测（2026-08-16）四个窗口
+        //（general/video × 区间/周）的 end_time 和 weekly_end_time
+        // 返回的是同一个值 —— 周窗和小时窗报同一个重置时刻，显然不对。
+        // 这里如实转述，不去猜它该是多少：猜出来的时间会让「快过期了」
+        // 这个判断建立在编造的数据上，比不准更糟。
+        // 影响：MiniMax 的窗口在「最接近作废」排序里位置可能不准。
         var out: [OfficialQuota] = []
         for m in remains {
             let name = (m.model_name ?? "").lowercased()

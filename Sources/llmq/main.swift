@@ -2386,6 +2386,23 @@ func cmdWorkLoop(_ args: [String]) throws {
             }
         }
 
+        // 下发「现在」页 + 收手机点过的动作。
+        //
+        // 这一层的意义：排序规则、提示语、有哪些按钮，全在 Mac 端决定。
+        // 改它们不需要重新上架 —— 而上架一次要走几天审核。
+        phase("下发视图", 60) {
+            ViewFeed.publish(ViewFeed.nowPage())
+            for inv in ViewFeed.pendingInvocations() {
+                guard let done = runInvocation(inv) else {
+                    print(Ansi.dim("  不认识的动作：" + inv.id))
+                    continue
+                }
+                print((done ? Ansi.green("  手机上：") : Ansi.red("  手机上（失败）："))
+                      + inv.id)
+                if done { ViewFeed.markDone(inv) }
+            }
+        }
+
         // 收手机批的项目方案。要在「空窗填活」之前 ——
         // 刚批的项目本轮就该能被取用，不用等下一轮。
         phase("收批准", 15) {
@@ -4641,6 +4658,25 @@ do {
         try cmdWork(rest)
     case "plan":
         try cmdPlan(rest)
+    case "view":
+        // llmq view [now] —— 手动生成一次下发内容并打印摘要。
+        // 调试用：改了组装逻辑之后不用等 work loop 那一轮。
+        let page = ViewFeed.nowPage()
+        _ = ViewFeed.publish(page)
+        print(Ansi.bold("已下发 " + page.page)
+              + Ansi.dim("  \(page.sections.count) 个区块"))
+        for s in page.sections {
+            let n = (s.meters?.count ?? 0) + (s.cards?.count ?? 0)
+                + (s.facts?.count ?? 0)
+            print("  " + s.kind.padding(toLength: 8, withPad: " ", startingAt: 0)
+                  + (s.title ?? "") + Ansi.dim(n > 0 ? "  \(n) 条" : ""))
+        }
+        let pend = ViewFeed.pendingInvocations()
+        if !pend.isEmpty {
+            print(Ansi.yellow("\(pend.count) 个动作等着执行"))
+            for i in pend { print("  " + i.id) }
+        }
+
     case "mirror":
         try cmdMirror(rest)
     case "push":
@@ -4951,5 +4987,39 @@ func cmdMirror(_ args: [String]) throws {
         print(Ansi.green("  没有错误"))
     } else {
         for e in stats.errors { print(Ansi.red("  ✗ ") + e) }
+    }
+}
+
+
+/// 执行手机点来的动作。
+///
+/// **动作 id 的含义只有这里知道** —— 客户端原样写回，这里解释。
+/// 所以加一种新动作不需要客户端更新，只要这里认得它。
+///
+/// - Returns: nil 表示不认识这个动作（不记 done，也不算失败）；
+///   true/false 是执行结果。
+func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
+    let parts = inv.id.split(separator: ":", maxSplits: 2).map(String.init)
+    guard parts.count >= 2 else { return nil }
+
+    switch (parts[0], parts[1]) {
+    case ("review", "merge"), ("review", "discard"):
+        guard parts.count == 3 else { return false }
+        let bits = parts[2].split(separator: "|", maxSplits: 1).map(String.init)
+        guard bits.count == 2 else { return false }
+        if parts[1] == "merge" {
+            if case .success = Review.merge(repo: bits[0], branch: bits[1]) { return true }
+            return false
+        }
+        Review.discard(repo: bits[0], branch: bits[1],
+                       reason: inv.note ?? "手机上丢弃")
+        return true
+
+    case ("playbook", "approve"):
+        guard parts.count == 3 else { return false }
+        return Playbook.approve(parts[2]) != nil
+
+    default:
+        return nil
     }
 }

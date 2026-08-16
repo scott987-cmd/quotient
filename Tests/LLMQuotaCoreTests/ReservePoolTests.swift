@@ -318,3 +318,71 @@ final class SafeDecodeTests: XCTestCase {
         XCTAssertEqual(SafeDecode.failures.last?.file, "f79", "留的应该是最近的")
     }
 }
+
+/// 视图层的跨版本免疫。
+///
+/// 这三条是「服务端能不能先发新东西」的**前提条件**。任何一条不成立，
+/// 服务端就被客户端的版本锁死了 —— 而客户端要走审核，一次一周。
+final class ViewFeedCompatTests: XCTestCase {
+    private func decode(_ json: String) -> ViewFeed.Page? {
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        return try? d.decode(ViewFeed.Page.self, from: Data(json.utf8))
+    }
+
+    /// 1. 未知的区块类型不能让整页解码失败 —— 它必须能被读出来然后跳过。
+    func testUnknownSectionKindStillDecodes() {
+        let page = decode("""
+        {"schema":1,"page":"now","generatedAt":"2026-08-16T14:00:00Z",
+         "sections":[
+           {"kind":"meters","meters":[{"label":"A","fraction":0.5,"tone":"warn"}]},
+           {"kind":"未来才有的类型","someNewField":{"a":1},"title":"新东西"}
+         ]}
+        """)
+        XCTAssertEqual(page?.sections.count, 2, "未知 kind 要读出来（客户端负责跳过），不是让整页失败")
+        XCTAssertEqual(page?.sections[1].kind, "未来才有的类型")
+    }
+
+    /// 2. 多出来的字段要被忽略 —— 新服务端写的东西，老客户端也要能读。
+    func testExtraFieldsAreIgnored() {
+        let page = decode("""
+        {"schema":1,"page":"now","generatedAt":"2026-08-16T14:00:00Z",
+         "brandNewTopLevelKey":42,
+         "sections":[{"kind":"text","text":"x","futureField":"y"}]}
+        """)
+        XCTAssertEqual(page?.sections.first?.text, "x")
+    }
+
+    /// 3. 缺字段要有默认值 —— 老服务端写的东西，新客户端也要能读。
+    func testMissingFieldsGetDefaults() {
+        let page = decode("""
+        {"schema":1,"page":"now","generatedAt":"2026-08-16T14:00:00Z",
+         "sections":[{"kind":"text"}]}
+        """)
+        let s = page?.sections.first
+        XCTAssertEqual(s?.tone, .neutral, "缺 tone 要默认 neutral，不是解码失败")
+        XCTAssertNil(s?.meters)
+    }
+
+    /// 未知的 tone 也不能炸 —— 服务端哪天加个 "critical"，老客户端得活着。
+    func testUnknownToneFallsBack() {
+        let page = decode("""
+        {"schema":1,"page":"now","generatedAt":"2026-08-16T14:00:00Z",
+         "sections":[{"kind":"text","tone":"某种新语气"}]}
+        """)
+        XCTAssertEqual(page?.sections.first?.tone, .neutral)
+    }
+
+    /// 动作 id 对服务端有意义，对客户端只是个字符串 ——
+    /// 加一种新动作不该需要客户端认识它。
+    func testActionIsOpaqueToClient() {
+        let page = decode("""
+        {"schema":1,"page":"now","generatedAt":"2026-08-16T14:00:00Z",
+         "sections":[{"kind":"cards","cards":[
+           {"id":"c1","title":"t","tone":"warn","images":[],
+            "actions":[{"id":"future:verb:arg","label":"做点新事",
+                        "style":"primary","needsNote":false}]}]}]}
+        """)
+        XCTAssertEqual(page?.sections.first?.cards?.first?.actions.first?.id,
+                       "future:verb:arg")
+    }
+}
