@@ -2391,8 +2391,19 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 这一层的意义：排序规则、提示语、有哪些按钮，全在 Mac 端决定。
         // 改它们不需要重新上架 —— 而上架一次要走几天审核。
         phase("下发视图", 60) {
-            ViewFeed.publish(ViewFeed.nowPage())
-            ViewFeed.publish(ViewFeed.boardPage())
+            // **「现在」和「看板」不下发 —— 它们的原生页更全也更好看。**
+            //
+            // 这两页迁早了：客户端一见到下发内容就整页交给通用渲染器，
+            // 而下发只组装了「在漏的」和「等你验收」两块，于是
+            // 在跑的任务、员工那一行、挡住了、冷却说明全没了 ——
+            // 「为啥手机端看不到现在进行中的任务」这个问题被我重新做了一遍。
+            //
+            // 迁移的前提是**下发能装下这一页原来显示的全部东西**。
+            // 装不下就先别迁：五种区块表达不了那张绿色的「正在干」大卡
+            // 和头像行，硬迁只会把好看的页换成能用的页。
+            //
+            // 少发一个文件，客户端就退回原生画法 —— 这条兜底路本来就是
+            // 为这种时刻留的，用它，别等发新包。
             ViewFeed.publish(ViewFeed.reviewPage())
             ViewFeed.publish(ViewFeed.playbookPage())
             ViewFeed.publishMenu(ViewFeed.menu())
@@ -4666,8 +4677,8 @@ do {
         // llmq view [now] —— 手动生成一次下发内容并打印摘要。
         // 调试用：改了组装逻辑之后不用等 work loop 那一轮。
         // 一次全发。单独调某一页时用 llmq view <页面>。
+        // now / board 不在列 —— 见 work loop 里「下发视图」那段的说明。
         let pages: [ViewFeed.Page] = [
-            ViewFeed.nowPage(), ViewFeed.boardPage(),
             ViewFeed.reviewPage(), ViewFeed.playbookPage(),
         ]
         for p in pages where rest.first == nil || rest.first == p.page {

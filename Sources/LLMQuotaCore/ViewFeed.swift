@@ -444,8 +444,9 @@ extension ViewFeed {
             MenuEntry(page: "playbook", title: "项目清单",
                       icon: "list.bullet.rectangle.portrait",
                       badge: badge("playbook"), group: "要你拍板"),
-            MenuEntry(page: "board", title: "看板",
-                      icon: "gauge.with.dots.needle.bottom.50percent", group: "查阅"),
+            // 「看板」不列在这里：它有自己的标签页，而且原生那版更全。
+            // 菜单里指向一个不再下发的页面，点进去只会是「这一页还没有内容」——
+            // 一个能点但什么都没有的入口，比没有这个入口更糟。
         ], now: now)
     }
 
