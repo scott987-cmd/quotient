@@ -9,6 +9,32 @@
 另有配套 iOS App：在手机上看各平台额度汇总，也能直接派活给电脑上的常驻工作循环。
 它走的还是 iCloud 那条通道（见「多机汇总靠 iCloud」和 inbox/outbox），不需要额外服务器。
 
+<p align="center">
+  <img src="docs/img/01-now.jpg" width="23%" alt="现在">
+  <img src="docs/img/02-office.jpg" width="23%" alt="办公室">
+  <img src="docs/img/03-board.jpg" width="23%" alt="看板">
+  <img src="docs/img/04-review.jpg" width="23%" alt="等你验收">
+</p>
+
+<p align="center">
+  <sub>配套 iOS App：按「在漏什么」排序 · 每个平台一个工位 ·
+  各窗口剩余 · agent 交的活带实跑截图</sub>
+</p>
+
+**实测空窗率**（一台真实在用的开发机，连续 30 天）：
+
+| 平台 | 一次都没用过的窗口 |
+|---|---|
+| Codex | **82%** —— 154 个五小时窗里 127 个完全空着 |
+| Kimi | 69% |
+| GLM | 60% |
+| Qwen | 53% |
+
+「空窗」= 一整个额度窗口从头到尾没用过。那份订阅的钱直接打了水漂，
+而且不会有任何提醒。
+
+📖 **[项目主页](https://scott987-cmd.github.io/quotient/)**
+
 ---
 
 ## 五分钟跑起来

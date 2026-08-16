@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Quotient</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  /* 深色优先：这是个盯着东西流走的监控工具，深底才是它的世界。
+     浅色在下面 prefers-color-scheme 里给全套对应值。 */
+  --bg: #0F1315;
+  --surface: #171D20;
+  --surface-2: #1E262A;
+  --line: #2A3439;
+  --ink: #E6ECEE;
+  --ink-dim: #8A979C;      /* 青灰，不是中性灰 —— 和琥珀是互补关系 */
+  --ink-faint: #5C686D;
+  --amber: #F0B429;        /* 产品里「额度要作废」就是这个色，不是随便挑的 */
+  --amber-soft: rgba(240,180,41,.14);
+  --danger: #E5534B;
+  --good: #4FB477;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #F7F9F9;
+    --surface: #FFFFFF;
+    --surface-2: #EEF2F3;
+    --line: #DCE4E6;
+    --ink: #10171A;
+    --ink-dim: #56656B;
+    --ink-faint: #8A979C;
+    --amber: #B47100;
+    --amber-soft: rgba(180,113,0,.10);
+    --danger: #C0362F;
+    --good: #2F7D50;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #F7F9F9; --surface: #FFFFFF; --surface-2: #EEF2F3; --line: #DCE4E6;
+  --ink: #10171A; --ink-dim: #56656B; --ink-faint: #8A979C;
+  --amber: #B47100; --amber-soft: rgba(180,113,0,.10);
+  --danger: #C0362F; --good: #2F7D50;
+}
+:root[data-theme="dark"] {
+  --bg: #0F1315; --surface: #171D20; --surface-2: #1E262A; --line: #2A3439;
+  --ink: #E6ECEE; --ink-dim: #8A979C; --ink-faint: #5C686D;
+  --amber: #F0B429; --amber-soft: rgba(240,180,41,.14);
+  --danger: #E5534B; --good: #4FB477;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 17px/1.75 -apple-system, BlinkMacSystemFont, "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+
+/* ── Hero：把问题直接摆出来，不做大标题+按钮那一套 ── */
+header { padding: 88px 0 40px; }
+.eyebrow {
+  font: 600 12px/1 var(--mono);
+  letter-spacing: .14em; text-transform: uppercase;
+  color: var(--amber); margin-bottom: 22px;
+}
+h1 {
+  margin: 0 0 20px;
+  font-size: clamp(38px, 6vw, 60px);
+  font-weight: 700; line-height: 1.12; letter-spacing: -.02em;
+  text-wrap: balance;
+}
+h1 em { font-style: normal; color: var(--amber); }
+.lede {
+  margin: 0; max-width: 34em;
+  font-size: 19px; line-height: 1.7; color: var(--ink-dim);
+}
+
+/* ── 额度条：页面的主视觉，也是真实数据 ── */
+.meters {
+  margin: 44px 0 8px; padding: 24px 26px 20px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+}
+.meters-cap {
+  font: 500 13px/1.5 var(--mono); color: var(--ink-faint);
+  margin-bottom: 18px; letter-spacing: .01em;
+}
+.meter { display: grid; grid-template-columns: 84px 1fr 58px; align-items: center;
+         gap: 14px; padding: 7px 0; }
+.meter-name { font: 500 14px/1 var(--mono); color: var(--ink-dim); }
+.track { height: 9px; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
+.fill { height: 100%; border-radius: 5px; background: var(--amber);
+        transform-origin: left; animation: grow 1.1s cubic-bezier(.2,.7,.3,1) both; }
+.meter-num { font: 600 14px/1 var(--mono); color: var(--amber);
+             text-align: right; font-variant-numeric: tabular-nums; }
+@keyframes grow { from { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .fill { animation: none; } }
+.meters-foot {
+  margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line);
+  font-size: 14px; color: var(--ink-faint); line-height: 1.6;
+}
+
+/* ── 通用区块 ── */
+section { padding: 56px 0; border-top: 1px solid var(--line); }
+h2 {
+  margin: 0 0 8px; font-size: 27px; font-weight: 650;
+  letter-spacing: -.01em; text-wrap: balance;
+}
+.sub { margin: 0 0 30px; color: var(--ink-dim); font-size: 16px; max-width: 40em; }
+p { margin: 0 0 16px; }
+strong { font-weight: 650; color: var(--ink); }
+
+/* ── 三层 ── */
+.layers { display: grid; gap: 14px; }
+.layer {
+  display: grid; grid-template-columns: 30px 1fr; gap: 16px;
+  padding: 20px 22px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 12px;
+}
+.layer-n { font: 600 15px/1.4 var(--mono); color: var(--amber-num, var(--ink-faint)); }
+.layer h3 { margin: 0 0 5px; font-size: 17px; font-weight: 650; }
+.layer p { margin: 0; font-size: 15px; color: var(--ink-dim); line-height: 1.65; }
+.layer .gate {
+  display: inline-block; margin-top: 9px; padding: 3px 9px;
+  font: 500 12px/1.5 var(--mono); border-radius: 5px;
+  background: var(--surface-2); color: var(--ink-faint);
+}
+
+/* ── 截图 ── */
+.shots {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 26px; margin-top: 8px;
+}
+figure { margin: 0; }
+figure img {
+  width: 100%; display: block; border-radius: 16px;
+  border: 1px solid var(--line); background: var(--surface);
+}
+figcaption { margin-top: 11px; font-size: 14px; line-height: 1.6; color: var(--ink-dim); }
+figcaption b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+
+/* ── 代码 ── */
+pre {
+  margin: 0 0 14px; padding: 17px 19px; overflow-x: auto;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 11px; font: 400 14px/1.75 var(--mono); color: var(--ink);
+}
+pre .c { color: var(--ink-faint); }
+code { font: 400 .92em/1 var(--mono); background: var(--surface-2);
+       padding: 2px 6px; border-radius: 4px; }
+
+/* ── 事实条目 ── */
+.facts { display: grid; gap: 1px; background: var(--line);
+         border: 1px solid var(--line); border-radius: 11px; overflow: hidden; }
+.fact { display: grid; grid-template-columns: 1fr auto; gap: 16px;
+        padding: 15px 20px; background: var(--surface); align-items: baseline; }
+.fact-k { font-size: 15px; }
+.fact-v { font: 600 14px/1 var(--mono); color: var(--good);
+          font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fact-v.no { color: var(--ink-faint); }
+
+footer { padding: 44px 0 72px; border-top: 1px solid var(--line);
+         color: var(--ink-faint); font-size: 14px; line-height: 1.8; }
+footer a { color: var(--amber); text-decoration: none;
+           border-bottom: 1px solid var(--amber-soft); }
+footer a:hover, footer a:focus-visible { border-bottom-color: var(--amber); }
+a:focus-visible, button:focus-visible {
+  outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 3px;
+}
+@media (max-width: 560px) {
+  header { padding: 60px 0 32px; }
+  .meter { grid-template-columns: 72px 1fr 50px; gap: 10px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">用不完就作废</div>
+  <h1>你的 LLM 订阅额度，<em>正在流走</em></h1>
+  <p class="lede">
+    Claude、Codex、Qwen、Kimi…… 每家都按窗口发额度，窗口一过，没用的部分直接清零。
+    你不会收到任何提醒，也没有账单告诉你「这周有多少份额白扔了」。
+  </p>
+
+  <div class="meters">
+    <div class="meters-cap">实测空窗率 · 一台真实在用的开发机，连续 30 天</div>
+    <div class="meter">
+        <span class="meter-name">Codex</span>
+        <div class="track"><div class="fill" style="width:82%"></div></div>
+        <span class="meter-num">82%</span>
+      </div>
+    <div class="meter">
+        <span class="meter-name">Kimi</span>
+        <div class="track"><div class="fill" style="width:69%"></div></div>
+        <span class="meter-num">69%</span>
+      </div>
+    <div class="meter">
+        <span class="meter-name">GLM</span>
+        <div class="track"><div class="fill" style="width:60%"></div></div>
+        <span class="meter-num">60%</span>
+      </div>
+    <div class="meter">
+        <span class="meter-name">Qwen</span>
+        <div class="track"><div class="fill" style="width:53%"></div></div>
+        <span class="meter-num">53%</span>
+      </div>
+    <p class="meters-foot">
+      「空窗」= 一整个额度窗口从头到尾一次都没用过。
+      Codex 的 154 个五小时窗里，有 127 个完全空着 —— 那份订阅有八成的钱在打水漂。
+    </p>
+  </div>
+</header>
+
+<section>
+  <h2>三层，各自独立</h2>
+  <p class="sub">下面一层不需要上面一层。只用第一层是零门槛的。</p>
+  <div class="layers">
+    <div class="layer">
+      <span class="layer-n">01</span>
+      <div>
+        <h3>额度汇总</h3>
+        <p>扫本机各家 CLI 的用量，算出哪份订阅快到期还没用。不需要 API key，不联网 —— 读的是它们自己在本地留下的会话日志和额度回报。</p>
+        <span class="gate">swift build 完就能用</span>
+      </div>
+    </div>
+    <div class="layer">
+      <span class="layer-n">02</span>
+      <div>
+        <h3>跨机汇总</h3>
+        <p>几台电脑的用量合到一起看，手机 App 读同一份数据。走你自己的 iCloud，没有服务器。</p>
+        <span class="gate">需要 iCloud Drive</span>
+      </div>
+    </div>
+    <div class="layer">
+      <span class="layer-n">03</span>
+      <div>
+        <h3>Agent 调度</h3>
+        <p>窗口快过期还空着时，自动挑一个有余量的平台派活。跑完自己提交，附上实跑截图，等你在手机上验收。</p>
+        <span class="gate">需要先装好各家 CLI</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>手机上长这样</h2>
+  <p class="sub">下面四张是 App 内置演示模式的真实画面。</p>
+  <div class="shots">
+    <figure>
+        <img src="img/01-now.jpg" alt="现在">
+        <figcaption><b>现在</b>按「在漏什么」排序，不按平台罗列。要你做决定的事排在最上面。</figcaption>
+      </figure>
+    <figure>
+        <img src="img/02-office.jpg" alt="办公室">
+        <figcaption><b>办公室</b>每个平台一个工位。谁在干活、谁闲着、谁额度打空了，一眼看清。</figcaption>
+      </figure>
+    <figure>
+        <img src="img/03-board.jpg" alt="看板">
+        <figcaption><b>看板</b>各平台的窗口和剩余，按「最迟报」排序。</figcaption>
+      </figure>
+    <figure>
+        <img src="img/04-review.jpg" alt="等你验收">
+        <figcaption><b>等你验收</b>agent 交的活带着实跑截图。有冲突的合入按钮是灰的 —— 那种要去电脑上处理。</figcaption>
+      </figure>
+  </div>
+</section>
+
+<section>
+  <h2>五分钟跑起来</h2>
+  <p class="sub">需要 macOS 和 Xcode 命令行工具，没有别的前置。</p>
+  <pre><span class="c"># 装了哪个平台就采哪个，一个都没装也能跑</span>
+git clone https://github.com/scott987-cmd/quotient
+cd quotient &amp;&amp; swift build -c release
+
+./.build/release/llmq collect   <span class="c"># 扫一遍本机</span>
+./.build/release/llmq report    <span class="c"># 看结果</span></pre>
+  <p style="font-size:15px;color:var(--ink-dim)">
+    想先试试又不想弄脏自己的配置：<code>LLMQ_HOME=/tmp/试用 llmq collect</code>，
+    整个数据目录挪到那儿，删掉就干净了。
+  </p>
+</section>
+
+<section>
+  <h2>它不做什么</h2>
+  <p class="sub">这些约束不是省事，是设计选择。</p>
+  <div class="facts">
+    <div class="fact"><span class="fact-k">第三方依赖</span><span class="fact-v no">0 个</span></div>
+    <div class="fact"><span class="fact-k">需要注册的账号</span><span class="fact-v no">0 个</span></div>
+    <div class="fact"><span class="fact-k">需要填的 API key</span><span class="fact-v no">0 个</span></div>
+    <div class="fact"><span class="fact-k">数据离开你的设备</span><span class="fact-v no">不会</span></div>
+    <div class="fact"><span class="fact-k">对外监听的端口</span><span class="fact-v">1 个，双向 mTLS</span></div>
+    <div class="fact"><span class="fact-k">测试</span><span class="fact-v">508 个，自包含</span></div>
+  </div>
+  <p style="margin-top:18px;font-size:15px;color:var(--ink-dim)">
+    唯一那个端口是给手机 App 用的（iOS 上没有 SSH 这条路）。
+    放宽的前提写在 <code>SECURITY.md</code> 里，违反了 <code>swift test</code> 和
+    <code>llmq security</code> 都会失败。
+  </p>
+</section>
+
+<footer>
+  <p>
+    <a href="https://github.com/scott987-cmd/quotient">github.com/scott987-cmd/quotient</a>
+    · MIT · Swift · macOS
+  </p>
+  <p style="margin:0">
+    配套 iOS App「数字员工」在 TestFlight 内测中。
+  </p>
+</footer>
+
+</div>
+
+</body>
+</html>
