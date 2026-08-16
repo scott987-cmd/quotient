@@ -373,3 +373,158 @@ extension ViewFeed {
         return Page(page: "board", sections: sections, now: now)
     }
 }
+
+// MARK: - 动态入口
+
+extension ViewFeed {
+    /// 「更多」页的入口列表。
+    ///
+    /// ## 为什么这个比迁页面更值钱
+    ///
+    /// 迁一个已有页面，省下的是「改那一页要发版」。
+    /// 而下发入口列表省下的是**「加一个全新功能要发版」** ——
+    /// Mac 端加一个 `views/新东西.json`，在这里加一个入口指过去，
+    /// 手机上就多了一页，客户端一行都不用改。
+    ///
+    /// 代价是客户端要有一个「按 page 名字渲染任意一页」的通用路由，
+    /// 那正是 FeedView 已经做到的事。
+    public struct MenuEntry: Codable, Sendable {
+        public var page: String
+        public var title: String
+        /// SF Symbols。认不出就用默认图标。
+        public var icon: String?
+        /// 右边那个数字。**服务端算好** —— 以前是客户端自己数的。
+        public var badge: Int?
+        /// 分组标题。同一个 group 的排在一起。
+        public var group: String?
+
+        public init(page: String, title: String, icon: String? = nil,
+                    badge: Int? = nil, group: String? = nil) {
+            self.page = page; self.title = title
+            self.icon = icon; self.badge = badge; self.group = group
+        }
+    }
+
+    public struct Menu: Codable, Sendable {
+        public var schema: Int
+        public var generatedAt: Date
+        public var entries: [MenuEntry]
+
+        public init(entries: [MenuEntry], now: Date = Date()) {
+            self.schema = ViewFeed.schema
+            self.generatedAt = now
+            self.entries = entries
+        }
+    }
+
+    @discardableResult
+    public static func publishMenu(_ menu: Menu) -> Bool {
+        try? FileManager.default.createDirectory(
+            at: dir, withIntermediateDirectories: true)
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
+        guard let d = try? enc.encode(menu) else { return false }
+        return (try? d.write(to: dir.appendingPathComponent("menu.json"))) != nil
+    }
+
+    /// 当前该有哪些入口。
+    ///
+    /// 数字在这里算（以前是客户端数的）—— 「等你验收 2」这个 2
+    /// 要跟 Nudge 的口径一致，两处各算一次迟早会对不上。
+    public static func menu(now: Date = Date()) -> Menu {
+        let pending = Nudge.pending(now: now)
+        func badge(_ prefix: String) -> Int? {
+            let n = pending.first { $0.key.hasPrefix(prefix) }?.badge ?? 0
+            return n > 0 ? n : nil
+        }
+        return Menu(entries: [
+            MenuEntry(page: "review", title: "等你验收",
+                      icon: "checkmark.seal", badge: badge("review"), group: "要你拍板"),
+            MenuEntry(page: "playbook", title: "项目清单",
+                      icon: "list.bullet.rectangle.portrait",
+                      badge: badge("playbook"), group: "要你拍板"),
+            MenuEntry(page: "board", title: "看板",
+                      icon: "gauge.with.dots.needle.bottom.50percent", group: "查阅"),
+        ], now: now)
+    }
+
+    /// 验收页（走通用渲染，不再需要客户端专门实现）。
+    public static func reviewPage(now: Date = Date()) -> Page {
+        let items = Review.publishDigests()
+        guard !items.isEmpty else {
+            return Page(page: "review", sections: [
+                Section(kind: "text", title: "没有等验收的产出", tone: .good,
+                        text: "agent 交的活都已经合入或丢弃了。")
+            ], now: now)
+        }
+        // 按仓库分组，每组一个区块 —— 分组规则也在服务端。
+        let byRepo = Dictionary(grouping: items, by: \.repoName)
+        return Page(page: "review", sections: byRepo.keys.sorted().map { name in
+            let group = byRepo[name] ?? []
+            return Section(
+                kind: "cards", title: name + "（\(group.count)）",
+                cards: group.map { d in
+                    Card(id: d.repo + "|" + d.branch,
+                         title: d.subject,
+                         body: d.platform + " · \(d.files.count) 个文件"
+                             + " · +\(d.insertions)/−\(d.deletions)"
+                             + (d.mergesCleanly ? "" : " · 有冲突，要去电脑上处理"),
+                         detail: d.prompt,
+                         tone: d.mergesCleanly ? .neutral : .warn,
+                         icon: d.mergesCleanly ? "checkmark.seal" : "exclamationmark.triangle",
+                         trailing: d.evidenceFiles.isEmpty ? "没交证据"
+                             : "\(d.evidenceFiles.count) 张证据",
+                         images: d.evidenceFiles,
+                         actions: (d.mergesCleanly
+                             ? [Action(id: "review:merge:" + d.repo + "|" + d.branch,
+                                       label: "合入", style: "primary")] : [])
+                             + [Action(id: "review:discard:" + d.repo + "|" + d.branch,
+                                       label: "丢弃", style: "destructive", needsNote: true)])
+                })
+        }, now: now)
+    }
+
+    /// 项目清单页。
+    public static func playbookPage(now: Date = Date()) -> Page {
+        let all = Playbook.all()
+        guard !all.isEmpty else {
+            return Page(page: "playbook", sections: [
+                Section(kind: "text", title: "还没有项目清单",
+                        text: "清单里是提前规划好、批过一次方案之后，"
+                            + "就能在额度快浪费时自动执行的项目。")
+            ], now: now)
+        }
+        var sections: [Section] = []
+        let pending = all.filter { !$0.isApproved }
+        if !pending.isEmpty {
+            sections.append(Section(
+                kind: "cards", title: "\(pending.count) 个方案等你过目",
+                note: "批了才会在空窗时自动取活",
+                cards: pending.map { p in
+                    Card(id: p.id, title: p.name,
+                         body: p.brief.split(separator: "\n").first.map(String.init)?
+                            .replacingOccurrences(of: "**", with: ""),
+                         detail: p.brief.replacingOccurrences(of: "**", with: ""),
+                         tone: .warn, icon: "hand.raised",
+                         actions: [Action(id: "playbook:approve:" + p.id,
+                                          label: "批准", style: "primary", needsNote: true)])
+                }))
+        }
+        let live = all.filter(\.isApproved)
+        if !live.isEmpty {
+            sections.append(Section(
+                kind: "cards", title: "已批准",
+                cards: live.map { p in
+                    Card(id: p.id, title: p.name,
+                         body: "跑过 \(p.runs) 次"
+                             + (p.backlog.isEmpty ? " · 方向清单空了，补一条才会继续出活"
+                                : " · 还有 \(p.backlog.count) 个方向"),
+                         detail: p.brief.replacingOccurrences(of: "**", with: ""),
+                         tone: p.backlog.isEmpty ? .warn : .neutral,
+                         icon: "checkmark.circle")
+                }))
+        }
+        return Page(page: "playbook", sections: sections, now: now)
+    }
+}

@@ -2393,6 +2393,9 @@ func cmdWorkLoop(_ args: [String]) throws {
         phase("下发视图", 60) {
             ViewFeed.publish(ViewFeed.nowPage())
             ViewFeed.publish(ViewFeed.boardPage())
+            ViewFeed.publish(ViewFeed.reviewPage())
+            ViewFeed.publish(ViewFeed.playbookPage())
+            ViewFeed.publishMenu(ViewFeed.menu())
             for inv in ViewFeed.pendingInvocations() {
                 guard let done = runInvocation(inv) else {
                     print(Ansi.dim("  不认识的动作：" + inv.id))
@@ -4662,8 +4665,16 @@ do {
     case "view":
         // llmq view [now] —— 手动生成一次下发内容并打印摘要。
         // 调试用：改了组装逻辑之后不用等 work loop 那一轮。
-        let page = rest.first == "board" ? ViewFeed.boardPage() : ViewFeed.nowPage()
-        _ = ViewFeed.publish(page)
+        // 一次全发。单独调某一页时用 llmq view <页面>。
+        let pages: [ViewFeed.Page] = [
+            ViewFeed.nowPage(), ViewFeed.boardPage(),
+            ViewFeed.reviewPage(), ViewFeed.playbookPage(),
+        ]
+        for p in pages where rest.first == nil || rest.first == p.page {
+            _ = ViewFeed.publish(p)
+        }
+        _ = ViewFeed.publishMenu(ViewFeed.menu())
+        let page = pages.first { rest.first == nil || rest.first == $0.page } ?? pages[0]
         print(Ansi.bold("已下发 " + page.page)
               + Ansi.dim("  \(page.sections.count) 个区块"))
         for s in page.sections {
