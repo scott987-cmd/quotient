@@ -2,3 +2,18 @@
 .swiftpm/
 *.xcodeproj
 dashboard.html
+
+# 凭据：一次误提交就永久留在 git 历史里
+*.p8
+*.pem
+*.key
+*.p12
+.env
+.env.*
+apns.json
+signing.json
+
+# 个人工作记录，对使用者没意义
+reviews/
+STATUS.md
+DISPATCH-SESSION.md

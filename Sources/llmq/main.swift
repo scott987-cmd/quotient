@@ -4807,8 +4807,8 @@ func cmdPush(_ args: [String]) throws {
             配置长这样（放 ~/.llmq/apns.json，不要进仓库）：
               {
                 "keyID":    "从 Apple 后台建 Key 时给的 10 位",
-                "teamID":   "7U9AKQ6CJX",
-                "bundleID": "com.longlong.llmquota",
+                "teamID":   "你的 Apple Developer Team ID",
+                "bundleID": "你的 App bundle id",
                 "keyFile":  "~/.llmq/AuthKey_XXXXXXXXXX.p8"
               }
             """))

@@ -238,3 +238,38 @@ final class SnapshotCompatTests: XCTestCase {
         XCTAssertTrue(back.advisory)
     }
 }
+
+/// 开源要能被陌生人快速试用。
+final class FreshInstallTests: XCTestCase {
+    /// `LLMQ_HOME` 能把整个数据目录挪走。
+    ///
+    /// 为什么需要：`FileManager.homeDirectoryForCurrentUser` 在 macOS 上从
+    /// passwd 读，**不受 `HOME` 影响** —— 没法靠改 HOME 造干净环境。
+    /// 而干净环境是三件事的前提：新用户想先试试不弄脏自己的配置、
+    /// CI 跑端到端、演示可复现。
+    func testDataDirectoryIsRedirectable() {
+        // 进程内 override 优先级更高，免得环境变量顶掉测试沙盒
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fresh-\(UUID().uuidString)")
+        Paths.appSupportOverride = sandbox
+        defer { Paths.appSupportOverride = nil }
+        XCTAssertEqual(Paths.appSupport, sandbox,
+                       "进程内 override 必须压过环境变量，否则测试会污染真实数据")
+    }
+
+    /// 内置清单是**模板**，不能带任何人的真实项目路径。
+    ///
+    /// 早先这里写死了作者自己的资产包仓库（连定价和五个主题方向都在），
+    /// 别人 clone 下来第一条内置项目就是别人的私事。
+    func testBuiltinPlaybookShipsNoPersonalPaths() {
+        for p in Playbook.builtins() {
+            XCTAssertNil(p.repo, "内置项目不该预置任何真实仓库路径")
+            let blob = p.brief + p.recipes.map(\.prompt).joined()
+                + p.backlog.joined() + p.shipped.joined()
+            for leak in ["~/dev/", "/Users/", "itch.io", "dushibing"] {
+                XCTAssertFalse(blob.contains(leak),
+                               "内置模板里不该出现「\(leak)」——那是作者的私事")
+            }
+        }
+    }
+}

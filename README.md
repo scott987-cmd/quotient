@@ -11,6 +11,41 @@
 
 ---
 
+## 五分钟跑起来
+
+需要 macOS 和 Xcode 命令行工具（`xcode-select --install`），没有别的前置。
+
+```bash
+git clone <这个仓库> && cd LLMQuotaBar
+swift build -c release
+./.build/release/llmq collect     # 扫一遍本机装了哪些 CLI、用了多少
+./.build/release/llmq report      # 看结果
+```
+
+**装了哪个平台就采哪个** —— 一个都没装也能跑，只是报表是空的。
+不需要 API key，不需要登录，不联网：它读的是各 CLI 自己在本地留下的
+会话日志和额度回报。
+
+想先试试又不想弄脏自己的配置：
+
+```bash
+LLMQ_HOME=/tmp/llmq-试用 ./.build/release/llmq collect
+```
+
+整个数据目录会挪到那儿，删掉就干净了。
+
+装成常驻（菜单栏 App + 定时采集）：
+
+```bash
+./build-app.sh --install
+./.build/release/llmq install-agent    # 每 15 分钟自动采集
+```
+
+跨机汇总、手机 App、自动派活这些是**可选的**，各自独立，不装也不影响
+上面这套。往下读对应章节。
+
+---
+
 ## 它解决什么问题
 
 订阅了一堆平台，但看不到全局：哪个套餐快到期了还没用完（钱白花）、哪个装了根本没在用（该退订）、哪个快超额了（要转移工作量）。各家的用量页面还散在不同网站、不同电脑上。

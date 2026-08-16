@@ -14,8 +14,8 @@ import CryptoKit
 ///
 /// `~/.llmq/apns.json`：
 ///
-///     { "keyID": "ABCD1234EF", "teamID": "7U9AKQ6CJX",
-///       "bundleID": "com.longlong.llmquota", "keyFile": "~/.llmq/AuthKey_XXX.p8" }
+///     { "keyID": "ABCD1234EF", "teamID": "YOURTEAMID",
+///       "bundleID": "com.example.yourapp", "keyFile": "~/.llmq/AuthKey_XXX.p8" }
 ///
 /// **`.p8` 不进仓库，配置也不进仓库** —— 这个项目要开源，任何密钥都不能打包。
 /// 缺配置时推送整体静默跳过，不影响别的功能。

@@ -326,6 +326,20 @@ public enum Paths {
 
     public static var appSupport: URL {
         if let appSupportOverride { return appSupportOverride }
+        // **`LLMQ_HOME` 可以把整个数据目录挪走。**
+        //
+        // 为什么需要它：`FileManager.homeDirectoryForCurrentUser` 在 macOS 上
+        // 从 passwd 读，**不受 `HOME` 影响** —— 所以没法靠改 HOME 造一个
+        // 干净环境。而干净环境是三件事的前提：新用户想先试试不弄脏自己的配置、
+        // CI 要跑端到端、演示要可复现。
+        //
+        // 优先级在 appSupportOverride 之后：那个是测试用的进程内开关，
+        // 优先级最高，免得环境变量把测试沙盒顶掉。
+        if let custom = ProcessInfo.processInfo.environment["LLMQ_HOME"],
+           !custom.trimmingCharacters(in: .whitespaces).isEmpty {
+            return URL(fileURLWithPath: NSString(string: custom).expandingTildeInPath,
+                       isDirectory: true)
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent(appName, isDirectory: true)
     }
