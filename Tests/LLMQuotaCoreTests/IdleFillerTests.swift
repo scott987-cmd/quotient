@@ -172,3 +172,52 @@ final class AdvisoryQuotaTests: XCTestCase {
         XCTAssertTrue(q.advisory)
     }
 }
+
+/// 推送只喊「真的需要你做决定」的事。
+final class NudgeTruthTests: XCTestCase {
+    private var sandbox: URL!
+    override func setUp() {
+        super.setUp()
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nudge-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+    }
+    override func tearDown() {
+        Paths.appSupportOverride = nil
+        try? FileManager.default.removeItem(at: sandbox)
+        super.tearDown()
+    }
+
+    /// 上游失败连带冻结的下游，**不需要人做任何事**（上游恢复会自动解冻），
+    /// 不该被喊成「等你放行」。
+    ///
+    /// blocked 有两种含义完全相反的来源，WorkTask.frozenBy 就是为了区分
+    /// 它们而存在的 —— 而 Nudge 一开始漏用了，于是推送反复喊人去放行
+    /// 两个他根本无从操作的任务（App 里连入口都没有）。
+    func testAutoFrozenTasksAreNotApprovalRequests() {
+        var frozen = WorkTask(id: "t1", prompt: "下游步骤", repo: "/tmp")
+        frozen.state = .blocked
+        frozen.frozenBy = "t0s3"          // 上游冻的
+        var gated = WorkTask(id: "t2", prompt: "碰构建配置的活", repo: "/tmp")
+        gated.state = .blocked            // 人工闸门拦的，frozenBy 为 nil
+        try? TaskStore.append(frozen)
+        try? TaskStore.append(gated)
+
+        let keys = Nudge.pending().map(\.key)
+        let blockedItem = Nudge.pending().first { $0.key.hasPrefix("blocked") }
+        XCTAssertNotNil(blockedItem, "人工闸门拦下的那个要喊：\(keys)")
+        XCTAssertEqual(blockedItem?.badge, 1,
+                       "只该算 1 个（人工闸门那个），上游冻的不算")
+    }
+
+    /// 一个都不需要决定时，一条都不推。
+    func testNothingPendingMeansNoPush() {
+        var frozen = WorkTask(id: "t1", prompt: "下游", repo: "/tmp")
+        frozen.state = .blocked
+        frozen.frozenBy = "t0s1"
+        try? TaskStore.append(frozen)
+        XCTAssertTrue(Nudge.pending().filter { $0.key.hasPrefix("blocked") }.isEmpty,
+                      "全是自动冻结的，不该有任何「等你放行」")
+    }
+}

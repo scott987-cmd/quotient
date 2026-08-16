@@ -98,7 +98,15 @@ public enum Nudge {
         }
 
         // 3. 有活被拦下来等放行（高危 / 碰钱 / 碰账号）
-        let blocked = tasks.filter { $0.state == .blocked }
+        //
+        // **必须排掉 frozenBy 那些。** blocked 有两种含义完全相反的来源：
+        // 人工闸门拦下的（等人做决定）和上游失败连带冻结的
+        //（等上游自愈，任务说明里就写着「上游恢复后会自动解冻」）。
+        // 不分开的话，推送会喊人去「放行」两个根本不需要他做任何事的任务，
+        // 而 App 里连操作入口都没有 —— 老板的原话是「还是能收到虚假的
+        // 审批任务」。WorkTask.frozenBy 早就是为了区分这两者而存在的，
+        // 这里漏用了。
+        let blocked = tasks.filter { $0.state == .blocked && $0.frozenBy == nil }
         if !blocked.isEmpty {
             out.append(("blocked-\(blocked.count)", .needsYou,
                         "\(blocked.count) 个任务被拦下等你放行", blocked.count))
