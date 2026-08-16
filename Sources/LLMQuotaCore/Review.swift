@@ -667,10 +667,13 @@ extension Review {
     @discardableResult
     public static func publishDigests(repos: [RepoAlias] = RepoRegistry.all()) -> [Digest] {
         var out: [Digest] = []
+        // 已经表过态的不再发给手机 —— 人做过决定了，列表里还挂着只会
+        // 让他以为自己点了没用。执行失败的走 verdicts-failed 单独暴露。
+        let decided = decidedBranches()
         for r in repos {
             let path = NSString(string: r.localPath).expandingTildeInPath
             guard GitWorkspace.isRepo(path) else { continue }
-            for item in list(repo: path) {
+            for item in list(repo: path) where !decided.contains(path + "|" + item.branch) {
                 out.append(Digest(
                     repo: path, repoName: r.alias, branch: item.branch,
                     platform: item.platform, subject: item.subject,
@@ -701,6 +704,30 @@ extension Review {
         Paths.sharedRoot.appendingPathComponent("verdicts", isDirectory: true)
     }
 
+    /// 执行失败的结论记在这儿。**失败必须留痕** ——
+    /// 悄悄失败的后果是那份产出永远卡在待审里，人被反复提醒却做不了任何事。
+    static var failedDir: URL {
+        Paths.sharedRoot.appendingPathComponent("verdicts-failed", isDirectory: true)
+    }
+
+    /// 已经表过态、正在等执行（或者执行失败）的分支。
+    ///
+    /// 待验收的计数必须扣掉这些 —— 人已经做过决定了，再提醒他一次
+    /// 只会让他觉得这个数字是假的。
+    public static func decidedBranches() -> Set<String> {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: verdictsDir.path)
+        else { return [] }
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        var out: Set<String> = []
+        for n in names where n.hasSuffix(".json") {
+            guard let d = try? Data(contentsOf: verdictsDir.appendingPathComponent(n)),
+                  let v = try? dec.decode(Verdict.self, from: d) else { continue }
+            out.insert(v.repo + "|" + v.branch)
+        }
+        return out
+    }
+
     /// 收手机上的验收结论并执行。
     ///
     /// 和 approvals 一样**不删文件**：verdicts 是双向同步的，本地删掉
@@ -722,15 +749,40 @@ extension Review {
                   let v = try? dec.decode(Verdict.self, from: d) else { continue }
             let key = v.repo + "|" + v.branch + "|" + v.action
             guard !done.contains(key) else { continue }
-            done.insert(key)
 
             var ok = false
+            var failure = ""
             if v.action == "merge" {
-                if case .success = merge(repo: v.repo, branch: v.branch) { ok = true }
+                switch merge(repo: v.repo, branch: v.branch) {
+                case .success: ok = true
+                case .failure(let e): failure = e.localizedDescription
+                }
             } else {
                 discard(repo: v.repo, branch: v.branch,
                         reason: v.reason ?? "手机上丢弃")
                 ok = true
+            }
+
+            // **只有成功才记进 .done。**
+            //
+            // 原来是「尝试过就记」，于是合并失败（比如两边都加了同名文件
+            // 起冲突）之后：那份产出永远留在待审列表里，推送每天喊人去验收，
+            // 人点开却什么也做不了 —— 因为他明明已经点过合入了。
+            // 实测卡了 16 小时，老板的原话是「老是弹出评审消息但是没有
+            // 真正未评审的消息」。
+            //
+            // 失败的留着不记，下一轮会重试（冲突这类问题可能被别的合并
+            // 顺手解决）。但重试也不能无限：写一份失败记录，让人看得见。
+            if ok {
+                done.insert(key)
+            } else {
+                let note = failedDir.appendingPathComponent(
+                    (v.repo + "-" + v.branch).replacingOccurrences(of: "/", with: "_")
+                    + ".txt")
+                try? FileManager.default.createDirectory(
+                    at: failedDir, withIntermediateDirectories: true)
+                try? (v.action + " 失败：" + failure + "\n").write(
+                    to: note, atomically: true, encoding: .utf8)
             }
             applied.append((v, ok))
         }

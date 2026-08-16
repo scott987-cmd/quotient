@@ -79,10 +79,15 @@ public enum Nudge {
         // 而 `llmq work review` 同时说「没有待审的 agent 分支」。
         // 一个假的 92 比不推更糟：人点开发现什么都没有，下次就不信这个数了。
         let tasks = TaskStore.all()
+        // **扣掉已经表过态的。** 人点了合入/丢弃之后，Mac 端可能还没执行完，
+        // 或者执行失败了（比如合并冲突）—— 这两种情况那个分支都还在
+        // Review.list 里。不扣的话就是「反复提醒人去做他已经做过的事」，
+        // 而他打开一看列表是空的（App 端会过滤），于是这个数字彻底失信。
+        let decided = Review.decidedBranches()
         let awaiting = RepoRegistry.all().flatMap { repo -> [Review.Item] in
             let path = NSString(string: repo.localPath).expandingTildeInPath
             guard GitWorkspace.isRepo(path) else { return [] }
-            return Review.list(repo: path)
+            return Review.list(repo: path).filter { !decided.contains(path + "|" + $0.branch) }
         }
         if !awaiting.isEmpty {
             out.append(("review-\(awaiting.count)", .needsYou,
