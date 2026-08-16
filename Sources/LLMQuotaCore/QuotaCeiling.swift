@@ -47,7 +47,8 @@ public enum QuotaCeiling {
         dec.dateDecodingStrategy = .iso8601
         return text.split(separator: "\n").compactMap {
             guard let d = $0.data(using: .utf8) else { return nil }
-            return try? dec.decode(Observation.self, from: d)
+            return SafeDecode.json(d, as: Observation.self,
+                                   from: "quota-ceilings.jsonl", decoder: dec)
         }
     }
 

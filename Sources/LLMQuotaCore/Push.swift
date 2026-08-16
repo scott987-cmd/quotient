@@ -84,8 +84,9 @@ public enum Push {
             guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
             else { continue }
             for n in names where n.hasSuffix(".json") {
-                guard let d = try? Data(contentsOf: dir.appendingPathComponent(n)),
-                      let dev = try? JSONDecoder().decode(Device.self, from: d),
+                guard let dev = SafeDecode.json(
+                        at: dir.appendingPathComponent(n), as: Device.self,
+                        decoder: JSONDecoder()),
                       !seen.contains(dev.token) else { continue }
                 seen.insert(dev.token)
                 out.append(dev)

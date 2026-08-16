@@ -273,3 +273,48 @@ final class FreshInstallTests: XCTestCase {
         }
     }
 }
+
+/// 解码失败必须留痕，而且信息要能直接指向修法。
+final class SafeDecodeTests: XCTestCase {
+    private struct Thing: Codable { var a: String; var b: Int }
+
+    override func setUp() { super.setUp(); SafeDecode.reset() }
+
+    /// 缺字段是跨版本最常见的一种：新版加了字段，老版写的文件没有它。
+    /// 错误信息要直说缺哪个、在哪、怎么修 —— 今天为这个查了半小时。
+    func testMissingFieldSaysWhatAndHowToFix() {
+        let got: Thing? = SafeDecode.json(#"{"a":"x"}"#.data(using: .utf8)!,
+                                          as: Thing.self, from: "老文件.json")
+        XCTAssertNil(got)
+        XCTAssertEqual(SafeDecode.failures.count, 1)
+        let r = SafeDecode.failures[0].reason
+        XCTAssertTrue(r.contains("缺字段「b」"), "要说清缺哪个：\(r)")
+        XCTAssertTrue(r.contains("decodeIfPresent"), "要给出修法：\(r)")
+    }
+
+    /// 文件不存在不算失败 —— 「还没有这个文件」是正常状态，
+    /// 记成错误会把真正的问题淹掉。
+    func testMissingFileIsNotAFailure() {
+        let got: Thing? = SafeDecode.json(
+            at: URL(fileURLWithPath: "/tmp/不存在-\(UUID().uuidString).json"),
+            as: Thing.self)
+        XCTAssertNil(got)
+        XCTAssertTrue(SafeDecode.failures.isEmpty)
+    }
+
+    /// 类型不对也要说清楚位置。
+    func testTypeMismatchIsExplained() {
+        _ = SafeDecode.json(#"{"a":"x","b":"不是数字"}"#.data(using: .utf8)!,
+                            as: Thing.self, from: "坏文件.json")
+        XCTAssertTrue(SafeDecode.failures.first?.reason.contains("类型不对") == true)
+    }
+
+    /// 攒太多要裁掉 —— 跑几天的 worker 不该攒出几万条。
+    func testFailuresAreCapped() {
+        for i in 0..<80 {
+            SafeDecode.note(file: "f\(i)", type: "T", reason: "r")
+        }
+        XCTAssertLessThanOrEqual(SafeDecode.failures.count, 50)
+        XCTAssertEqual(SafeDecode.failures.last?.file, "f79", "留的应该是最近的")
+    }
+}

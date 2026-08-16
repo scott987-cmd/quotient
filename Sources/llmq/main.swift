@@ -4928,6 +4928,10 @@ func cmdMirror(_ args: [String]) throws {
     if uniqueFiles > snaps.count {
         print(Ansi.red("  ✗ 磁盘上有 \(uniqueFiles) 份快照，汇总只认了 \(snaps.count) 台"))
     }
+    for f in SafeDecode.failures {
+        print(Ansi.red("  ✗ 解不出 " + String(f.file.prefix(16)))
+              + Ansi.dim("  " + f.type + " · " + f.reason))
+    }
     for (file, err) in SnapshotStore.decodeFailures {
         print(Ansi.red("  ✗ 解不出 " + String(file.prefix(12))) + Ansi.dim("  " + err.prefix(220)))
     }

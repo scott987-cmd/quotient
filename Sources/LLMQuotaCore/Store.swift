@@ -132,6 +132,9 @@ public enum SnapshotStore {
             do {
                 out.append(try decoder.decode(MachineSnapshot.self, from: data))
             } catch {
+                SafeDecode.note(file: url.lastPathComponent,
+                                type: "MachineSnapshot",
+                                reason: SafeDecode.describe(error))
                 // **解码失败不能静默跳过。**
                 //
                 // 症状是「另一台机器凭空消失」：文件在、时间新、结构看着也对，

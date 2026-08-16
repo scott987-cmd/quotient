@@ -120,10 +120,7 @@ public enum Playbook {
     }
 
     public static func all() -> [Project] {
-        guard let d = try? Data(contentsOf: path) else { return [] }
-        let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
-        return (try? dec.decode([Project].self, from: d)) ?? []
+        SafeDecode.json(at: path, as: [Project].self) ?? []
     }
 
     public static func save(_ projects: [Project]) {
@@ -356,8 +353,7 @@ extension Playbook {
         var dirty = false
         for name in names where name.hasSuffix(".json") {
             let f = approvalsDir.appendingPathComponent(name)
-            guard let d = try? Data(contentsOf: f),
-                  let a = try? dec.decode(Approval.self, from: d) else { continue }
+            guard let a = SafeDecode.json(at: f, as: Approval.self) else { continue }
             if let i = list.firstIndex(where: { $0.id == a.projectID }) {
                 // 已经批过就别改时间 —— 那会让「什么时候批的」这件事失真
                 if list[i].approvedAt == nil {

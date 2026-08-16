@@ -721,8 +721,9 @@ extension Review {
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
         var out: Set<String> = []
         for n in names where n.hasSuffix(".json") {
-            guard let d = try? Data(contentsOf: verdictsDir.appendingPathComponent(n)),
-                  let v = try? dec.decode(Verdict.self, from: d) else { continue }
+            guard let v = SafeDecode.json(
+                at: verdictsDir.appendingPathComponent(n), as: Verdict.self)
+            else { continue }
             out.insert(v.repo + "|" + v.branch)
         }
         return out
@@ -745,8 +746,9 @@ extension Review {
         var applied: [(Verdict, Bool)] = []
 
         for name in names where name.hasSuffix(".json") {
-            guard let d = try? Data(contentsOf: verdictsDir.appendingPathComponent(name)),
-                  let v = try? dec.decode(Verdict.self, from: d) else { continue }
+            guard let v = SafeDecode.json(
+                at: verdictsDir.appendingPathComponent(name), as: Verdict.self)
+            else { continue }
             let key = v.repo + "|" + v.branch + "|" + v.action
             guard !done.contains(key) else { continue }
 
