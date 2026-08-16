@@ -298,12 +298,14 @@ cd quotient &amp;&amp; swift build -c release
     <div class="fact"><span class="fact-k">需要注册的账号</span><span class="fact-v no">0 个</span></div>
     <div class="fact"><span class="fact-k">需要填的 API key</span><span class="fact-v no">0 个</span></div>
     <div class="fact"><span class="fact-k">数据离开你的设备</span><span class="fact-v no">不会</span></div>
-    <div class="fact"><span class="fact-k">对外监听的端口</span><span class="fact-v">1 个，双向 mTLS</span></div>
+    <div class="fact"><span class="fact-k">对外监听的端口</span><span class="fact-v">0 个（跨机直连可选开 1 个）</span></div>
     <div class="fact"><span class="fact-k">测试</span><span class="fact-v">508 个，自包含</span></div>
   </div>
   <p style="margin-top:18px;font-size:15px;color:var(--ink-dim)">
-    唯一那个端口是给手机 App 用的（iOS 上没有 SSH 这条路）。
-    放宽的前提写在 <code>SECURITY.md</code> 里，违反了 <code>swift test</code> 和
+    那个端口是**可选的**：只在你要「一台机器直接把任务送到另一台」时才开
+    （不想开就走 iCloud，慢几十秒而已）。手机不走它 —— iOS App 里
+    一行网络代码都没有，它只读 iCloud 里的文件。
+    约束写在 <code>SECURITY.md</code>，违反了 <code>swift test</code> 和
     <code>llmq security</code> 都会失败。
   </p>
 </section>
