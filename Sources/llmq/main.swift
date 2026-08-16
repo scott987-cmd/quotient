@@ -2369,10 +2369,20 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 挂在 30 秒的循环里每轮都卡住，实测日志里全是「本轮跳过它」。
         // 收结论是廉价的（读几个小 JSON），保持每轮。
         phase("同步验收", 90) {
-            if Review.shouldRepublish() { Review.publishDigests() }
-            for (v, ok) in Review.ingestVerdicts() {
+            // **收结论要在发布之前，而且执行完立刻重发。**
+            //
+            // 顺序反了的话：手机点了合入 → 本地那行消失 → 15 秒后刷新
+            // 读到的还是没更新的 reviews.json → 那行又冒出来。
+            // 老板的原话「点击验收还是在验收列表」就是这么来的。
+            let applied = Review.ingestVerdicts()
+            for (v, ok) in applied {
                 print((ok ? Ansi.green("  手机上") : Ansi.red("  手机上（失败）"))
                       + (v.action == "merge" ? "合了 " : "丢了 ") + v.branch)
+            }
+            // 执行过就必须马上重发，别等 5 分钟节流 —— 那 5 分钟里
+            // 手机看到的是已经过时的清单。
+            if !applied.isEmpty || Review.shouldRepublish() {
+                Review.publishDigests()
             }
         }
 
@@ -4631,6 +4641,8 @@ do {
         try cmdWork(rest)
     case "plan":
         try cmdPlan(rest)
+    case "mirror":
+        try cmdMirror(rest)
     case "push":
         try cmdPush(rest)
     case "playbook":
@@ -4835,5 +4847,78 @@ func cmdPush(_ args: [String]) throws {
 
     default:
         print("用法：llmq push [check|pending|badge [n]|test <正文>]")
+    }
+}
+
+
+// MARK: - 镜像
+
+/// llmq mirror [--run]
+///
+/// 镜像卡住的时候，症状是「另一台机器掉线了」—— 而它其实好好的，
+/// 只是这台机器没把它的快照拉下来。实测过一次：iCloud 上 MacBook 的
+/// 快照是 14:28 的，本地那份卡在前一晚 23:08，于是 dashboard 里整台
+/// 机器消失、调度以为它上面的平台都没在用。
+///
+/// 而错误只显示在菜单栏 App 的弹窗里，没有历史、命令行也看不到 ——
+/// 等于出了问题只能靠猜。
+func cmdMirror(_ args: [String]) throws {
+    let local = Paths.sharedRoot
+    let cloud = Push.mirrorDir
+    let fm = FileManager.default
+
+    print(Ansi.bold("本地 ") + local.path.replacingOccurrences(
+        of: fm.homeDirectoryForCurrentUser.path, with: "~"))
+    print(Ansi.bold("云端 ") + cloud.path.replacingOccurrences(
+        of: fm.homeDirectoryForCurrentUser.path, with: "~"))
+
+    guard fm.fileExists(atPath: cloud.path) else {
+        print(Ansi.red("云端目录不存在 —— iCloud 云盘里没有 LLMQuotaBar 文件夹"))
+        return
+    }
+
+    // 逐个快照比对：谁新谁旧一眼看清。**这是判断「掉线」真假的唯一硬证据。**
+    print()
+    print(Ansi.bold("快照新鲜度"))
+    let selfID = Paths.machineID()
+    let df = DateFormatter(); df.dateFormat = "MM-dd HH:mm"
+    for dir in ["snapshots"] {
+        let l = local.appendingPathComponent(dir)
+        let c = cloud.appendingPathComponent(dir)
+        let names = Set((try? fm.contentsOfDirectory(atPath: l.path)) ?? [])
+            .union((try? fm.contentsOfDirectory(atPath: c.path)) ?? [])
+        for name in names.sorted() where name.hasSuffix(".json") {
+            let lm = (try? l.appendingPathComponent(name)
+                .resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            let cm = (try? c.appendingPathComponent(name)
+                .resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            let isSelf = name.hasPrefix(selfID)
+            let who = isSelf ? "本机" : "对端"
+            let lag = (lm != nil && cm != nil) ? cm!.timeIntervalSince(lm!) : 0
+            let mark = lag > 600 ? Ansi.red("✗ 落后 " + Format.duration(lag))
+                : Ansi.green("✓")
+            print("  " + mark + " " + who + " " + String(name.prefix(8))
+                  + Ansi.dim("  本地 " + (lm.map { df.string(from: $0) } ?? "无")
+                             + "  云端 " + (cm.map { df.string(from: $0) } ?? "无")))
+        }
+    }
+
+    guard args.contains("--run") else {
+        print()
+        print(Ansi.dim("跑一次同步并打印错误：llmq mirror --run"))
+        return
+    }
+
+    print()
+    print(Ansi.bold("同步中…"))
+    let stats = MirrorService.sync(local: local, cloud: cloud, selfMachineID: selfID)
+    print("  推 \(stats.pushed) · 拉 \(stats.pulled)"
+          + (stats.claimed > 0 ? " · 领 \(stats.claimed)" : ""))
+    if stats.errors.isEmpty {
+        print(Ansi.green("  没有错误"))
+    } else {
+        for e in stats.errors { print(Ansi.red("  ✗ ") + e) }
     }
 }
