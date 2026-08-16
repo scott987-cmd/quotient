@@ -10,6 +10,14 @@
 它走的还是 iCloud 那条通道（见「多机汇总靠 iCloud」和 inbox/outbox），不需要额外服务器。
 
 <p align="center">
+  <img src="docs/img/demo.gif" width="300" alt="从演示模式走一遍：现在 → 办公室 → 看板 → 等你验收">
+</p>
+
+<p align="center">
+  <sub>不用装 Mac 端也能先看看 —— App 里点「先看看效果」进演示模式</sub>
+</p>
+
+<p align="center">
   <img src="docs/img/01-now.jpg" width="23%" alt="现在">
   <img src="docs/img/02-office.jpg" width="23%" alt="办公室">
   <img src="docs/img/03-board.jpg" width="23%" alt="看板">
