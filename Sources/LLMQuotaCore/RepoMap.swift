@@ -128,9 +128,10 @@ public enum RepoMap {
         guard let e = FileManager.default.enumerator(
             at: root, includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        let rootPath = root.standardizedFileURL.path
         return e.compactMap { $0 as? URL }
             .filter { url in
-                guard !isNoise(url) else { return false }
+                guard !isNoise(url, under: rootPath) else { return false }
                 return alwaysInclude.contains(url.lastPathComponent)
                     || interestingExtensions.contains(url.pathExtension)
             }
@@ -139,10 +140,21 @@ public enum RepoMap {
 
     /// 构建产物、依赖、别人的代码、agent 自己的工作区 —— 全是噪音。
     ///
-    /// `worktrees` 尤其重要：agent 的工作区就在仓库里，不排掉的话
-    /// 地图会把同一份代码列上十几遍，还全是过期的分支。
-    static func isNoise(_ url: URL) -> Bool {
-        let parts = Set(url.pathComponents)
+    /// **只看根目录以下的部分。** 这一条是被真事故逼出来的：原来直接拿
+    /// 绝对路径的组件去匹配，而 agent 的工作区本身就住在
+    /// `…/LLMQuotaBar/worktrees/<任务号>/` 底下 —— 于是派活时扫这个工作区，
+    /// 里面每个文件都带着 `worktrees` 这个组件，被自己的过滤器一个不剩地杀光，
+    /// 地图产出空字符串。而单独跑 `llmq map greed` 用的是主仓库路径，
+    /// 一切正常 —— 测的和跑的不是同一条路径，于是「跑通了但没生效」。
+    ///
+    /// 排 worktrees 的本意是「扫主仓库时别把 agent 的工作区也算进来」，
+    /// 那本来就该是相对根目录的判断。
+    static func isNoise(_ url: URL, under rootPath: String) -> Bool {
+        let full = url.standardizedFileURL.path
+        let rel = full.hasPrefix(rootPath + "/")
+            ? String(full.dropFirst(rootPath.count + 1))
+            : full
+        let parts = Set(rel.split(separator: "/").map(String.init))
         return !parts.isDisjoint(with: [
             ".build", ".git", "DerivedData", "Pods", "Carthage",
             "worktrees", ".swiftpm", "node_modules", "vendor", "Frameworks",
@@ -182,22 +194,31 @@ public enum RepoMap {
                                "extension", "func", "typealias"]
 
     /// 这一行声明了什么。声明不了就返回 nil。
+    /// 修饰词。**`class` 不在里面** —— 它要单独判，见下面。
+    static let declModifiers: Set<String> = [
+        "public", "private", "internal", "fileprivate", "open",
+        "final", "static", "override", "@objc", "@MainActor",
+        "nonisolated", "mutating", "convenience", "required",
+        "indirect", "package",
+    ]
+
     static func declaredName(_ line: String) -> String? {
         var words = line.split(separator: " ").map(String.init)
         // 吃掉修饰词，直到撞见声明关键字
-        while let first = words.first, !declKeywords.contains(first) {
-            let modifiers = ["public", "private", "internal", "fileprivate", "open",
-                             "final", "static", "class", "override", "@objc",
-                             "@MainActor", "nonisolated", "mutating", "convenience",
-                             "required", "indirect", "package"]
-            // `class` 既是修饰词（class func）又是关键字 —— 看下一个词决定
+        while let first = words.first {
+            // **`class` 的判断必须排在关键字判断前面。**
+            // 它既是声明关键字（class Foo）又是修饰词（class func shared）——
+            // 而它在 declKeywords 里，所以放在关键字判断之后的话，
+            // 循环第一轮就退出了，特判永远到不了，`class func shared()`
+            // 会被记成符号名「func」。测试抓到的。
             if first == "class" {
-                if words.count > 1 && ["func", "var", "let"].contains(words[1]) {
+                if words.count > 1, ["func", "var", "let"].contains(words[1]) {
                     words.removeFirst(); continue
                 }
-                break
+                break   // 真的是类声明
             }
-            guard modifiers.contains(first) else { return nil }
+            if declKeywords.contains(first) { break }
+            guard declModifiers.contains(first) else { return nil }
             words.removeFirst()
         }
         guard words.count >= 2, declKeywords.contains(words[0]) else { return nil }
