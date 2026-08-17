@@ -1644,6 +1644,17 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         // 接力说明只追加文件清单和中断原因，**不贴 diff** ——
         // 工作区就在 agent 眼前，让它自己看比塞进提示词便宜得多。
         var effectivePrompt = task.prompt + ((handoff ?? task.handoff)?.briefing() ?? "")
+        // 仓库地图：每个任务都是全新 worktree，agent 一律从零认路。
+        // 更硬的是 MiniMax 这种只能文本进出的执行器 —— 不塞进提示词它就看不见，
+        // Greed 那六份评审全写「材料不足」就是这么来的。
+        //
+        // 两种情况不贴：
+        // - 接力任务：briefing 里已经有文件清单，再来一份是浪费
+        // - trivial：那种活的描述里已经点名了文件和行号（「第 34 行的 foo 补注释」），
+        //   地图一个字都用不上，而 LLMQuotaBar 的地图有 7k token
+        if handoff == nil, task.handoff == nil, task.profile?.tier != .trivial {
+            effectivePrompt += RepoMap.briefing(repo: ws.path)
+        }
         // 图内节点要知道自己在整件事里的位置。
         //
         // 换了平台的 agent 对前面发生了什么一无所知 —— 这正是「上下文丢失」
@@ -4673,6 +4684,18 @@ do {
         try cmdWork(rest)
     case "plan":
         try cmdPlan(rest)
+    case "map":
+        // llmq map [别名或路径] —— 打印会拼进任务提示词的那份仓库地图。
+        // 调试用：改了扫描规则之后不用真派一个活才能看见效果。
+        let target = rest.first
+            .map { a in RepoRegistry.all().first { $0.alias == a }?.localPath ?? a }
+            ?? RepoRegistry.all().first(where: { $0.isDefault })?.localPath
+            ?? FileManager.default.currentDirectoryPath
+        guard let m = RepoMap.text(repo: target), !m.isEmpty else {
+            print("扫不出东西：" + target); break
+        }
+        print(Ansi.bold(target) + Ansi.dim("  \(m.count) 字符 · 约 \(m.count / 3) token"))
+        print(m)
     case "view":
         // llmq view [now] —— 手动生成一次下发内容并打印摘要。
         // 调试用：改了组装逻辑之后不用等 work loop 那一轮。
