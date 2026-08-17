@@ -113,7 +113,23 @@ public enum ReservePool {
     ///
     /// 只读文件、只用正则，不执行仓库里的任何东西 —— 扫描本身也在
     /// 无人值守路径上，不能因为仓库内容而产生副作用。
-    public static func facts(repo: String, limitPerRule: Int = 20) -> [Fact] {
+    /// 扫出来的「真需求」。
+    ///
+    /// - Parameter includeHygiene: 要不要连「缺文档注释」「缺测试」一起扫。
+    ///   **默认不扫。**
+    ///
+    ///   这两条规则产出的是填埋物。实测一次扫出 41 条事实，其中 40 条是
+    ///   给一个只有作者一个人用的工具补注释和补测试 —— 落地了也没价值，
+    ///   而每一条都要占一次额度、再占一次人的验收注意力。
+    ///
+    ///   而系统的整体落地率只有 60%：人每看 1.7 份产出才有 1 份值得留。
+    ///   **用人的注意力去消耗预付的、反正会作废的 token，方向是反的。**
+    ///   没有真需求的时候，闲着是零成本的；产出垃圾要花人的时间去丢弃。
+    ///
+    ///   真需求只剩两类：代码里自己写的 TODO/FIXME（写的人当场知道欠着账），
+    ///   和审查报告里的发现。这两类少，但每一条都值得做。
+    public static func facts(repo: String, limitPerRule: Int = 20,
+                             includeHygiene: Bool = false) -> [Fact] {
         let root = URL(fileURLWithPath: NSString(string: repo).expandingTildeInPath)
         // **别写死 Sources/。** SwiftPM 包是 Sources/，但 Xcode 工程
         // 把代码放在与产品同名的目录下（Maw/Maw、Greed/Greed）。
@@ -145,12 +161,13 @@ public enum ReservePool {
                 else { continue }
 
                 // 上一条非空、非属性的行是不是 ///
-                if missingDoc < limitPerRule, !hasDocComment(lines, before: i) {
+                if includeHygiene, missingDoc < limitPerRule,
+                   !hasDocComment(lines, before: i) {
                     out.append(Fact(rule: .missingDoc, file: rel, line: i + 1, symbol: sym))
                     missingDoc += 1
                 }
                 // 只对类型看测试覆盖：函数名太容易碰巧出现在别处。
-                if noTest < limitPerRule,
+                if includeHygiene, noTest < limitPerRule,
                    ["struct", "enum", "class", "actor"].contains(kind),
                    !testText.contains(sym) {
                     out.append(Fact(rule: .noTestReference, file: rel, line: i + 1, symbol: sym))

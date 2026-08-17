@@ -2270,12 +2270,24 @@ final class ReservePoolTests: XCTestCase {
         """.write(to: src.appendingPathComponent("A.swift"), atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
-        let facts = ReservePool.facts(repo: tmp.path)
+        // 检测逻辑本身要能用 —— 显式打开就该扫得出来
+        let facts = ReservePool.facts(repo: tmp.path, includeHygiene: true)
         let docSyms = facts.filter { $0.rule == .missingDoc }.map(\.symbol).sorted()
         XCTAssertEqual(docSyms, ["Undocumented", "bare"],
                        "有文档的和带属性的都不该算缺文档")
         // 没有 Tests 目录 → 公开类型必然算「没测试」
         XCTAssertTrue(facts.contains { $0.rule == .noTestReference && $0.symbol == "Undocumented" })
+
+        // **但默认必须一条都不出。**
+        //
+        // 这两条规则产出的是填埋物：实测一次扫出 41 条事实，40 条是给一个
+        // 只有作者自己用的工具补注释补测试 —— 落地了也没价值，而每一条都要
+        // 占一次额度、再占一次人的验收注意力。系统整体落地率只有 60%，
+        // 人每看 1.7 份产出才有 1 份值得留。
+        // 没真需求的时候闲着是零成本的；产出垃圾要花人的时间去丢弃。
+        let byDefault = ReservePool.facts(repo: tmp.path)
+        XCTAssertFalse(byDefault.contains { $0.rule == .missingDoc || $0.rule == .noTestReference },
+                       "默认不该生成补注释/补测试这类填埋物")
     }
 }
 
@@ -3337,11 +3349,14 @@ final class TaskDecomposerTests: XCTestCase {
         return t
     }
 
-    /// **只拆复杂档或高危的。** 这是安全网：其余任务走今天完全一样的路，
-    /// 图有 bug 也波及不到它们。
-    func testOnlyComplexOrSensitiveGetsDecomposed() {
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(task(.complex, .safe)))
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(task(.trivial, .sensitive)))
+    /// **档次和风险都不再触发拆图。**
+    ///
+    /// 这条原来叫「只拆复杂档或高危的」，当成安全网写的。但实际效果是
+    /// 几乎所有真活都中 —— 而每拆一次，失败面积就乘一次。
+    /// 判据收紧到只剩「一次执行真的装不下」，见 DecomposePolicyTests。
+    func testTierAndRiskNoLongerDecompose() {
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(task(.complex, .safe)))
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(task(.trivial, .sensitive)))
         XCTAssertFalse(TaskDecomposer.shouldDecompose(task(.standard, .normal)))
         XCTAssertFalse(TaskDecomposer.shouldDecompose(task(.trivial, .safe)))
     }
@@ -4410,20 +4425,32 @@ final class DecomposeTriggerTests: XCTestCase {
             task("改一下 Format.swift 然后跑一遍测试，接着提交")))
     }
 
-    /// 估时长的也拆：哪怕每步都简单，
-    /// 拆开也能让便宜的平台干机械的部分、贵的只干难的那步。
-    func testLongTaskTriggersEvenWhenEasy() {
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(
+    /// **估时长不再是拆图的理由。**
+    ///
+    /// 原来 ≥25 分钟就拆，理由是「便宜平台干机械部分、贵的只干难的那步」。
+    /// 那条理由在工作区按「仓库 × 平台」复用之后站不住了：一个 agent
+    /// 带着完整会话干 40 分钟，严格优于几个 agent 各自重新认路。
+    /// 而拆的代价是实打实的 —— 挂一步下游全冻，2026-08-17 一次盘点
+    /// 捞出 3 张搁浅的图，全是拆出来的。
+    func testLongTaskAloneDoesNotTrigger() {
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(
             task("重排一遍所有文件的 import 顺序", tier: .trivial,
-                 risk: .safe, minutes: 40)))
+                 risk: .safe, minutes: 40)),
+            "活多 ≠ 一次执行装不下")
         XCTAssertFalse(TaskDecomposer.shouldDecompose(
             task("加一句注释", tier: .trivial, risk: .safe, minutes: 3)))
     }
 
-    /// 原有的两条触发条件不能被覆盖掉。
-    func testExistingTriggersStillWork() {
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(task("重构", tier: .complex)))
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(task("改配置", risk: .sensitive)))
+    /// **档次和风险也不再单独触发拆图。** 只有「一次执行真的装不下」才拆：
+    /// 碰高危路径（那一步要单独放行）、跨能力（生图执行器改不了代码）。
+    func testTierAndRiskAloneDoNotTrigger() {
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(task("重构", tier: .complex)),
+                       "复杂只是难，不是装不下")
+        // 「改配置」本身不碰具体的高危路径名，所以不该拆；
+        // 真碰到 build-app.sh 那种路径的，由 mentionsRiskyPath 兜住。
+        XCTAssertTrue(TaskDecomposer.shouldDecompose(
+            task("改 build-app.sh 加一步测试", risk: .sensitive)),
+            "碰高危路径仍然要拆出来单独放行")
     }
 }
 
