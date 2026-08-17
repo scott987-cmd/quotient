@@ -293,6 +293,15 @@ public enum Review {
 
         var outcomes: [AutoLandOutcome] = []
         let pending = list(repo: repo, base: base, tasks: tasks)
+        // 排队只在**有资格落地**的分支之间排。一条合不进去的分支排在队首，
+        // 会把它后面所有人永久挡住 —— 那不是排队，那是堵门。
+        let veto = autoLandVeto()
+        let landable = pending.filter { i in
+            guard i.mergesCleanly, veto[i.branch] == nil else { return false }
+            guard let t = byID[i.taskID], t.state == .done else { return false }
+            if t.profile?.risk == .sensitive { return false }
+            return !GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
+        }
         for item in pending {
             // 按「尝试次数」限流而不是「成功次数」：贵的是验收那一步，
             // 失败的尝试一样烧了一次全量构建。
@@ -312,7 +321,8 @@ public enum Review {
             // 其余分支下一轮对着新 main 重新判定 —— 要么还能干净合入（接着合），
             // 要么 mergesCleanly 变 false（这才是真冲突，该给人）。
             // 安全性没放宽：合并前照样跑全量验收，验不过就否决留人工。
-            if !item.overlapsWith.isEmpty, !isOldestInOverlapGroup(item, among: pending) {
+            if !item.overlapsWith.isEmpty,
+               !isOldestInOverlapGroup(item, among: landable) {
                 continue
             }
             if GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " ")) { continue }
@@ -343,6 +353,12 @@ public enum Review {
     ///
     /// 用提交时间排序，时间相同（或缺失）用分支名兜底 —— 判据必须是全序，
     /// 否则一组里可能没有任何一条被认为是「最老」，死锁原样还在。
+    ///
+    /// - Parameter all: 排队的**只能是真正有资格落地的分支**。合不进去的
+    ///   不能占位置 —— 否则死锁会换个形式回来：Maw 实测过一次，
+    ///   一条分支刷新之后变成组里最新的，而组里另外两条合不进去、
+    ///   永远不会被放行，于是刷好的那条也永远轮不到。
+    ///   队列里排着一个永远不会走的人，后面的人就永远走不了。
     static func isOldestInOverlapGroup(_ item: Item, among all: [Item]) -> Bool {
         let group = all.filter { item.overlapsWith.contains($0.branch) } + [item]
         let oldest = group.min { a, b in

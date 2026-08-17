@@ -93,6 +93,37 @@ final class OverlapDeadlockTests: XCTestCase {
                        "没有时间戳的排最后，不能靠「未知」插队")
     }
 
+    /// **合不进去的分支不能占队首。**
+    ///
+    /// 这条是踩出来的：Maw 的 74c79d4b 刷新之后能干净合入了，但刷新这个动作
+    /// 让它变成了组里**最新**的一条；而组里另外两条（cdce40f3、053f0384）
+    /// 还是冲突、永远不会被放行。按「最老优先」排，刷好的那条排在两个
+    /// 永远不会走的人后面 —— 于是它也永远轮不到。
+    ///
+    /// 死锁换了个形式又回来了：队列里排着一个不会走的人，
+    /// 后面的人就永远走不了。所以排队只在**有资格落地**的分支之间排。
+    func testUnmergeableBranchesDoNotHoldTheQueue() {
+        let all = linked([
+            item("agent/graph/cdce40f3",
+                 files: ["Maw/GameScene.swift"], at: 100),      // 最老，但合不进去
+            item("agent/kimi/053f0384",
+                 files: ["Maw/GameScene.swift"], at: 200),      // 次老，也合不进去
+            item("agent/codex/74c79d4b",
+                 files: ["Maw/GameScene.swift"], at: 900),      // 刚刷新，最新，能合
+        ])
+        // 前两条合不进去 —— 它们不进候选队列
+        let landable = all.filter { $0.branch == "agent/codex/74c79d4b" }
+
+        XCTAssertTrue(
+            Review.isOldestInOverlapGroup(all[2], among: landable),
+            "唯一能合的那条必须放行 —— 不能被两条永远合不进去的分支挡着")
+
+        // 反面：如果拿全量去排，它就被挡住了 —— 这正是修之前的行为
+        XCTAssertFalse(
+            Review.isOldestInOverlapGroup(all[2], among: all),
+            "这条断言记录的是**错误行为**，用来说明为什么队列必须先过滤")
+    }
+
     /// 不重叠的分支不受这条规则影响，照旧直接放行。
     func testNonOverlappingBranchesAreUnaffected() {
         let group = linked([
