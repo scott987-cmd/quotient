@@ -60,8 +60,8 @@ public enum GraphSession {
 
     /// 这个（图，平台）该用哪种模式。
     ///
-    /// 不是图内节点就 `.fresh` —— 普通任务各有各的 worktree，
-    /// 复用会话只会让 agent 在一个已经不存在的目录里找上一次的改动。
+    /// 不是图内节点就 `.fresh` —— 用 `mode(repo:platform:graphID:)`
+    /// 才拿得到普通任务的会话复用。这个重载留给只知道 graphID 的调用方。
     public static func mode(graphID: String?, platform: Platform) -> Mode {
         guard let g = graphID else { return .fresh }
         let m = load()
@@ -97,6 +97,52 @@ public enum GraphSession {
     public static func forgetGraph(_ graphID: String) {
         var m = load()
         for k in m.keys where k.hasPrefix(graphID + "|") { m.removeValue(forKey: k) }
+        save(m)
+    }
+}
+
+
+public extension GraphSession {
+
+    /// 普通任务也复用会话 —— 按「仓库 × 平台」记。
+    ///
+    /// ## 为什么以前不行，现在行了
+    ///
+    /// 以前普通任务一任务一个 worktree，跑完就删。恢复出来的会话
+    /// 工作目录已经不存在，agent 会在一个空气目录里找上次的改动 ——
+    /// 所以那时候只能 `.fresh`。
+    ///
+    /// 工作区改成按「仓库 × 平台」固定复用之后，cwd 稳定了，
+    /// 这个前提就没了。于是 Claude 干这个仓库永远接同一个会话：
+    /// 它记得这仓库长什么样、上次为什么那么改、哪个坑踩过。
+    ///
+    /// **这是省掉重读的那一半。** 另一半（仓库地图）只是让重读便宜些，
+    /// 治不了重读本身。
+    ///
+    /// 按仓库分而不是全局一个会话：两个项目的上下文混在一起，
+    /// agent 会把 A 项目的约定用到 B 项目上 —— 那比重读还糟。
+    static func mode(repo: String, platform: Platform, graphID: String?) -> Mode {
+        // 图内节点仍然按图记：一张图跨平台接力，靠的就是图级会话。
+        if graphID != nil { return mode(graphID: graphID, platform: platform) }
+        let k = "repo:" + NSString(string: repo).expandingTildeInPath
+            + "|" + platform.rawValue
+        var m = load()
+        if let existing = m[k] { return .resume(existing) }
+        let id = UUID().uuidString
+        m[k] = id
+        save(m)
+        return .create(id)
+    }
+
+    /// 会话废掉了（上下文塞满、CLI 报会话不存在）就丢掉重开。
+    ///
+    /// **必须有这条路。** 会话是会过期和撑爆的，没有作废机制的话，
+    /// 一个坏会话会让这个仓库这个平台**永久跑不起来** ——
+    /// 而表现是每次都失败，看不出原因在会话上。
+    static func forget(repo: String, platform: Platform) {
+        var m = load()
+        m.removeValue(forKey: "repo:" + NSString(string: repo).expandingTildeInPath
+                      + "|" + platform.rawValue)
         save(m)
     }
 }

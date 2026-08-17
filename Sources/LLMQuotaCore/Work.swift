@@ -1331,12 +1331,35 @@ public enum GitWorkspace {
     ///   那个目录里装的正是第一步的提交 —— 照原样删下去，
     ///   前一步的产出就没了，而且不会有任何报错，
     ///   表现为「第二步的 agent 说找不到第一步说的那些改动」。
+    /// 一个平台在一个仓库上的固定工作区目录名。
+    ///
+    /// **目录固定，分支照旧一任务一条。** 这两件事以前是绑在一起的：
+    /// 一任务一目录、一任务一分支，于是每个任务都要重开会话、重读仓库、
+    /// 重新猜约定 —— 老板的原话是「每次重新处理任务的上下文加载和
+    /// 信息丢失我觉得损耗很大」。
+    ///
+    /// 而复用的机制本来就有，只是被限死在一张图内部（见 graphID 那段）。
+    /// 放宽到「仓库 × 平台」之后，Claude 干这个仓库永远用同一个目录、
+    /// 接同一个会话，Kimi 有自己的一份，互不串味。
+    ///
+    /// 分支不跟着长期化：验收还是一任务一条分支，粒度不变。
+    /// 目录里切分支就行 —— 会话要的是 cwd 稳定，不是分支稳定。
+    static func stableKey(repo: String, platform: Platform) -> String {
+        let alias = RepoRegistry.all()
+            .first { NSString(string: $0.localPath).expandingTildeInPath
+                        == NSString(string: repo).expandingTildeInPath }?.alias
+            ?? URL(fileURLWithPath: repo).lastPathComponent
+        // 目录名不能带斜杠和空格
+        let safe = alias.map { $0.isLetter || $0.isNumber ? $0 : "-" }
+        return String(safe) + "-" + platform.rawValue
+    }
+
     public static func prepare(repo: String, taskID: String, platform: Platform,
                                graphID: String? = nil, base: String = "main") throws -> Workspace {
         // 建 worktree 不该要两分钟。缩短到 45 秒 —— 超过这个数基本就是卡住了，
         // 早点失败早点换平台，比让一个额度槽空等两分钟强。
         let timeoutUsed: TimeInterval = 45
-        let key = graphID ?? taskID
+        let key = graphID ?? stableKey(repo: repo, platform: platform)
         let branch = graphID.map { "agent/graph/\($0)" }
             ?? "agent/\(platform.rawValue)/\(taskID)"
         let root = Paths.appSupport.appendingPathComponent("worktrees", isDirectory: true)
@@ -1361,6 +1384,31 @@ public enum GitWorkspace {
                 _ = git(["merge", "--abort"], in: live.path)
             }
             return live
+        }
+
+        // **目录还在但要换分支：在原地切，别删了重建。**
+        //
+        // 这是「上下文不丢」的整个要点。删掉目录 = 会话的 cwd 没了 =
+        // 下一个任务只能从零重读仓库。而 agent 的会话里装着的
+        // 「这个仓库长什么样、上次踩过什么坑」正是最贵的东西。
+        //
+        // 切之前必须清干净：上一个任务可能留下未提交的改动或者跑挂时的
+        // 半成品，checkout 会被它们挡住 —— 而那些改动如果值钱，
+        // 早就该在上一个任务结束时提交了，留到现在只会污染下一个任务。
+        if FileManager.default.fileExists(atPath: path),
+           git(["rev-parse", "--git-dir"], in: path).exitCode == 0 {
+            _ = git(["reset", "--hard"], in: path, timeout: 30)
+            _ = git(["clean", "-fd"], in: path, timeout: 30)
+            // 先把主干拉到脚下，再从主干开新分支 —— 否则新任务会站在
+            // 上一个任务的分支上，把无关的改动一起带进来。
+            _ = git(["checkout", "--detach", base], in: path, timeout: 30)
+            _ = git(["branch", "-f", branch, base], in: path, timeout: 30)
+            let co = git(["checkout", branch], in: path, timeout: 30)
+            if co.exitCode == 0 {
+                return Workspace(path: path, branch: branch)
+            }
+            // 切不过去（分支被别的 worktree 占着之类）—— 退回删了重建，
+            // 慢一点但一定能用。上下文丢了总比跑不起来强。
         }
 
         // 残留就先清掉，避免上一次异常退出挡住这次。

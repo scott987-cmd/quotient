@@ -1675,10 +1675,16 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             && task.askRounds < Ask.Policy.maxRounds
             && resumedAnswer == nil
         if mayAsk { effectivePrompt += AskContract.clause(askFile: askFile.path) }
-        // 图内接力复用同一个会话：后续步骤不用把仓库重读一遍。
-        // 只在图内做 —— 普通任务各有各的 worktree，恢复出来的会话
-        // 工作目录已经不存在了。
-        let session = GraphSession.mode(graphID: task.graphID, platform: pick.platform)
+        // 接上这个平台在这个仓库上的会话，省掉重读。
+        //
+        // 以前只在图内做，理由是「普通任务各有各的 worktree，恢复出来的
+        // 会话工作目录已经不存在了」—— 那个前提在工作区改成按
+        //「仓库 × 平台」固定复用之后就没了。
+        //
+        // 省下的不只是 token：会话里装着「这仓库长什么样、上次为什么
+        // 那么改、哪个坑踩过」，那些东西重读仓库是读不回来的。
+        let session = GraphSession.mode(repo: task.repo, platform: pick.platform,
+                                        graphID: task.graphID)
         if case .resume(let id) = session {
             print(Ansi.dim("  接上会话 " + String(id.prefix(8)) + "（省去重读仓库）"))
         }
@@ -1791,6 +1797,23 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             print(Ansi.red("  失败") + Ansi.dim(String(format: " · %.0fs · ", elapsed))
                 + failure.describe)
             attempts.append("\(pick.platform.displayName)：\(failure.describe)")
+
+            // **会话坏了就丢掉，别让它把这个组合永久钉死。**
+            //
+            // 复用会话省了重读，代价是多了一个会坏的东西：会话会过期、
+            // 会被 CLI 清掉、上下文会撑爆。没有作废机制的话，一个坏会话
+            // 会让「这个仓库 × 这个平台」**每一次都失败**，
+            // 而报错只说「会话不存在」，看不出病根在复用上。
+            //
+            // 判据放宽一点无所谓：丢掉会话最坏就是下一次重读一遍仓库，
+            // 而不丢的代价是这个组合再也跑不动。
+            let blob = (r.stdout + r.stderr).lowercased()
+            if blob.contains("session") &&
+                (blob.contains("not found") || blob.contains("no conversation")
+                 || blob.contains("already in use") || blob.contains("expired")) {
+                GraphSession.forget(repo: task.repo, platform: pick.platform)
+                print(Ansi.dim("  会话已失效，丢掉重开（下次从零读一遍仓库）"))
+            }
 
             // 存进度再走。哪怕只做了一半，也比让下一个平台从零开始强。
             let touched = GitWorkspace.touchedFiles(in: ws.path)
