@@ -1062,14 +1062,49 @@ func cmdWork(_ args: [String]) throws {
             Review.setAutoLand(enabled: true)
             print(Ansi.green("自动落地已开启。")
                 + "循环每轮会把满足全部条件的产出合进 main："
-                + "任务 done、非高危、能干净合入、不与其他待审分支重叠、"
-                + "不碰敏感路径、且合并前验收通过。其余照旧留给 work review。")
+                + "任务 done、非高危、能干净合入、不碰敏感路径、"
+                + "且合并前验收通过。改同一个文件的分支排队合（一轮一条，"
+                + "先合最老的）。其余照旧留给 work review。")
         case "off":
             Review.setAutoLand(enabled: false)
             print("自动落地已关闭，产出全部回到人工 work review。")
         default:
             print("自动落地：" + (Review.autoLandEnabled()
                 ? Ansi.green("开") : "关（llmq work autoland on 开启）"))
+        }
+
+    case "stale":
+        // llmq work stale [--dispatch] —— 看哪些分支过期了；加 --dispatch 才真派活
+        let doDispatch = rest.contains("--dispatch")
+        var any = false
+        for repo in RepoRegistry.all() {
+            let path = NSString(string: repo.localPath).expandingTildeInPath
+            let cs = StaleBranch.candidates(repo: path)
+            let sk = StaleBranch.skipped(repo: path)
+            guard !cs.isEmpty || !sk.isEmpty else { continue }
+            any = true
+            print(Ansi.bold(repo.alias) + Ansi.dim("  " + path))
+            for c in cs {
+                print("  " + Ansi.yellow(c.branch)
+                    + Ansi.dim("  落后 \(c.commitsBehind) 个提交，\(c.files) 个文件，"
+                        + "当初是 \(c.platform?.rawValue ?? "?") 做的"))
+                print(Ansi.dim("    " + c.subject.prefix(70)))
+            }
+            for s in StaleBranch.skipped(repo: path) {
+                print("  " + Ansi.dim(s.branch + "  \(s.files) 个文件 —— 不自动刷"))
+                print(Ansi.dim("    原因：" + s.reason))
+            }
+            if doDispatch {
+                for o in StaleBranch.dispatchRefresh(repo: path) {
+                    print((o.enqueued ? Ansi.green("  ↻ 已派 ") : Ansi.yellow("  ⚠︎ 没派 "))
+                        + o.branch + Ansi.dim("  " + o.note))
+                }
+            }
+        }
+        if !any {
+            print("没有过期分支。")
+        } else if !doDispatch {
+            print(Ansi.dim("加 --dispatch 派刷新任务回给原平台（它还留着当时的会话）"))
         }
 
     case "install-loop":
@@ -1383,7 +1418,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|idle|approve|retry|discard|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|approve|retry|discard|log]")
         exit(2)
     }
 }
@@ -2344,6 +2379,14 @@ func cmdWorkLoop(_ args: [String]) throws {
                     for o in Review.autoLand(repo: path) {
                         let mark = o.landed ? Ansi.green("  ✓ 落地 ")
                                             : Ansi.yellow("  ⚠︎ 没落 ")
+                        print(mark + o.branch + Ansi.dim("  " + o.note))
+                    }
+                    // 落不下去的里面，分「过期了」和「真撞了设计」两种。
+                    // 过期的派回原平台去刷新 —— 它还留着当时的会话。
+                    // 详见 StaleBranch 的说明。
+                    for o in StaleBranch.dispatchRefresh(repo: path) {
+                        let mark = o.enqueued ? Ansi.green("  ↻ 刷新 ")
+                                              : Ansi.yellow("  ⚠︎ 没派 ")
                         print(mark + o.branch + Ansi.dim("  " + o.note))
                     }
                 }
