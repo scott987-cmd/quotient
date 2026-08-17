@@ -38,7 +38,28 @@ public enum TaskGraph {
         guard t.state == .queued else { return false }
         guard !t.dependsOn.isEmpty else { return true }
         let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        return t.dependsOn.allSatisfy { byID[$0]?.state == .done }
+        return t.dependsOn.allSatisfy { upstreamCleared(byID[$0]) }
+    }
+
+    /// 上游算不算「让开了」。
+    ///
+    /// **不能只认 `state == .done`。** 丢弃在这套系统里把状态置成 `.failed`
+    /// （见 cmdDiscard），于是丢掉一个上游之后，下游的依赖永远满足不了：
+    /// 它停在 `queued` 但 `isReady` 恒为假 —— 表现是**看得见却永远不跑**，
+    /// 而且两处计数会互相矛盾（`brief` 数 queued 说「排队 2」，
+    /// `readyQueue` 用 isReady 说「没有排队中的任务」）。
+    ///
+    /// 实况（2026-08-17）：Greed 两条图的上游步骤要做的事都已由人工合并
+    /// 落地，把上游丢弃之后，剩下两步真验收就卡在这个状态 ——
+    /// 队列里看得见，永远不会被派。
+    ///
+    /// 上一轮修冻结那条路（`blocker` 判定）时认了 `discardedAt`，
+    /// 但**就绪这条路漏了**。同一件事两套判据，必须用同一个函数，
+    /// 否则下次改一处又会分叉。
+    static func upstreamCleared(_ up: WorkTask?) -> Bool {
+        guard let up else { return false }        // 上游记录没了：不放行
+        if up.discardedAt != nil { return true }  // 明确处置过了 —— 让开
+        return up.state == .done
     }
 
     /// 下一个该跑的节点。
@@ -168,9 +189,10 @@ public enum TaskGraph {
                 // 丢弃 ≠ 失败。失败是「没干成」，丢弃是「有人明确处置过了」——
                 // 后者该放下游走，前提到底还成不成立由派活前的
                 // PremiseCheck / BaselineFreshness 去判，不该在这儿一刀切。
+                // 判据和 isReady 共用 upstreamCleared —— 两处分叉过一次，
+                // 代价是任务「看得见却永远不跑」，不能再来一遍。
                 let blocker = t.dependsOn.first {
-                    guard let up = byID[$0] else { return false }
-                    if up.discardedAt != nil { return false }
+                    guard let up = byID[$0], !upstreamCleared(up) else { return false }
                     return up.state == .blocked || up.state == .failed
                 }
 
@@ -292,19 +314,41 @@ public enum TaskGraph {
         guard !siblings.isEmpty else { return nil }
 
         var out = ["这是一个多步任务里的一步。"]
-        let done = siblings.filter { $0.state == .done }
-        if done.isEmpty {
+        // **「已经做完」不等于「state == .done」。**
+        //
+        // 一个步骤可能是被丢弃的，而丢弃的理由恰恰是「这活已经由别的路径
+        // 做完了」（人工合入、别的任务顺手做了、上游 agent 一并做了）。
+        // 那种步骤的改动**真实存在于仓库里**，只是这条任务记录被关掉了。
+        //
+        // 只认 .done 的后果实测过：Greed 的 3f68707cs5 拿到的上下文是
+        // 「你是第一步，前面没有人做过任何改动」—— 而 s2/s3/s4
+        //（两个持久化开关、SettingsView、设置入口）全都已经在 main 上。
+        // agent 照这个上下文干，就会把已经有的东西重做一遍。
+        // 这正是「为啥已经在了还重复执行」的更深一层。
+        let settled = siblings.filter {
+            $0.state == .done || $0.discardedAt != nil
+        }
+        if settled.isEmpty {
             out.append("你是第一步，前面没有人做过任何改动。")
         } else {
-            out.append("前面已经完成的步骤（它们的改动已经提交在当前分支上）：")
-            for d in done {
+            out.append("前面已经了结的步骤（它们的改动已经在仓库里，别重做）：")
+            for d in settled {
                 var line = "- \(d.stepTitle ?? d.prompt.prefix(50).description)"
                 if let p = d.platform { line += "（\(p.displayName) 做的）" }
                 if !d.outputs.isEmpty {
                     line += "，产出：" + d.outputs.joined(separator: "、")
                 }
+                // 丢弃的要说清是怎么了结的 —— agent 需要知道这活是**别人**
+                // 做的（所以别重做），还是**真的没做**（那它可能得补）。
+                if d.discardedAt != nil {
+                    let why = d.discardReason ?? "已处置"
+                    line += "（这一步的记录已关闭：" + why.prefix(90) + "）"
+                }
                 out.append(line)
             }
+            out.append("**上面这些一律不要重做。** 如果你发现其中某一项其实"
+                       + "并不在仓库里，说出来，不要默默替它补 —— "
+                       + "那会让这一步的产出和它的描述对不上。")
         }
         let later = siblings.filter { $0.dependsOn.contains(node.id) }
         if !later.isEmpty {

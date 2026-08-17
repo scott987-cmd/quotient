@@ -221,13 +221,22 @@ public enum TaskHistory {
             let durations = list.compactMap { $0.duration }.sorted()
             let median = durations.isEmpty ? 0 : Int(durations[durations.count / 2])
             // 最常见的失败原因，截短了给分类器看。
+            //
+            // **丢弃的不算失败原因。** 丢弃把状态置成 .failed，而丢弃理由
+            // （「基线错了」「已由人工落地」「和整包任务重复」）说的是
+            // **派活出了问题**，不是这个平台干不了活。混进来会让分诊器
+            // 学到「volcark 老是基线错」这种荒唐结论。
             var reasons: [String: Int] = [:]
-            for t in list where t.state == .failed {
+            for t in list where t.state == .failed && t.discardedAt == nil {
                 let key = String((t.note ?? "").prefix(40))
                 reasons[key, default: 0] += 1
             }
+            // 成功率的分母也要排掉丢弃 —— 否则一次派错活会记成
+            // 执行它的那个平台的失败。实测 volcark 真成功率 97%，
+            // 被 6 个丢弃拉到显示 82%。
+            let counted = list.filter { $0.discardedAt == nil }
             return PlatformRecord(
-                platform: platform, attempts: list.count, succeeded: done.count,
+                platform: platform, attempts: counted.count, succeeded: done.count,
                 medianSeconds: median,
                 commonFailure: reasons.max(by: { $0.value < $1.value })?.key)
         }.sorted { $0.platform.sortIndex < $1.platform.sortIndex }
@@ -240,7 +249,21 @@ public enum TaskHistory {
             .suffix(limit)
         guard !recent.isEmpty else { return "（还没有历史任务）" }
         return recent.map { t in
-            let mark = t.state == .done ? "成功" : "失败"
+            // **丢弃不算这个平台失败。**
+            //
+            // 人工丢弃把状态置成 .failed（见 cmdDiscard），所以每次丢一个任务，
+            // 都会记成执行它的那个平台的一次失败 —— 哪怕 agent 什么都没做错：
+            // 「基线错了」是系统派错了，「已由人工落地」是别人先做了。
+            //
+            // 实测污染幅度（2026-08-17）：volcark 真成功率 97%，
+            // 被 6 个丢弃拉到显示 82%。而这份摘要是喂给分诊器看的 ——
+            // 拿脏数据当参考，分诊会低估被冤枉的那个平台。
+            let mark: String
+            if t.discardedAt != nil {
+                mark = "已丢弃（不计成败）"
+            } else {
+                mark = t.state == .done ? "成功" : "失败"
+            }
             let dur = t.duration.map { "\(Int($0))s" } ?? "—"
             let tier = t.profile?.tier.displayName ?? "?"
             return "- [\(mark)] \(tier) · \(t.platform?.displayName ?? "?") · \(dur) · "
