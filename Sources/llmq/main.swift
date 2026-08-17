@@ -1510,13 +1510,34 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     // Qwen/Kimi 双双冷却的晚上，Greed 的媒体批在队里干等了两小时。
     // 现在按队列顺序逐个试，谁先凑齐候选谁上；
     // 「没人能接」的照旧标 blocked（顺手也不再堵队了）。
-    let queue = TaskStore.readyQueue()
-    guard !queue.isEmpty else {
+    let rawQueue = TaskStore.readyQueue()
+    guard !rawQueue.isEmpty else {
         if !quiet { print(Ansi.dim("没有排队中的任务。")) }
         return .noTask
     }
 
     let history = TaskStore.all()
+
+    // **仓库级独占：一个仓库同时只让一个 agent 在改。**
+    //
+    // 这是架构级的取舍，不是限流。详见 RepoLease 的文档注释：
+    // 盘点 238 个任务发现，未派任务的 28 个丢弃全是同一个根因 ——
+    // 「基线错了」「撞同一批文件」「和整包任务重复」「前提没了」，
+    // 都因为把任务当成对共享代码库的独立并行单元。
+    //
+    // 并行度从**仓库**来（5 个活仓库 = 5 条流），不从平台来。
+    let (queue, deferred) = RepoLease.filter(rawQueue, tasks: history)
+    if !quiet {
+        for (t, why) in deferred.prefix(3) {
+            print(Ansi.dim("  让开 " + t.id + "：" + why))
+        }
+    }
+    guard !queue.isEmpty else {
+        if !quiet {
+            print(Ansi.dim("排队的任务所在仓库都有人在改，等它们落地。"))
+        }
+        return .noTask
+    }
     let dash = LLMQuota.dashboard()
 
     var task: WorkTask! = nil
