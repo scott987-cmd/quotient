@@ -292,13 +292,29 @@ public enum Review {
         }
 
         var outcomes: [AutoLandOutcome] = []
-        for item in list(repo: repo, base: base, tasks: tasks) {
+        let pending = list(repo: repo, base: base, tasks: tasks)
+        for item in pending {
             // 按「尝试次数」限流而不是「成功次数」：贵的是验收那一步，
             // 失败的尝试一样烧了一次全量构建。
             if outcomes.count >= maxPerCall { break }
             guard let t = byID[item.taskID], t.state == .done else { continue }
             if t.profile?.risk == .sensitive { continue }
-            guard item.mergesCleanly, item.overlapsWith.isEmpty else { continue }
+            guard item.mergesCleanly else { continue }
+            // **重叠不是「永远不合」，是「排队一个一个合」。**
+            //
+            // 老规则是 overlapsWith 非空就跳过，理由写的是「顺序该人定」。
+            // 但没有任何环节会去问人，结果就是一条都不合：2026-08-17 盘点，
+            // Maw 三条实质分支（修换档叠影、诊断证据、进食动画）两两都动了
+            // GameScene/PlayerNode/Tuning，互相卡住躺了两天。而躺着的时候
+            // 新任务还在改这些文件，重叠只会越滚越大 —— 这是个会自我加剧的死锁。
+            //
+            // 现在：一组重叠的分支里，只放行**最老的那条**。它合进去之后，
+            // 其余分支下一轮对着新 main 重新判定 —— 要么还能干净合入（接着合），
+            // 要么 mergesCleanly 变 false（这才是真冲突，该给人）。
+            // 安全性没放宽：合并前照样跑全量验收，验不过就否决留人工。
+            if !item.overlapsWith.isEmpty, !isOldestInOverlapGroup(item, among: pending) {
+                continue
+            }
             if GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " ")) { continue }
             if let veto = autoLandVeto()[item.branch] {
                 // 上次验收就没过。不再自动重试 —— 循环每 30 秒一轮，
@@ -321,6 +337,21 @@ public enum Review {
             }
         }
         return outcomes
+    }
+
+    /// 这条分支是不是它那组重叠分支里**最老的**。
+    ///
+    /// 用提交时间排序，时间相同（或缺失）用分支名兜底 —— 判据必须是全序，
+    /// 否则一组里可能没有任何一条被认为是「最老」，死锁原样还在。
+    static func isOldestInOverlapGroup(_ item: Item, among all: [Item]) -> Bool {
+        let group = all.filter { item.overlapsWith.contains($0.branch) } + [item]
+        let oldest = group.min { a, b in
+            let ta = a.committedAt ?? .distantFuture
+            let tb = b.committedAt ?? .distantFuture
+            if ta != tb { return ta < tb }
+            return a.branch < b.branch
+        }
+        return oldest?.branch == item.branch
     }
 
     public static func merge(repo: String, branch: String, base: String = "main",

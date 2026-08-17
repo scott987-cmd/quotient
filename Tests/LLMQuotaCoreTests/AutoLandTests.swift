@@ -102,13 +102,25 @@ final class AutoLandTests: XCTestCase {
         XCTAssertTrue(out.isEmpty, "碰 .github/ 的产出必须人工审：\(out)")
     }
 
-    /// 两条待审分支改同一个文件 → 都不自动合（顺序该人定）。
-    func testOverlappingBranchesStayManual() {
+    /// 两条待审分支改同一个文件 → **排队合，一轮放行一条**，不是都不合。
+    ///
+    /// 这条原来断言 `out.isEmpty`，理由写的是「顺序该人定」。但没有任何环节
+    /// 会去问人，实际后果是一条都不合：2026-08-17 盘点 Maw，三条实质分支
+    /// 两两都动了 GameScene/PlayerNode/Tuning，互相卡住躺了两天，
+    /// 否决名单还是空的 —— 它们根本没被**尝试**过。
+    ///
+    /// 现在放行最老的那条。第二条下一轮对着新 main 重新判定：
+    /// 要么还能干净合入，要么 mergesCleanly 变 false，那才是真冲突、才给人。
+    /// 一轮只合一条这个保护还在（见 testOnePerRound），
+    /// 所以不会出现「一口气把一组重叠全合了」。
+    func testOverlappingBranchesLandOneAtATime() {
         makeBranch("t5", file: "Shared.swift")
         makeBranch("t6", file: "Shared.swift")
         let out = Review.autoLand(repo: repo,
                                   tasks: [doneTask("t5"), doneTask("t6")])
-        XCTAssertTrue(out.isEmpty, "重叠分支单看都能干净合入，但合完第一个第二个就冲突：\(out)")
+        XCTAssertEqual(out.count, 1,
+                       "一组重叠里必须恰好合一条 —— 0 条是死锁，2 条是抢着合：\(out)")
+        XCTAssertTrue(out.first?.landed == true, "放行的那条该真的合进去了：\(out)")
     }
 
     /// 进过否决名单（上次验收失败）的分支不再自动重试。

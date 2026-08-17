@@ -2115,9 +2115,46 @@ public struct MiniMaxReviewRunner: AgentRunner {
           exit 1
         fi
 
-        stamp="$(git rev-parse --short HEAD 2>/dev/null || echo new)"
+        # 报告文件名跟着**被复查的那个合并**走，不能用 HEAD。
+        #
+        # HEAD 是工作区当前位置。几个复查任务跑在同一个复用工作区里，
+        # HEAD 全一样，于是报告全叫同一个名字 —— 2026-08-17 实测撞了 5 份，
+        # 光看文件名分不出哪份评的是哪次合并，真合进 main 还会互相覆盖。
+        stamp=""
+        case "$LLMQ_PROMPT" in
+          *"合并 "*)
+            rest="${LLMQ_PROMPT#*合并 }"
+            cand="${rest[1,12]}"
+            for (( i = 1; i <= ${#cand}; i++ )); do
+              case "${cand[i]}" in
+                [0-9a-f]) stamp="${stamp}${cand[i]}" ;;
+                *) break ;;
+              esac
+            done
+            ;;
+        esac
+        # 取不到就退回 HEAD（方案评审这类提示词里本来就没有合并 sha）
+        if [ ${#stamp} -lt 7 ]; then
+          stamp="$(git rev-parse --short HEAD 2>/dev/null || echo new)"
+        fi
+        # 再缀上任务 id（分支名的尾巴，天然唯一）。
+        #
+        # 光有合并 sha 还不够：同一次合并被两个平台各复查一遍，报告就撞名，
+        # 而撞名的直接后果是 **add/add 冲突、分支永远合不进去**。
+        # Maw 的 agent/minimax/6bff5fdc 就是这么躺住的 —— 它只改了一个文件，
+        # 却因为 main 上已有同名报告而永久卡在待审里。
+        #
+        # 一份评审报告的身份是「哪次合并 × 谁评的」，两个评审人是两份报告，
+        # 都该留着。
+        git rev-parse --abbrev-ref HEAD > "$tmpd/branch.txt" 2>/dev/null
+        br="$(<$tmpd/branch.txt)"
+        tid="${br##*/}"
         mkdir -p reviews
-        out="reviews/EVAL-${kind}-${stamp}.md"
+        if [ -n "$tid" ] && [ "$tid" != "$br" ]; then
+          out="reviews/EVAL-${kind}-${stamp}-${tid}.md"
+        else
+          out="reviews/EVAL-${kind}-${stamp}.md"
+        fi
         printf '%s\n' "$report" > "$out"
         git add "$out"
         git commit -q -m "${kind}评审（MiniMax）" || true
