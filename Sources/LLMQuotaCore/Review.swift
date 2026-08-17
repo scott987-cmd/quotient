@@ -312,16 +312,37 @@ public enum Review {
         let landable = pending.filter { i in
             guard i.mergesCleanly, veto[i.branch] == nil else { return false }
             guard let t = byID[i.taskID], t.state == .done else { return false }
-            if t.profile?.risk == .sensitive { return false }
-            return !GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
+            let needsReview = t.profile?.risk == .sensitive
+                || GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
+            if needsReview {
+                return MergeReview.approved(branch: i.branch, files: i.files,
+                                            tasks: tasks)
+            }
+            return true
         }
         for item in pending {
             // 按「尝试次数」限流而不是「成功次数」：贵的是验收那一步，
             // 失败的尝试一样烧了一次全量构建。
             if outcomes.count >= maxPerCall { break }
             guard let t = byID[item.taskID], t.state == .done else { continue }
-            if t.profile?.risk == .sensitive { continue }
             guard item.mergesCleanly else { continue }
+            // **机械条件判不了的，问评审 agent，不问人。**
+            //
+            // 老板的原话：「代码合入审核，你让专用 agent 去判断就可以了」。
+            // 原来「高危」和「碰敏感路径」这两类直接跳过自动落地、落到
+            // work review 等人 —— 而人在那里要做的事恰恰是读 diff，
+            // 那是他反复说过不要推给他的东西。
+            //
+            // 现在这两类走 MergeReview：派专用评审 agent 出结论，
+            // 够票才继续往下走。够票之后**构建和测试照样跑**，
+            // 放宽的只是「谁来拿主意」，不是「拿主意前查什么」。
+            let needsAgentReview = t.profile?.risk == .sensitive
+                || GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
+            if needsAgentReview,
+               !MergeReview.approved(branch: item.branch, files: item.files,
+                                     tasks: tasks) {
+                continue
+            }
             // **重叠不是「永远不合」，是「排队一个一个合」。**
             //
             // 老规则是 overlapsWith 非空就跳过，理由写的是「顺序该人定」。
@@ -338,7 +359,6 @@ public enum Review {
                !isOldestInOverlapGroup(item, among: landable) {
                 continue
             }
-            if GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " ")) { continue }
             if let veto = autoLandVeto()[item.branch] {
                 // 上次验收就没过。不再自动重试 —— 循环每 30 秒一轮，
                 // 重试一次是十几分钟全量构建，等于把 worker 变成了烤炉。

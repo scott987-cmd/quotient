@@ -2031,11 +2031,71 @@ public struct MiniMaxReviewRunner: AgentRunner {
         fi
 
         case "$LLMQ_PROMPT" in
+          *合入*) kind=合入 ;;
           *方案*) kind=方案 ;;
           *) kind=项目 ;;
         esac
 
-        if [ "$kind" = "方案" ]; then
+        # **合入审核必须看到 diff。** 别的评审看的是「项目到哪一步了」，
+        # 材料是 STATUS/README/提交历史就够；合入审核判的是「这段改动能不能进
+        # 主干」，不给它看改动等于让它凭任务描述空想。
+        # RepoMap.swift 记着的那六份「材料不足 —— 评审正文没给我看」就是这么来的。
+        if [ "$kind" = 合入 ]; then
+          # 分支名是提示词里 agent/ 开头那一段
+          rest="${LLMQ_PROMPT#*分支 }"
+          br="${rest%% *}"
+          br="${br%%$'\n'*}"
+          git diff --stat "main...$br" > "$tmpd/dstat.txt" 2>/dev/null
+          git diff "main...$br" > "$tmpd/dfull.txt" 2>/dev/null
+          dfull="$(<$tmpd/dfull.txt)"
+          material="## 改动概览
+        $(<$tmpd/dstat.txt)
+
+        ## 完整改动（前 40000 字符）
+        ${dfull[1,40000]}"
+          if [ ${#dfull} -gt 40000 ]; then
+            material="$material
+        …（改动过长已截断，超出部分按「看不到」处理，别猜）"
+          fi
+        fi
+
+        if [ "$kind" = 合入 ]; then
+          read -r -d '' ask <<PROMPT_END
+        你是代码合入审核人。判断下面这段改动能不能合进主干。
+
+        # 待审的改动
+        $LLMQ_PROMPT
+
+        # 改动内容
+        $material
+
+        请输出一份 Markdown 审核报告，只输出报告本身：
+
+        # 合入审核：<分支名>
+
+        **结论**：合入 / 不合入（**只能二选一，原样写这两个字，别加别的字**）
+
+        ## 判断依据
+        逐条说清楚。看到什么就说什么，看不到的写"⚠️ 改动里看不出来"。
+
+        ## 会出事的地方
+        这段改动可能在什么情况下出错？给出具体的输入或状态。
+        没有就写「没看出来」。
+
+        ## 有没有偷工
+        - 有没有为了让代码跑通而删掉原本该做的事？
+        - 有没有把测试改成迎合实现（而不是反过来）？
+        - 有没有留下 TODO 假装做完了？
+        没有就写「没有」。
+
+        判断标准：
+        - **不合入**的理由必须是**这段改动本身有问题**：会出错、偷工、
+          破坏别的东西。风格不合、命名不好、"我会写得不一样"都不是理由。
+        - 看不懂 ≠ 不合入。看不懂就在"判断依据"里说清哪一段看不懂，
+          结论按看得懂的部分给。
+        - **不要因为改动量大就倾向不合入**，也不要因为看着整齐就放行。
+        PROMPT_END
+        elif [ "$kind" = "方案" ]; then
           read -r -d '' ask <<PROMPT_END
         你是技术方案评审人。下面是一份待评审的方案和它所在仓库的现状。
 

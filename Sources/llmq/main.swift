@@ -2391,6 +2391,12 @@ func cmdWorkLoop(_ args: [String]) throws {
                     }
                     // 改了看得见的东西却没交证据 → 派回原平台跑一遍截图。
                     // 人只看「跑起来什么样」，不该替 agent 补跑（见 EvidenceGate）。
+                    // 机械条件判不了的（高危 / 碰构建 CI 签名）→ 派专用评审
+                    // agent 出结论，人不参与「这段 diff 要不要合」。
+                    for o in MergeReview.dispatch(repo: path) {
+                        print(Ansi.green("  ⚖︎ " + o.action + " ") + o.branch
+                            + Ansi.dim("  " + o.note))
+                    }
                     for o in EvidenceGate.dispatchEvidence(repo: path) {
                         let mark = o.enqueued ? Ansi.green("  📷 补证据 ")
                                               : Ansi.yellow("  ⚠︎ 没派 ")
