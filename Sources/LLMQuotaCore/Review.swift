@@ -81,11 +81,26 @@ public enum Review {
         // 未提交的产出无声消失。
         //
         // 判据：图里还有没跑完的节点就跳过。全部终态了才允许审。
+        //
+        // **但搁浅的图要放行。** 这条排除规则原来把 blocked 一律当成
+        // 「还在跑」—— 而一步失败之后下游全都是 blocked，且没有任何东西
+        // 会把那个 failed 推回去。三件事连起来是一条静默死亡链：
+        //
+        //     一步失败 → 下游 blocked → 整图算「还没跑完」
+        //     → 分支进不了这个名单 → 手机上永远看不见
+        //
+        // Greed 的 f2872114 就这么躺了一整天：s1–s4 完成、19 个文件的产出，
+        // s5 挂了，没有任何界面提过一个字。
+        //
+        // 搁浅 ≠ 还在跑。还在跑的不该打扰人，搁浅的必须让人看见 ——
+        // 它已经不会自己好了，只有人能决定捞还是丢。
+        let strandedGraphs = Set(TaskGraph.stranded(tasks).map(\.graphID))
         let unfinishedGraphs: Set<String> = Set(
             tasks.filter {
                 $0.graphID != nil && ($0.state == .queued || $0.state == .running
                                       || $0.state == .blocked)
-            }.compactMap { $0.graphID })
+            }.compactMap { $0.graphID }
+        ).subtracting(strandedGraphs)
 
         var items: [Item] = []
         for b in branches where !merged.contains(b) {

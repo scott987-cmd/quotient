@@ -4684,6 +4684,52 @@ do {
         try cmdWork(rest)
     case "plan":
         try cmdPlan(rest)
+    case "stranded":
+        // llmq stranded —— 列出所有「跑挂了一步、剩下全冻着」的任务图，
+        // 以及领先 main 却没合入的 agent 分支。
+        //
+        // 这个命令存在的理由：这类东西**原来没有任何界面会显示**。
+        // Greed 的 f2872114 完成了 4 步、19 个文件的产出，因为第 5 步挂了
+        // 就整条躺了一整天 —— 靠人手工 git branch 才发现。
+        let strands = TaskGraph.stranded()
+        if strands.isEmpty {
+            print(Ansi.green("没有搁浅的任务图。"))
+        } else {
+            print(Ansi.bold("搁浅的任务图 \(strands.count) 张")
+                  + Ansi.dim("  跑挂了一步，剩下的不会自己恢复"))
+            for st in strands {
+                print("  " + Ansi.cyan(st.branch)
+                      + Ansi.dim("  完成 \(st.doneCount) 步 · 冻住 \(st.frozenCount) 步"))
+                print(Ansi.dim("    挂在：" + st.failedTitles.joined(separator: "、")))
+                if !st.repo.isEmpty {
+                    let n = GitWorkspace.git(
+                        ["rev-list", "--count", "main.." + st.branch], in: st.repo)
+                        .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let c = Int(n), c > 0 {
+                        print(Ansi.dim("    分支上有 \(c) 个提交没合入 —— 值得捞"))
+                    }
+                }
+            }
+        }
+        print()
+        print(Ansi.bold("领先 main 但没合入的分支"))
+        var orphan = 0
+        for r in RepoRegistry.all() {
+            let path = NSString(string: r.localPath).expandingTildeInPath
+            guard GitWorkspace.isRepo(path) else { continue }
+            let bs = GitWorkspace.git(
+                ["for-each-ref", "--format=%(refname:short)", "refs/heads/agent/"],
+                in: path).stdout.split(separator: "\n").map(String.init)
+            for b in bs {
+                let n = GitWorkspace.git(["rev-list", "--count", "main.." + b], in: path)
+                    .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let c = Int(n), c > 0 else { continue }
+                orphan += 1
+                print("  " + r.alias.padding(toLength: 14, withPad: " ", startingAt: 0)
+                      + b + Ansi.dim("  领先 \(c) 个提交"))
+            }
+        }
+        if orphan == 0 { print(Ansi.dim("  没有。")) }
     case "map":
         // llmq map [别名或路径] —— 打印会拼进任务提示词的那份仓库地图。
         // 调试用：改了扫描规则之后不用真派一个活才能看见效果。

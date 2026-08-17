@@ -57,8 +57,11 @@ public enum Nudge {
     }
 
     /// 现在有什么值得打扰人的。**每条都对应一个待决事项。**
-    public static func pending(now: Date = Date()) -> [(key: String, kind: Push.Kind,
-                                                        body: String, badge: Int)] {
+    /// `tasks` 可注入，只为让测试能造出「搁浅」这种状态 ——
+    /// 它是靠多个任务的组合才成立的，不注入就没法在测试里表达。
+    public static func pending(now: Date = Date(),
+                               tasks: [WorkTask] = TaskStore.all())
+    -> [(key: String, kind: Push.Kind, body: String, badge: Int)] {
         var out: [(String, Push.Kind, String, Int)] = []
 
         // 1. 新项目的方案等过目
@@ -78,7 +81,6 @@ public enum Nudge {
         // 包括早就合入 main 的。实测推出去一条「92 份产出等你验收」，
         // 而 `llmq work review` 同时说「没有待审的 agent 分支」。
         // 一个假的 92 比不推更糟：人点开发现什么都没有，下次就不信这个数了。
-        let tasks = TaskStore.all()
         // **扣掉已经表过态的。** 人点了合入/丢弃之后，Mac 端可能还没执行完，
         // 或者执行失败了（比如合并冲突）—— 这两种情况那个分支都还在
         // Review.list 里。不扣的话就是「反复提醒人去做他已经做过的事」，
@@ -110,6 +112,27 @@ public enum Nudge {
         if !blocked.isEmpty {
             out.append(("blocked-\(blocked.count)", .needsYou,
                         "\(blocked.count) 个任务被拦下等你放行", blocked.count))
+        }
+
+        // 4. 有任务图搁浅了 —— 跑挂一步，剩下的不会自己恢复
+        //
+        // **这类东西原来一个字都不喊。** 上面第 3 条特意排掉了 frozenBy
+        // 那些（「上游恢复后会自动解冻」），可上游要是 failed，
+        // 根本没有任何东西会让它恢复 —— 于是这些任务既不进推送，
+        // 分支也进不了待验收名单，彻底沉默。
+        //
+        // Greed 的 f2872114 完成了 4 步、19 个文件的产出（AudioManager、
+        // 存档层、主菜单外壳），第 5 步挂了就整条躺了一整天，
+        // 是人手工翻 git branch 才发现的。
+        //
+        // 搁浅和「等上游自愈」是两回事：后者该闭嘴，前者必须喊。
+        let strands = TaskGraph.stranded(tasks)
+        if !strands.isEmpty {
+            let salvageable = strands.filter { $0.doneCount > 0 }
+            let body = salvageable.count == 1
+                ? "一条任务链卡住了，已完成 \(salvageable[0].doneCount) 步的产出还没落地"
+                : "\(strands.count) 条任务链卡住了，跑挂一步就再也不会自己恢复"
+            out.append(("stranded-graph", .needsYou, body, strands.count))
         }
 
         return out

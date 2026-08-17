@@ -260,3 +260,78 @@ public enum TaskGraph {
         return out.joined(separator: "\n")
     }
 }
+
+// MARK: - 搁浅
+
+public extension TaskGraph {
+
+    /// 一张搁浅的图：跑挂了一步，剩下的全冻着，而且**不会有任何东西
+    /// 把它推回去**。
+    struct Stranded: Sendable {
+        public var graphID: String
+        /// 挂掉的那些步骤。
+        public var failedTitles: [String]
+        /// 被它冻住的步骤数。
+        public var frozenCount: Int
+        /// 完成了几步 —— 决定这条分支上有多少产出值得捞。
+        public var doneCount: Int
+        public var repo: String
+        public var branch: String { "agent/graph/" + graphID }
+    }
+
+    /// 哪些图已经搁浅了。
+    ///
+    /// ## 为什么必须单独有这个概念
+    ///
+    /// 一步失败之后，`reconcile` 会把下游冻成 blocked —— 这是对的。
+    /// 问题在于**没有任何东西会把那个 failed 推回 queued**（reconcile
+    /// 自己的注释就写着这句），于是下游永远冻着。
+    ///
+    /// 而 `Review.list` 把「图里还有 blocked 节点」当成「图还在跑」，
+    /// 直接跳过这条分支。三件事连起来就是一条完整的静默死亡链：
+    ///
+    ///     一步失败 → 下游 blocked → 整图算「还没跑完」
+    ///     → 分支进不了待审名单 → 手机上永远看不见
+    ///
+    /// 实际代价（2026-08-16 的 Greed）：f2872114 的 s1–s4 全部完成，
+    /// 产出 AudioManager、存档层、主菜单外壳共 19 个文件，s5 挂了，
+    /// 于是整条分支躺了一整天，没有任何界面提过一个字。
+    /// 是我手工翻 `git branch` 才发现的。
+    ///
+    /// **搁浅和「还在跑」必须分开。** 还在跑的不该打扰人；
+    /// 搁浅的必须让人看见 —— 它已经不会自己好了。
+    static func stranded(_ tasks: [WorkTask] = TaskStore.all()) -> [Stranded] {
+        let graphs = Dictionary(grouping: tasks.compactMap { t -> (String, WorkTask)? in
+            guard let g = t.graphID else { return nil }
+            return (g, t)
+        }, by: { $0.0 }).mapValues { $0.map(\.1) }
+
+        return graphs.compactMap { gid, steps -> Stranded? in
+            // 还有活在动 → 不算搁浅，别打扰
+            if steps.contains(where: { $0.state == .queued || $0.state == .running }) {
+                return nil
+            }
+            // 没有挂掉的步骤 → 要么全完成，要么在等人，都不是搁浅
+            let failed = steps.filter { $0.state == .failed }
+            guard !failed.isEmpty else { return nil }
+            // **等人的不算搁浅。** frozenBy == nil 的 blocked 是人工闸门
+            // 拦下的，人一放行就继续 —— 那是在等决定，不是卡死。
+            let frozen = steps.filter { $0.state == .blocked && $0.frozenBy != nil }
+            let waitingOnHuman = steps.contains {
+                $0.state == .blocked && $0.frozenBy == nil
+            }
+            if waitingOnHuman { return nil }
+            // 一步都没冻住、也没完成任何步骤 —— 那就是一张全挂的图，
+            // 分支上没东西可捞，走失败重试那条路，不占「搁浅」这个名额。
+            let done = steps.filter { $0.state == .done }
+            guard !frozen.isEmpty || !done.isEmpty else { return nil }
+
+            return Stranded(
+                graphID: gid,
+                failedTitles: failed.map { $0.stepTitle ?? String($0.id.suffix(2)) },
+                frozenCount: frozen.count,
+                doneCount: done.count,
+                repo: steps.first?.repo ?? "")
+        }.sorted { $0.doneCount > $1.doneCount }   // 产出多的排前面，最该先捞
+    }
+}
