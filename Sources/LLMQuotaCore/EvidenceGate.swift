@@ -1,0 +1,141 @@
+import Foundation
+
+/// 证据闸：改了看得见的东西，就得交人能看的证据。
+///
+/// ## 这东西为什么存在
+///
+/// 老板的原话：「验收任务发给我的，怎么还有一堆合代码的，不是说过我只看
+/// 人可阅读验证的成功，比如游戏截图、运行结果」。
+///
+/// 这句批评指向的不是措辞，是**成本装反了**。
+///
+/// 一份没有截图的产出，人要判断它对不对，就得自己 xcodegen、build、
+/// 装模拟器、跑一局、看效果 —— 五分钟起步，而且每一份都要重来一遍。
+/// 而 agent 收工前本来就在那个工作区里，跑一遍只是顺手的事。
+/// 让人替 agent 补跑，是把最贵的动作推给了最贵的人。
+///
+/// 所以：
+///
+/// - **交了证据的** → 进推送，人看图判断「手感对不对」；
+/// - **没交证据、又改了看得见的东西的** → 派回给原平台去跑一遍交图；
+/// - **纯文档 / 报告类** → 不需要截图，也不该为此挨一次派活。
+///
+/// 证据闸不是合并闸。代码能不能合，由 autoland 的构建+测试说话；
+/// 这里管的只是**什么东西有资格出现在人面前**。
+public enum EvidenceGate {
+
+    /// 一条该补证据的分支。
+    public struct Candidate: Sendable {
+        public var branch: String
+        public var repo: String
+        /// 当初做这条分支的平台 —— 补证据要派回给它，它有会话，也知道自己改了什么。
+        public var platform: Platform?
+        public var files: [String]
+        public var subject: String
+    }
+
+    /// 这条分支改的东西，人看得见吗。
+    ///
+    /// 判据故意从宽：只要动了源码就算「看得见」。反过来（只动文档 / 报告 /
+    /// 配置）才算看不见。宁可多要一次截图，也别让一个改了手感的分支
+    /// 悄悄合进去 —— 手感回归是测试测不出来的那类问题。
+    static func changesVisibleBehavior(_ files: [String]) -> Bool {
+        files.contains { f in
+            let l = f.lowercased()
+            // 文档、报告、纯资源清单：看不见，不用截图
+            if l.hasSuffix(".md") || l.hasSuffix(".txt") || l.hasSuffix(".json")
+                || l.hasSuffix(".yml") || l.hasSuffix(".yaml") { return false }
+            // 图片和录屏本身就是证据，不算「被改的东西」
+            if [".png", ".jpg", ".jpeg", ".gif", ".mov", ".mp4"]
+                .contains(where: { l.hasSuffix($0) }) { return false }
+            return true
+        }
+    }
+
+    /// 挑出该补证据的分支。
+    public static func candidates(repo: String, base: String = "main",
+                                  tasks: [WorkTask] = TaskStore.all()) -> [Candidate] {
+        let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        return Review.list(repo: repo, base: base, tasks: tasks).compactMap { item in
+            // 已经交了证据的不用补
+            guard item.evidence.isEmpty else { return nil }
+            // 跑着的不碰，失败的该人看 —— 和 StaleBranch 同一条纪律
+            guard let t = byID[item.taskID], t.state == .done else { return nil }
+            guard changesVisibleBehavior(item.files) else { return nil }
+            return Candidate(branch: item.branch, repo: repo, platform: t.platform,
+                             files: item.files, subject: item.subject)
+        }
+    }
+
+    /// 补证据任务的提示词。
+    ///
+    /// 要顶住的失败模式：agent 交一张「构建成功」的终端截图当证据。
+    /// 那证明的是编译器高兴，不是这个改动做对了 —— 而人看到这种图，
+    /// 得到的信息量是零，还得自己再跑一遍，等于这次派活白花。
+    public static func evidencePrompt(_ c: Candidate) -> String {
+        """
+        【证据】把分支 \(c.branch) 的改动跑起来，留下人一眼能看出成败的证据。
+
+        这条分支是你之前做的：\(c.subject)
+        它现在没有任何可看的证据，所以没法给人验收。
+
+        步骤：
+        - `git checkout \(c.branch)`
+        - 构建并**真的跑起来**（iOS 就装模拟器跑，命令行就实际执行）
+        - 把改动的效果拍下来，放进 `docs/evidence/`
+        - 提交这些证据
+
+        什么算证据：
+        - 改了界面 / 美术 → 那个界面的截图
+        - 改了动画 / 手感 → **录屏**（静态图证明不了动画）
+        - 改了玩法逻辑 → 走到那个局面的截图，数字要能对上
+        - 改了命令行行为 → 实跑输出，连命令一起贴
+
+        什么**不算**证据：
+        - 「构建成功」的终端截图 —— 那证明编译器高兴，不证明你改对了
+        - 代码 diff 的截图 —— 人要看的是跑起来什么样，不是代码长什么样
+        - 跑之前就有的旧图 —— 证据必须是这次改动之后拍的
+
+        跑不起来就说跑不起来，说清楚卡在哪，别拿构建日志凑。
+        """
+    }
+
+    public struct Outcome: Sendable {
+        public var branch: String
+        public var enqueued: Bool
+        public var note: String
+    }
+
+    /// 给缺证据的分支派补证据任务。
+    ///
+    /// - Parameter maxPerCall: 一轮最多派几个。默认 1 —— 跑模拟器截图是重活。
+    public static func dispatchEvidence(repo: String, base: String = "main",
+                                        tasks: [WorkTask] = TaskStore.all(),
+                                        maxPerCall: Int = 1) -> [Outcome] {
+        var out: [Outcome] = []
+        for c in candidates(repo: repo, base: base, tasks: tasks) {
+            if out.count >= maxPerCall { break }
+            do {
+                // 不分诊不拆图：说死了的机械活。
+                let r = try TaskIntake.enqueue(
+                    prompt: evidencePrompt(c), repo: repo,
+                    classify: false, split: false,
+                    origin: "evidence-gate",
+                    preferredPlatform: c.platform)
+                switch r {
+                case .duplicate:
+                    continue  // 已经派过还没跑完
+                default:
+                    out.append(Outcome(
+                        branch: c.branch, enqueued: true,
+                        note: "\(c.files.count) 个文件、没有证据"
+                            + "，已派给 \(c.platform?.rawValue ?? "自动挑选") 跑一遍截图"))
+                }
+            } catch {
+                out.append(Outcome(branch: c.branch, enqueued: false,
+                                   note: "派补证据失败：\(error.localizedDescription)"))
+            }
+        }
+        return out
+    }
+}

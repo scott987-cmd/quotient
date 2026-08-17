@@ -91,12 +91,29 @@ public enum Nudge {
             guard GitWorkspace.isRepo(path) else { return [] }
             return Review.list(repo: path).filter { !decided.contains(path + "|" + $0.branch) }
         }
-        if !awaiting.isEmpty {
-            out.append(("review-\(awaiting.count)", .needsYou,
-                        awaiting.count == 1
-                            ? "1 份产出等你验收：" + awaiting[0].subject.prefix(40)
-                            : "\(awaiting.count) 份产出等你验收",
-                        awaiting.count))
+        // **只推「人一眼能看出成败」的那些，其余一律不打扰。**
+        //
+        // 老板的原话：「验收任务发给我的，怎么还有一堆合代码的，
+        // 不是说过我只看人可阅读验证的成功，比如游戏截图、运行结果」。
+        //
+        // 这条批评是对的，而且指向的是**推送的框架本身错了**：
+        // 「N 份产出等你验收」是一个「要不要合这条分支」的问题，
+        // 而判断它要读 diff、要自己下场跑一遍 —— 那是这套系统里最贵的动作，
+        // 把它推给人等于系统没干活。
+        //
+        // 所以分成两类：
+        // - **交了证据的**（截图 / 录屏 / 实跑输出）→ 推给人，看图判断，
+        //   问的是「手感对不对」，不是「代码合不合」；
+        // - **没交证据的** → 不推。它要么该由机器自己验收合入（autoland），
+        //   要么该派回给 agent 去跑一遍交图（EvidenceGate）。
+        //   让人替 agent 补跑截图，是把成本装反了。
+        let showable = awaiting.filter { !$0.evidence.isEmpty }
+        if !showable.isEmpty {
+            out.append(("review-\(showable.count)", .needsYou,
+                        showable.count == 1
+                            ? "1 份产出跑出来了，看图判断：" + showable[0].subject.prefix(34)
+                            : "\(showable.count) 份产出跑出来了，看图判断",
+                        showable.count))
         }
 
         // 3. 有活被拦下来等放行（高危 / 碰钱 / 碰账号）

@@ -2389,6 +2389,13 @@ func cmdWorkLoop(_ args: [String]) throws {
                                               : Ansi.yellow("  ⚠︎ 没派 ")
                         print(mark + o.branch + Ansi.dim("  " + o.note))
                     }
+                    // 改了看得见的东西却没交证据 → 派回原平台跑一遍截图。
+                    // 人只看「跑起来什么样」，不该替 agent 补跑（见 EvidenceGate）。
+                    for o in EvidenceGate.dispatchEvidence(repo: path) {
+                        let mark = o.enqueued ? Ansi.green("  📷 补证据 ")
+                                              : Ansi.yellow("  ⚠︎ 没派 ")
+                        print(mark + o.branch + Ansi.dim("  " + o.note))
+                    }
                 }
             }
         }

@@ -129,14 +129,27 @@ public enum Review {
                 overlapsWith: [],
                 prompt: byID[taskID]?.prompt,
                 hasWorktree: worktrees.contains(b),
-                // 截图就是证据。约定放 docs/evidence/ 或名字里带 shot/screen/
-                // 的图 —— 不硬性要求目录，agent 放哪儿都能认出来，
+                // **人能直接看出成败的东西才算证据。**
+                //
+                // 老板的原话：「我只看人可阅读验证的成功，比如游戏截图、
+                // 运行结果」。所以这里认的是截图、录屏、和实跑输出，
+                // 不认代码 diff —— 让人读 diff 判断对不对，等于把
+                // 「跑一遍」这件最贵的事推回给人。
+                //
+                // 录屏（.mov/.mp4/.gif）原来不算，实测漏掉过：一条交了
+                // 29MB 咬合录屏的分支被判成「没交证据」。动画类的改动
+                // 静态图根本证明不了，录屏才是它唯一能交的证据。
+                //
+                // 不硬性要求目录，agent 放哪儿都能认出来 ——
                 // 少一条会被忘掉的规矩。
                 evidence: stat.files.filter { f in
                     let l = f.lowercased()
-                    guard l.hasSuffix(".png") || l.hasSuffix(".jpg") else { return false }
+                    let isVisual = [".png", ".jpg", ".jpeg", ".gif",
+                                    ".mov", ".mp4"].contains { l.hasSuffix($0) }
+                    guard isVisual else { return false }
                     return l.contains("evidence") || l.contains("shot")
                         || l.contains("screen") || l.contains("验收")
+                        || l.contains("playtest") || l.contains("review")
                 }))
         }
 
