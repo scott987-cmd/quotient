@@ -79,7 +79,7 @@ public enum PremiseCheck {
     ///
     /// 要求带斜杠或者带已知后缀 —— 否则会把 `didMove(to:)` 这种
     /// 符号名当成文件去核，每次都判不存在。
-    static func looksLikePath(_ s: String) -> Bool {
+    public static func looksLikePath(_ s: String) -> Bool {
         if s.contains(" ") || s.contains("(") { return false }
         let exts = [".swift", ".md", ".yml", ".yaml", ".sh", ".json",
                     ".py", ".png", ".jpg", ".mp3", ".plist", ".storekit"]
@@ -114,7 +114,7 @@ public enum PremiseCheck {
     }
 
     /// 某个 ref 上有没有这个路径。目录形式（结尾带斜杠）按「下面有东西」算。
-    static func exists(_ path: String, in repo: String, at ref: String) -> Bool {
+    public static func exists(_ path: String, in repo: String, at ref: String) -> Bool {
         let clean = path.hasSuffix("/") ? String(path.dropLast()) : path
         let r = GitWorkspace.git(["cat-file", "-e", "\(ref):\(clean)"], in: repo)
         if r.exitCode == 0 { return true }

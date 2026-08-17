@@ -153,9 +153,25 @@ public enum TaskGraph {
             for t in byID.values {
                 // 谁挡着它。上游 blocked（等人）或 failed（跑挂了，且没有任何
                 // 重试路径会自动把它推回 queued）都算挡着。
+                // **丢弃过的上游不算挡着。**
+                //
+                // 丢弃在这套系统里把状态置成 .failed（见 cmdDiscard），
+                // 而这里判「挡着」的条件是 blocked || failed —— 于是
+                // **丢弃一个上游步骤，下游永远解不开**：丢弃之后的对账
+                // 看到的还是 failed，照旧冻住，而且 note 还写着
+                // 「上游恢复后会自动解冻」。
+                //
+                // 实况（2026-08-17）：Greed 两条图的上游步骤要做的事都已经
+                // 由人工合并落地了，把上游丢弃之后，剩下两步真验收仍然冻着，
+                // 谁也不会去动它们。
+                //
+                // 丢弃 ≠ 失败。失败是「没干成」，丢弃是「有人明确处置过了」——
+                // 后者该放下游走，前提到底还成不成立由派活前的
+                // PremiseCheck / BaselineFreshness 去判，不该在这儿一刀切。
                 let blocker = t.dependsOn.first {
-                    let st = byID[$0]?.state
-                    return st == .blocked || st == .failed
+                    guard let up = byID[$0] else { return false }
+                    if up.discardedAt != nil { return false }
+                    return up.state == .blocked || up.state == .failed
                 }
 
                 if t.state == .queued, let b = blocker, let up = byID[b] {
@@ -185,6 +201,28 @@ public enum TaskGraph {
                     }
                     byID[t.id] = x; touched[t.id] = x; changed = true
                     continue
+                }
+
+                // **已经冻住的，note 要跟着上游状态刷新。**
+                //
+                // 原来只在 queued→blocked 那一刻写 note，所以上游从 blocked
+                // 变成 failed 之后，下游还挂着旧那句「上游恢复后会自动解冻」——
+                // 而那时候它已经是假话了。实测这 5 条冻了一整天，
+                // 日报里一直显示成「在正常等待」。
+                if t.state == .blocked, t.frozenBy != nil, let b = blocker,
+                   let up = byID[b] {
+                    let fresh = up.state == .failed
+                        ? "上游「\(up.stepTitle ?? String(up.id.suffix(2)))」失败了，"
+                            + "这一步冻住。**上游不会自己恢复** —— "
+                            + "已完成步骤的产出会按搁浅图单独走审核和落地。"
+                        : "上游「\(up.stepTitle ?? String(up.id.suffix(2)))」在等人处理，"
+                            + "这一步先冻住。上游恢复后会自动解冻。"
+                    if t.note != fresh {
+                        var x = t
+                        x.note = fresh
+                        byID[t.id] = x; touched[t.id] = x; changed = true
+                        continue
+                    }
                 }
 
                 // 解冻：只解我们自己冻的（frozenBy 非空），而且挡路的已经让开。

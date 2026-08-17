@@ -1566,6 +1566,22 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             }
             continue
         }
+        // 输出侧：这一步要造的东西是不是已经在了（详见 OutputExists）。
+        // 和 PremiseCheck 是两个不同的问题 —— 那条问输入，这条问输出。
+        if case .alreadyDone(let paths) = OutputExists.check(
+            prompt: cand.prompt, repo: cand.repo) {
+            let why = OutputExists.describe(.alreadyDone(paths: paths))
+            if !quiet { print(Ansi.yellow("  跳过 " + cand.id + "：") + Ansi.dim(why)) }
+            var x = cand
+            x.state = .failed
+            x.discardedAt = Date()
+            x.discardReason = "派活前核产出：" + why
+            x.note = "自动跳过（产出已存在）：" + why
+            x.frozenBy = nil
+            try? TaskStore.append(x)
+            for y in TaskGraph.reconcile(TaskStore.all()) { try? TaskStore.append(y) }
+            continue
+        }
         switch PremiseCheck.check(prompt: cand.prompt, repo: cand.repo) {
         case .ok:
             vetted.append(cand)
