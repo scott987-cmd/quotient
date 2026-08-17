@@ -159,15 +159,43 @@ public enum Nudge {
     ///
     /// 找到活自动填掉了就不用打扰人，那正是系统该自己解决的事。
     /// **喊的是「我没辙了」，不是「我在干活」。**
+    /// **不再推送，只记账。**
+    ///
+    /// 这条原来会弹通知。实测 24 小时弹了 5 次，而它报的是一个
+    /// **系统自己已经认可的状态**：储备池收紧之后的策略就是
+    /// 「没有真需求就老实闲着」——「宁可闲着」和「闲着要报警」
+    /// 是自相矛盾的两条规矩。
+    ///
+    /// 而且人收到之后能做的唯一动作是「想个活给它干」——
+    /// 那是把工作推给人，正是这套系统存在的意义的反面。
+    ///
+    /// 空窗率该出现在**日报的一个数字**里（趋势有意义），
+    /// 不该是一次打断（单点没意义）。所以这里只落盘，
+    /// 由 `idleLog()` 供日报读。
     public static func nothingToFill(platform: Platform, reason: String,
                                      now: Date = Date()) {
-        let key = "idle-" + platform.rawValue
-        guard !recentlySent(key, now: now) else { return }
-        remember(key, now: now)
-        Push.send(.wasting,
-                  body: platform.displayName + "：" + reason
-                      + "，但清单里没有能填的活",
-                  subtitle: "加个项目就能自动用掉")
+        var log = idleLog().filter { now.timeIntervalSince($0.at) < 7 * 24 * 3600 }
+        log.append(Idle(platform: platform.rawValue, reason: reason, at: now))
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        try? enc.encode(log).write(to: idlePath)
+    }
+
+    /// 一次「有窗口但没活干」的记录。
+    public struct Idle: Codable, Sendable {
+        public var platform: String
+        public var reason: String
+        public var at: Date
+    }
+
+    static var idlePath: URL {
+        Paths.appSupport.appendingPathComponent("idle-log.json")
+    }
+
+    /// 最近七天的空窗记录，给日报用。
+    public static func idleLog() -> [Idle] {
+        guard let d = try? Data(contentsOf: idlePath) else { return [] }
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return (try? dec.decode([Idle].self, from: d)) ?? []
     }
 
     /// 跑一遍：该发的发掉。

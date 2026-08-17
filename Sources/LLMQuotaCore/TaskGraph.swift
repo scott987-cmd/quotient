@@ -162,9 +162,27 @@ public enum TaskGraph {
                     var x = t
                     x.state = .blocked
                     x.frozenBy = b
-                    let why = up.state == .failed ? "失败了" : "在等人处理"
-                    x.note = "上游「\(up.stepTitle ?? String(up.id.suffix(2)))」\(why)，"
-                        + "这一步先冻住。上游恢复后会自动解冻。"
+                    // **两种上游状态的后果完全不同，不能说同一句话。**
+                    //
+                    // 上游 blocked（在等人 / 等重试）→ 它真的可能恢复，
+                    // 「等着」是对的。
+                    // 上游 failed → **没有任何东西会让它恢复**。这时候还写
+                    // 「上游恢复后会自动解冻」是句假话，而且是最坏的那种假话：
+                    // 它让日报、推送、任务列表全都显示成「在正常等待」，
+                    // 于是这条图能躺一整天没人发现（Greed 的 f2872114 就是）。
+                    //
+                    // 说实话的版本要同时告诉人**接下来会发生什么** ——
+                    // 已完成步骤的产出会走搁浅落地（Review.autoLand 认搁浅图），
+                    // 所以人不需要动手，但也不该以为它还在跑。
+                    let up0 = byID[b]
+                    if up0?.state == .failed {
+                        x.note = "上游「\(up.stepTitle ?? String(up.id.suffix(2)))」失败了，"
+                            + "这一步冻住。**上游不会自己恢复** —— "
+                            + "已完成步骤的产出会按搁浅图单独走审核和落地。"
+                    } else {
+                        x.note = "上游「\(up.stepTitle ?? String(up.id.suffix(2)))」在等人处理，"
+                            + "这一步先冻住。上游恢复后会自动解冻。"
+                    }
                     byID[t.id] = x; touched[t.id] = x; changed = true
                     continue
                 }

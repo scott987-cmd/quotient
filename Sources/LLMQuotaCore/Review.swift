@@ -205,7 +205,19 @@ public enum Review {
         }
         let r = Proc.run("/bin/sh", ["-c", command], cwd: tmp, env: [:],
                          timeout: TimeInterval(timeout))
-        guard r.exitCode == 0 else {
+        // **被杀 ≠ 没通过。** 退出码 15（SIGTERM）多半是发布重启 worker 顺手
+        // 杀掉了验证子进程，跟这份产出的对错毫无关系。混在一起记的后果实测过：
+        // 一份好产出被记进否决名单、下游三步永久冻住、整条图搁浅，
+        // 而唯一会发现的是人。详见 ExitClassify。
+        let kind = ExitClassify.classify(exitCode: r.exitCode, timedOut: r.timedOut)
+        switch kind {
+        case .passed:
+            return nil
+        case .killed, .timedOut:
+            // 交回给调用方当「这轮先别合」处理，而不是「这份产出不行」。
+            // 措辞里写清是基础设施 —— 不写的话人和评审 agent 还是会当成失败。
+            return ExitClassify.describe(kind) + "（下一轮会重试）"
+        case .failed:
             let out = (r.stderr + "\n" + r.stdout)
                 .split(separator: "\n")
                 .filter { $0.lowercased().contains("error") || $0.contains("failed") }
@@ -213,7 +225,6 @@ public enum Review {
             return "验证没过（退出码 \(r.exitCode)）"
                 + (out.isEmpty ? "" : "：\(out.prefix(240))")
         }
-        return nil
     }
 
     /// 合并一个分支。
@@ -309,10 +320,15 @@ public enum Review {
         // 排队只在**有资格落地**的分支之间排。一条合不进去的分支排在队首，
         // 会把它后面所有人永久挡住 —— 那不是排队，那是堵门。
         let veto = autoLandVeto()
+        let strandedForQueue = Set(TaskGraph.stranded(tasks).filter {
+            $0.doneCount > 0
+        }.map(\.branch))
         let landable = pending.filter { i in
             guard i.mergesCleanly, veto[i.branch] == nil else { return false }
-            guard let t = byID[i.taskID], t.state == .done else { return false }
-            let needsReview = t.profile?.risk == .sensitive
+            guard let t = byID[i.taskID] else { return false }
+            if !strandedForQueue.contains(i.branch), t.state != .done { return false }
+            let needsReview = strandedForQueue.contains(i.branch)
+                || t.profile?.risk == .sensitive
                 || GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
             if needsReview {
                 return MergeReview.approved(branch: i.branch, files: i.files,
@@ -324,7 +340,25 @@ public enum Review {
             // 按「尝试次数」限流而不是「成功次数」：贵的是验收那一步，
             // 失败的尝试一样烧了一次全量构建。
             if outcomes.count >= maxPerCall { break }
-            guard let t = byID[item.taskID], t.state == .done else { continue }
+            // 任务 done 是常规路径。**搁浅图是例外，而且必须是例外。**
+            //
+            // 搁浅图的任务状态是 blocked / failed（挂了一步，下游冻住），
+            // 所以老守卫一律跳过 —— 结果是「已完成 4 步、19 个文件的产出」
+            // 永远只能人来捞。Greed 的 f2872114 就这么躺了一整天，
+            // 而人在那里做的事就是手工摘分支，正是不该推给他的那种活。
+            //
+            // 搁浅和「还在跑」是两回事：搁浅的图**不会再自己动了**，
+            // 分支上那些产出已经定型。所以放它进来，但要求**必须过 agent 审核**
+            // —— 任务状态没给出「跑完了」这个保证，就用一次显式审核补上。
+            let strandedBranches = Set(TaskGraph.stranded(tasks).filter {
+                $0.doneCount > 0
+            }.map(\.branch))
+            let isStranded = strandedBranches.contains(item.branch)
+            if !isStranded {
+                guard let t0 = byID[item.taskID], t0.state == .done else { continue }
+                _ = t0
+            }
+            guard let t = byID[item.taskID] else { continue }
             guard item.mergesCleanly else { continue }
             // **机械条件判不了的，问评审 agent，不问人。**
             //
@@ -336,7 +370,8 @@ public enum Review {
             // 现在这两类走 MergeReview：派专用评审 agent 出结论，
             // 够票才继续往下走。够票之后**构建和测试照样跑**，
             // 放宽的只是「谁来拿主意」，不是「拿主意前查什么」。
-            let needsAgentReview = t.profile?.risk == .sensitive
+            let needsAgentReview = isStranded
+                || t.profile?.risk == .sensitive
                 || GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
             if needsAgentReview,
                !MergeReview.approved(branch: item.branch, files: item.files,

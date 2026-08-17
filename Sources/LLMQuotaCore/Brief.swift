@@ -68,6 +68,13 @@ public enum Brief {
         public var pendingReview: [(repo: String, branches: Int)] = []
         public var cooling: [(platform: String, reason: String, until: Date)] = []
         public var pendingAsks: Int = 0
+        /// 最近七天有多少次「窗口开着但没活可填」，按平台归并。
+        ///
+        /// 这个数字原来是一条推送（24 小时弹 5 次）。但它报的是一个
+        /// **系统自己已经认可的状态**（宁可闲着也不编任务），
+        /// 而人收到之后唯一能做的是「想个活给它干」—— 那是把工作推给人。
+        /// 单点没意义、趋势有意义的东西，属于报表，不属于打断。
+        public var idleWindows: [(platform: String, times: Int)] = []
     }
 
     public static func snapshot(tasks: [WorkTask] = TaskStore.all(),
@@ -91,6 +98,15 @@ public enum Brief {
             let n = Review.list(repo: path, tasks: tasks).count
             if n > 0 { s.pendingReview.append((r.alias, n)) }
         }
+        // 空窗记账（见 idleWindows 的说明）。只算最近 7 天，
+        // 老记录留着也没用 —— 那时候的策略可能都不一样了。
+        var idleCount: [String: Int] = [:]
+        for e in Nudge.idleLog()
+        where now.timeIntervalSince(e.at) < 7 * 24 * 3600 {
+            idleCount[e.platform, default: 0] += 1
+        }
+        s.idleWindows = idleCount.sorted { $0.value > $1.value }
+            .map { (platform: $0.key, times: $0.value) }
         return s
     }
 }

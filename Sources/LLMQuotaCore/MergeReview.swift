@@ -82,17 +82,25 @@ public enum MergeReview {
     public static func candidates(repo: String, base: String = "main",
                                   tasks: [WorkTask] = TaskStore.all()) -> [Candidate] {
         let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        // 搁浅图也要能进来。它的任务状态是 blocked/failed，如果这里也按
+        // 「必须 done」挡掉，就成了死结：autoland 要求它过审才敢合，
+        // 而审核根本不会被派 —— 于是它永远只能等人手工捞。
+        let stranded = Set(TaskGraph.stranded(tasks).filter { $0.doneCount > 0 }
+            .map(\.branch))
         return Review.list(repo: repo, base: base, tasks: tasks).compactMap { item in
             guard item.mergesCleanly else { return nil }
-            guard let t = byID[item.taskID], t.state == .done else { return nil }
+            guard let t = byID[item.taskID] else { return nil }
+            let isStranded = stranded.contains(item.branch)
+            if !isStranded, t.state != .done { return nil }
 
             let risky = GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
             let sensitive = t.profile?.risk == .sensitive
-            guard risky || sensitive else { return nil }  // 机械条件能判的不用派
+            guard risky || sensitive || isStranded else { return nil }
 
             var why: [String] = []
             if risky { why.append("碰了构建/CI/签名这类路径") }
             if sensitive { why.append("分诊判成高危") }
+            if isStranded { why.append("任务图搁浅，已完成的步骤要单独判能不能落地") }
             return Candidate(branch: item.branch, repo: repo, files: item.files,
                              subject: item.subject,
                              whyNotMechanical: why.joined(separator: "；"),

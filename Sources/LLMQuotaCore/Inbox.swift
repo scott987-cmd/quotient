@@ -120,10 +120,15 @@ public enum Verifier {
                            summary: "验证超时（\(timeout) 秒）",
                            tail: String(out.suffix(600)))
         }
+        // 被信号杀死的要和「验证不通过」分开记 —— 前者是基础设施打断
+        //（发布重启、launchd KeepAlive、机器休眠），不该算到产出账上。
+        // 详见 ExitClassify 的文档注释。
+        let kind = ExitClassify.classify(exitCode: r.exitCode)
         return Outcome(
-            ran: true, passed: r.exitCode == 0,
-            summary: r.exitCode == 0 ? "验证通过" : "验证没过（退出码 \(r.exitCode)）",
-            tail: r.exitCode == 0 ? "" : String(out.suffix(600)))
+            ran: true, passed: kind == .passed,
+            summary: ExitClassify.describe(kind)
+                + (kind.blamesOutput ? "（退出码 \(r.exitCode)）" : ""),
+            tail: kind == .passed ? "" : String(out.suffix(600)))
     }
 }
 

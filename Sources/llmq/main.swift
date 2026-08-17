@@ -568,6 +568,13 @@ func cmdBrief(_ args: [String]) {
         }
         print("  冷却：" + cool.joined(separator: " · "))
     }
+    // 空窗只在这里报，不推送（见 Nudge.nothingToFill 的说明）。
+    // 报的是**七天的次数**：单次「现在闲着」没意义，
+    // 持续闲着才说明清单该添东西了。
+    if !s.idleWindows.isEmpty {
+        let idle = s.idleWindows.map { "\($0.platform) \($0.times) 次" }
+        print(Ansi.dim("  空窗没活可填（近 7 天）：" + idle.joined(separator: " · ")))
+    }
 }
 
 func cmdWaste() throws {
