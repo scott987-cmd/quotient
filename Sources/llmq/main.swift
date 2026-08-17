@@ -1538,11 +1538,71 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         }
         return .noTask
     }
+
+    // **派活前核一遍前提。** 任务是在定义那一刻的世界里写的，执行发生在
+    // 很久以后。实测浪费：13 个「基线错了：从 main 开工，而 main 上没有
+    // 任何今天的改动」+ 3 个「过时：前提不在了」，全靠人一条条丢掉。
+    //
+    // 两种缺失的处理相反（详见 PremiseCheck）：在未合分支上有 → 等；
+    // 到处都没有 → 作废。
+    // **先核基线本身是不是真的**，再核任务写出来的前置。
+    //
+    // 顺序有讲究：基线这条不依赖任何提示词约定，对所有任务生效，
+    // 而且它挡住的是最贵的一种浪费 —— agent 拿落后 28 个提交的 main
+    // 当「现状」，把已经做好的东西重造一遍（详见 BaselineFreshness）。
+    // 回放历史数据：PremiseCheck 当初只能挡住 17 个「基线错了」里的 1 个，
+    // 剩下 16 个没写显式前置，只有这条能挡。
+    var freshByRepo: [String: BaselineFreshness.Result] = [:]
+    var vetted: [WorkTask] = []
+    for cand in queue {
+        let key = RepoLease.normalize(cand.repo)
+        let fresh = freshByRepo[key]
+            ?? BaselineFreshness.check(repo: cand.repo, tasks: history)
+        freshByRepo[key] = fresh
+        if case .stale = fresh {
+            if !quiet {
+                print(Ansi.dim("  等基线 " + cand.id + "："
+                    + BaselineFreshness.describe(fresh)))
+            }
+            continue
+        }
+        switch PremiseCheck.check(prompt: cand.prompt, repo: cand.repo) {
+        case .ok:
+            vetted.append(cand)
+        case .notYet(let missing, let branches):
+            // 派早了，不是坏任务 —— 原样留在队里等分支落地。
+            if !quiet {
+                print(Ansi.dim("  等前提 " + cand.id + "："
+                    + PremiseCheck.describe(.notYet(missing: missing,
+                                                    onBranches: branches))))
+            }
+        case .gone(let missing):
+            // 前提真的没了。作废并写清原因 —— 这个判断是机械的、可复查的，
+            // 不该占用人的注意力。
+            let why = PremiseCheck.describe(.gone(missing: missing))
+            if !quiet { print(Ansi.yellow("  作废 " + cand.id + "：") + Ansi.dim(why)) }
+            var x = cand
+            x.state = .failed
+            x.discardedAt = Date()
+            x.discardReason = "派活前核前提：" + why
+            x.note = "自动作废（前提核验）：" + why
+            x.frozenBy = nil
+            try? TaskStore.append(x)
+            // 丢完要对账 —— 被它冻住的下游得跟着变，
+            // 不然刚修好的「假的自动解冻」又会以另一种形式出现。
+            for y in TaskGraph.reconcile(TaskStore.all()) { try? TaskStore.append(y) }
+        }
+    }
+    guard !vetted.isEmpty else {
+        if !quiet { print(Ansi.dim("排队的任务前提都还没就绪。")) }
+        return .noTask
+    }
+    let vettedQueue = vetted
     let dash = LLMQuota.dashboard()
 
     var task: WorkTask! = nil
     var decision: WorkScheduler.Decision! = nil
-    for (idx, candidateTask) in queue.enumerated() {
+    for (idx, candidateTask) in vettedQueue.enumerated() {
         var cand = candidateTask
         let d = WorkScheduler().decide(
             dashboard: dash, runners: RunnerRegistry.all,

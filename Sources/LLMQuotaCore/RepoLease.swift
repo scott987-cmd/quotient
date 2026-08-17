@@ -60,7 +60,7 @@ public enum RepoLease {
     /// 路径比较前先归一：`~/dev/Maw`、`/Users/x/dev/Maw`、
     /// 末尾带斜杠的，都是同一个仓库。不归一的后果是独占形同虚设 ——
     /// 同一个仓库用两种写法就能各拿一把锁。
-    static func normalize(_ path: String) -> String {
+    public static func normalize(_ path: String) -> String {
         var p = NSString(string: path).expandingTildeInPath
         p = URL(fileURLWithPath: p).standardizedFileURL.path
         while p.count > 1, p.hasSuffix("/") { p.removeLast() }
