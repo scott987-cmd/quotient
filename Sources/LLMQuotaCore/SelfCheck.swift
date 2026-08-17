@@ -129,8 +129,46 @@ public enum SelfCheck {
 
     // MARK: - 更新通道
 
-    static func updateChannelChecks() -> [Finding] {
+    /// 别的机器装的版本和已发布版对不对得上。
+    ///
+    /// **这条必须在主机上也能看见。** 原来只有 `本机 installed vs 已发布`
+    /// 这一条 —— 主机刚发完版永远显示「已是最新」，而从机落后没人知道。
+    ///
+    /// 版本歪的后果不是少个新功能，是**两台机器按不同规则操作同一份任务库**：
+    /// 2026-08-17 实测，主机装了当天的派活规则（仓库独占、基线核验、
+    /// 产出核验），MacBook 还跑前一天的二进制，照旧派主机会拦下的活、
+    /// 照旧发已经改掉的那种推送 —— 当天做的一半规则被静默绕过。
+    static func peerVersionChecks() -> [Finding] {
+        // 已发布版本：upToDate 时本机就是最新，available 时清单里写着。
+        let want: String
+        switch ReleaseChannel.check() {
+        case .upToDate(let sha): want = String(sha.prefix(12))
+        case .available(let m, _): want = String(m.sha256.prefix(12))
+        case .noChannel, .rejected: return []   // 没通道就没什么可比的
+        }
+        let me = Paths.machineID()
         var out: [Finding] = []
+        for p in ClusterPresenceStore.all() where p.machineID != me {
+            let who = p.nodeName ?? p.machineName
+            guard let has = p.installedRelease else {
+                out.append(Finding(level: .warn, title: "从机版本不明：" + who,
+                    detail: "它上报的状态里没有版本字段 —— 说明它装的 llmq "
+                          + "老到还不会报版本。在它上面跑 llmq update。"))
+                continue
+            }
+            if has != want {
+                out.append(Finding(level: .warn, title: "从机版本落后：" + who,
+                    detail: "它装的是 \(has)，已发布 \(want) —— "
+                          + "两台机器在按**不同的派活规则**操作同一份任务库，"
+                          + "新加的闸门会被它绕过。在它上面跑 llmq update，"
+                          + "或者等自动更新器（每 30 分钟一次）。"))
+            }
+        }
+        return out
+    }
+
+    static func updateChannelChecks() -> [Finding] {
+        var out: [Finding] = peerVersionChecks()
         switch ReleaseChannel.check() {
         case .upToDate:
             break

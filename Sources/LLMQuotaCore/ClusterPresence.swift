@@ -86,6 +86,24 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
     /// 没有这个计数，这种状态几乎看不出来。
     public var restartsLastHour: Int?
 
+    /// 这台机器**实际装着**的 release sha（前 12 位）。
+    ///
+    /// ## 为什么必须自报，而且必须让主机看见
+    ///
+    /// 版本歪的后果不是「少个新功能」，是**两台机器按不同规则操作同一份
+    /// 任务库**。2026-08-17 实测：主机装了当天的代码（仓库独占、基线核验、
+    /// 产出核验、按证据分流推送），MacBook 还跑着前一天的二进制 ——
+    /// 于是它照旧派主机会拦下的活，照旧发主机已经改掉的那种推送。
+    /// **当天做的一半规则被静默绕过。**
+    ///
+    /// 而这件事原来没有任何地方会说：`SelfCheck` 的「有新版本没装」只比
+    /// **本机** installed 和已发布，主机上跑永远是「已是最新」。
+    /// 从机自己会报，但没人会去看从机的 doctor。
+    ///
+    /// 所以让它跟着 presence 一起自报 —— presence 本来就是「我是谁、
+    /// 我在哪、我什么状态」的那份自述，版本属于状态。
+    public var installedRelease: String?
+
     /// 自己连自己**的 LAN 地址**通不通。
     ///
     /// **这是区分「服务卡死」和「被过滤」的那把尺子。**
@@ -136,6 +154,8 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
         firewallRaw = try c.decodeIfPresent(String.self, forKey: .firewallRaw)
         lastLogLines = try c.decodeIfPresent([String].self, forKey: .lastLogLines)
         restartsLastHour = try c.decodeIfPresent(Int.self, forKey: .restartsLastHour)
+        // 老版本不报这个字段 —— 读不到就是 nil，正好说明「它太老了」。
+        installedRelease = try c.decodeIfPresent(String.self, forKey: .installedRelease)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast
         version = try c.decodeIfPresent(String.self, forKey: .version) ?? "?"
     }
@@ -145,9 +165,11 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
                 lanRouteInterface: String?, firewallOn: Bool,
                 canReach: [String: Bool], updatedAt: Date, version: String,
                 selfConnectOK: Bool? = nil, firewallRaw: String? = nil,
-                lastLogLines: [String]? = nil, restartsLastHour: Int? = nil) {
+                lastLogLines: [String]? = nil, restartsLastHour: Int? = nil,
+                installedRelease: String? = nil) {
         self.lastLogLines = lastLogLines
         self.restartsLastHour = restartsLastHour
+        self.installedRelease = installedRelease
         self.machineID = machineID
         self.machineName = machineName
         self.nodeName = nodeName
@@ -213,7 +235,8 @@ public enum ClusterPresenceStore {
             // 只在没在听的时候带日志：正常时它没有信息量，白占空间。
             lastLogLines: listenAddress(port: cfg?.port ?? 8443) == nil
                 ? serveLogTail() : nil,
-            restartsLastHour: serveRestartCount())
+            restartsLastHour: serveRestartCount(),
+            installedRelease: ReleaseChannel.installedSHA.map { String($0.prefix(12)) })
         guard let data = try? SnapshotCoding.prettyEncoder().encode(p) else { return }
         ICloudSafe.write(data, to: dir.appendingPathComponent("\(p.machineID).json"))
     }
