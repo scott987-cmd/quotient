@@ -411,8 +411,22 @@ public extension TaskGraph {
             if steps.contains(where: { $0.state == .queued || $0.state == .running }) {
                 return nil
             }
-            // 没有挂掉的步骤 → 要么全完成，要么在等人，都不是搁浅
-            let failed = steps.filter { $0.state == .failed }
+            // 没有挂掉的步骤 → 要么全完成，要么在等人，都不是搁浅。
+            //
+            // **丢弃的不算挂掉。** 丢弃把状态置成 .failed，而丢弃的含义是
+            // 「有人明确处置过了」—— 处置完的图不是搁浅的图。
+            //
+            // 不排掉的后果实测过（2026-08-17，老板的原话「一直发消息，
+            // 而且是重复发」）：Greed 两条图的失败步骤**全部**是丢弃的
+            //（2/2 和 3/3），冻住的已经清零，可 stranded 照旧把它们算成搁浅，
+            // 于是「任务链卡住了」这条推送每两小时来一次，永远停不下来。
+            //
+            // 判据用 upstreamCleared 的同一套语义 —— 这已经是这个概念的
+            // 第四个判定点了（isReady / reconcile 的 blocker / briefing /
+            // 这里），前三个上一轮统一过，这里漏了。
+            let failed = steps.filter {
+                $0.state == .failed && $0.discardedAt == nil
+            }
             guard !failed.isEmpty else { return nil }
             // **等人的不算搁浅。** frozenBy == nil 的 blocked 是人工闸门
             // 拦下的，人一放行就继续 —— 那是在等决定，不是卡死。

@@ -146,7 +146,44 @@ final class DiscardedUpstreamTests: XCTestCase {
         // ③ 上下文判定：把它算成已了结
         let ctx = TaskGraph.briefing(for: down, in: all) ?? ""
         XCTAssertFalse(ctx.contains("你是第一步"),
-                       "三个入口必须对「丢弃的上游算不算了结」给同一个答案")
+                       "四个入口必须对「丢弃的上游算不算了结」给同一个答案")
+    }
+
+    /// **第四个入口：搁浅判定。**
+    ///
+    /// 这一条是被真实骚扰逼出来的。上一轮统一了前三个入口（isReady /
+    /// reconcile 的 blocker / briefing），**漏了 stranded** —— 而它也有
+    /// 自己一套「哪些步骤算挂了」。
+    ///
+    /// 后果不是静默，是反过来：**一直响**。老板的原话
+    /// 「出问题了，一直发消息，而且是重复发」。Greed 两条图的失败步骤
+    /// 全部是丢弃（2/2 和 3/3）、冻住的已清零，可 stranded 照旧判成搁浅，
+    /// 于是「任务链卡住了」每两小时推一次，永远停不下来。
+    ///
+    /// 所以这条测试和上面那条是一对：一个盯「该走的不走」，
+    /// 一个盯「该停的不停」。同一个概念分叉，两个方向都会出事。
+    func testFullyDiscardedGraphIsNotStranded() {
+        var s1 = step("g1s1", state: .done)
+        s1.graphID = "g1"
+        var s2 = step("g1s2", state: .failed, discarded: true)
+        s2.graphID = "g1"
+        s2.stepTitle = "已由人工落地"
+
+        let strands = TaskGraph.stranded([s1, s2])
+        XCTAssertTrue(strands.isEmpty,
+                      "失败步骤全是丢弃 = 图已经处置完了，不是搁浅 —— "
+                      + "判错的后果是每两小时骚扰一次，永远停不下来：\(strands)")
+    }
+
+    /// 但真挂了的图还是要报 —— 别把「不吵」做成「哑巴」。
+    func testGenuinelyStrandedGraphIsStillReported() {
+        var s1 = step("g2s1", state: .done)
+        s1.graphID = "g2"
+        var s2 = step("g2s2", state: .failed)   // 没丢弃 = 真挂了
+        s2.graphID = "g2"
+
+        XCTAssertFalse(TaskGraph.stranded([s1, s2]).isEmpty,
+                       "真挂了的图必须报 —— 它已经不会自己好了")
     }
 
     /// 多个上游里只要有一个没让开，就还是不能走。
