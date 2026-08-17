@@ -45,6 +45,12 @@ public enum IdleFiller {
         /// 一个窗口最多主动填几个任务。默认 1 ——
         /// 填活是补漏不是灌满，一次一个，看效果再说。
         public static let maxPerWindow = 1
+
+        /// 会话窗**一轮都没开**时，闲置多久算错过了一轮。
+        ///
+        /// 用窗口自己的长度：闲了一个窗口那么久，就是实打实少开了一轮。
+        /// 拿不到长度时退回这个值。
+        public static let idleFallback: TimeInterval = 5 * 3600
     }
 
     /// 现在有哪些窗口「快过期且没用够」。
@@ -62,7 +68,24 @@ public enum IdleFiller {
             if AgentRoles.isDispatcher(r.platform) { continue }
 
             for s in r.statuses {
-                guard let resets = s.resetsAt else { continue }
+                guard let resets = s.resetsAt else {
+                    // **没有重置时间 ≠ 没有浪费。**
+                    //
+                    // 会话窗（各家的「5 小时额度」）是从你第一次请求开始算的：
+                    // 一次都没请求，就没有窗口在走，于是 resetsAt 是空的。
+                    // 原来这里直接 continue —— 而没有重置时间的恰好是
+                    // Codex / Kimi / GLM 的 5 小时窗，也就是这个填活器
+                    // 立项时统计出的空窗率最高的三个（82% / 69% / 60%）。
+                    // 安全网的破洞正好开在人掉下去的地方。
+                    //
+                    // 这种情况下「快过期」这个模型根本不适用：不存在可以卡的
+                    // 时刻，损失是连续发生的 —— 每过一个窗口那么久没开张，
+                    // 就是白白少用了一轮。所以改用「闲了多久」当信号。
+                    if let idle = missedSession(report: r, status: s, now: now) {
+                        out.append(idle)
+                    }
+                    continue
+                }
                 let remaining = resets.timeIntervalSince(now)
                 guard remaining > 0, remaining <= Policy.fillWithin else { continue }
                 let used = s.usedFraction ?? 0
@@ -81,6 +104,41 @@ public enum IdleFiller {
         }
         // 最快过期的排最前：那份最接近作废。
         return out.sorted { $0.remaining < $1.remaining }
+    }
+
+    /// 会话窗一轮都没开、而且已经闲了至少一个窗口那么久。
+    ///
+    /// 只认 `.session`：周期窗没到点不算错过（额度还在），
+    /// 滚动窗压根不作废。会话窗才是「不开张就等于扔掉」的那一种。
+    ///
+    /// 返回的 `remaining` 填 0 —— 它排在所有「快过期」的前面，
+    /// 因为那些至少还开着，这个是已经在漏了。
+    static func missedSession(report: PlatformReport, status: QuotaStatus,
+                              now: Date) -> Opportunity? {
+        guard status.kind == .session else { return nil }
+        // 从没活动过的平台不碰：可能压根没装、没登录。
+        // 让它安静地不存在，好过每轮都去试一次。
+        guard let last = report.lastActivity else { return nil }
+        let idle = now.timeIntervalSince(last)
+        let window = windowLength(platform: report.platform,
+                                  label: status.label) ?? Policy.idleFallback
+        guard idle >= window else { return nil }
+        let rounds = Int(idle / window)
+        return Opportunity(
+            platform: report.platform,
+            windowLabel: status.label,
+            remaining: 0,
+            used: 0,
+            reason: "\(status.label)窗口一轮都没开，已经闲了 "
+                + Format.duration(idle) + "（约错过 \(rounds) 轮）")
+    }
+
+    /// 这个平台这条窗口有多长。问套餐配置，不写死。
+    static func windowLength(platform: Platform, label: String) -> TimeInterval? {
+        PlansStore.load().plans
+            .first { $0.platform == platform }?
+            .limits.first { $0.label == label }?
+            .windowSeconds
     }
 
     /// 给一个空窗机会找一个能干的活。
