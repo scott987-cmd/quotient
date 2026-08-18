@@ -705,7 +705,7 @@ public enum Review {
     static func enqueuePostLandReview(repo: String, branch: String) {
         let taskID = String(branch.split(separator: "/").last ?? "")
         if let t = TaskStore.all().first(where: { $0.id == taskID }) {
-            if t.prompt.hasPrefix("【审查】") || t.prompt.hasPrefix("【媒体】") { return }
+            if TaskKind.isReview(t.prompt) || TaskKind.isMedia(t.prompt) { return }
         }
         let sha = GitWorkspace.git(["rev-parse", "--short", "main"], in: repo)
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines)

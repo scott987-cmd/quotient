@@ -190,8 +190,8 @@ public enum MergeReview {
     public static func approvalsSoFar(branch: String, tasks: [WorkTask])
         -> (approvals: Int, rejected: Bool, attempts: Int) {
         var approvals = 0, attempts = 0, rejected = false
-        for t in tasks where t.prompt.contains("【审查·合入】")
-            && t.prompt.contains(branch) {
+        for t in tasks where TaskKind.isReview(t.prompt)
+            && t.prompt.contains("合入") && t.prompt.contains(branch) {
             attempts += 1
             guard t.state == .done else { continue }
             let text = t.outputs.joined(separator: "\n") + "\n" + (t.note ?? "")

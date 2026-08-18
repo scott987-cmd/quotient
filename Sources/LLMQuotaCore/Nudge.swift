@@ -256,8 +256,24 @@ public enum Nudge {
         var sent = 0
         for item in items {
             guard !recentlySent(item.key, body: item.body, now: now) else { continue }
-            guard Push.send(item.kind, body: item.body, badge: item.badge) > 0 else { continue }
+
+            // **先记账，再发送。**
+            //
+            // 原来的顺序是「发送 → 记账」，看着更合理（发失败就不该记）。
+            // 但这个环节挂在**20 秒预算**的 phase 里，而推送要走网络 ——
+            // 发出去了、记账那一步被掐断，于是下一轮又认为「没发过」，再发一次。
+            //
+            // 实测（2026-08-18，老板的原话「隔半个小时就推送一个 S7 验收取证」）：
+            // 「提醒」环节在最近 400 行日志里超时 **47 次**，
+            // 而 nudges.json 里只有一条记录 —— 发了很多次，一次都没记上。
+            //
+            // 两种错的代价不对称：
+            //   · 先记账后发送 → 发送失败时漏一条通知，人下次打开 App 照样看得见；
+            //   · 先发送后记账 → 每轮重发，人被持续骚扰，而且**越慢越吵**
+            //     （网络越差，掐断的概率越大，重发越频繁）。
+            // 所以宁可漏，不可重。
             remember(item.key, body: item.body, now: now)
+            guard Push.send(item.kind, body: item.body, badge: item.badge) > 0 else { continue }
             sent += 1
         }
         return sent

@@ -385,8 +385,8 @@ public struct WorkScheduler: Sendable {
         var candidates: [(Pick, Double)] = []
         let cooling = CooldownLedger.active(now: now)
 
-        let isMediaTask = task?.prompt.hasPrefix("【媒体】") ?? false
-        let isReviewTask = task?.prompt.hasPrefix("【评审") ?? false
+        let isMediaTask = TaskKind.isMedia(task?.prompt ?? "")
+        let isReviewTask = TaskKind.isReview(task?.prompt ?? "")
         for runner in runners {
             let p = runner.platform
 
@@ -706,6 +706,23 @@ public protocol AgentRunner: Sendable {
     /// 和 mediaOnly 一样是闸：编码任务派给评审执行器必然产出垃圾 ——
     /// 它只会写报告。而评审恰恰是 MiniMax 唯一能干好的那类活：
     /// 不用改代码、不用跑命令，材料给全就是纯推理。
+    ///
+    /// **这一行以前漏了，闸从来没关上过。**
+    ///
+    /// 上面 `mediaOnly` 的注释已经把这个坑写得清清楚楚 ——「必须在协议里
+    /// 声明，只写在扩展里的话，通过存在类型调用永远走扩展默认值，
+    /// 子类型的覆盖静默失效」—— 而 `reviewOnly` 自己正好踩了它：
+    /// 注释写了，声明没写。`MiniMaxReviewRunner` 里的 `{ true }`
+    /// 从来没被读到过，`runner.reviewOnly` 恒为 false。
+    ///
+    /// 代价（2026-08-18 盘点）：**12 个非评审任务被派给了评审执行器**，
+    /// 而它把任何提示词都当评审处理。最典型的一次 ——
+    /// 「把 Maw 里的临时调试入口清干净」，20 秒写了一份
+    /// `reviews/EVAL-项目-*.md` 就报「完成」，一行调试代码都没删；
+    /// 任务状态 done、有提交、有分支，外面看一切正常。
+    /// 那批一直合不进去的 EVAL-*.md 分支，大半就是这么来的。
+    var reviewOnly: Bool { get }
+
     /// 无头执行。cwd 是独立 worktree，不是用户的工作区。
     func command(prompt: String, cwd: String) -> (launchPath: String, args: [String], env: [String: String])
 

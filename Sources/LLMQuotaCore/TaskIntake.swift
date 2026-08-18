@@ -48,7 +48,7 @@ public enum TaskIntake {
         // 【评审】同理：它是一个整体的推理动作，档次由内容长短决定不了。
         // 判成复杂档之后 MiniMax（只验证到常规档）就接不了自己唯一
         // 该接的活了 —— 和媒体任务当初翻的是同一辆车。
-        let reviewTask = prompt.hasPrefix("【评审")
+        let reviewTask = TaskKind.isReview(prompt)
         if reviewTask {
             t.profile = TaskProfile(
                 tier: .standard, risk: .safe, estimatedMinutes: 8,
