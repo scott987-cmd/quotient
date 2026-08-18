@@ -1013,6 +1013,21 @@ public struct MiniMaxMediaRunner: AgentRunner {
           esac
         done <<< "$LLMQ_MEDIA_SPEC"
         /bin/rm -f "$tmperr" "$tmpout"
+        # **一条规格都没解析出来时，要说清楚为什么。**
+        #
+        # 原来只 echo「生成 0 个，失败 0 个」就退出 —— 人（和 agent）看到这行
+        # 完全不知道是「提示词格式不对」还是「生成失败了」。
+        # 实测踩过：一条用自然语言写的媒体任务（「产出：一张 1024×1024 的 PNG，
+        # 放在 assets-gen/appicon.png」）一行都没匹配上，报「生成 0 个」就完事，
+        # 排查时只能去读驱动源码才知道要写成 `IMAGE <路径> :: <描述>`。
+        if [ "$ok" -eq 0 ] && [ "$bad" -eq 0 ]; then
+          echo "提示词里一条媒体规格都没有 —— 这个执行器只认逐行的："
+          echo "  IMG   <相对路径> [宽高比] :: <画面描述>"
+          echo "  MUSIC <相对路径> :: <音乐描述>"
+          echo "注意图片关键字是 IMG，不是 IMAGE（写错了就一行都不匹配）。"
+          echo "自然语言描述它读不懂。收到的提示词开头是：${LLMQ_MEDIA_SPEC[1,120]}"
+          exit 1
+        fi
         echo "生成 $ok 个，失败 $bad 个"
         [ "$ok" -gt 0 ] && [ "$bad" -eq 0 ]
         """#
