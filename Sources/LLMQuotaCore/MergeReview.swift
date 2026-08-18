@@ -95,12 +95,30 @@ public enum MergeReview {
 
             let risky = GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
             let sensitive = t.profile?.risk == .sensitive
-            guard risky || sensitive || isStranded else { return nil }
+            // **标了「看效果才合」的仓库也要派审核。**
+            //
+            // 这一条是漏的：当天在 `autoLand` 里加了「manualReview 仓库
+            // 要过 agent 审核」，**却忘了让派发端也认它** —— 于是
+            // autoland 等它过审，而审核永远不会被派，成了死结。
+            //
+            // 实测：Maw 的 agent/kimi/17d7f010 交齐了 5 张实跑截图、
+            // 通过了证据闸，`work why` 说「要 agent 审核，还没派过」，
+            // 而 `MergeReview.candidates` 返回 **0 条**。两处判据分叉，
+            // 这一天里第八次。
+            let needsByRepo = RepoRegistry.all().contains {
+                URL(fileURLWithPath: $0.localPath).standardizedFileURL.path
+                    == URL(fileURLWithPath: repo).standardizedFileURL.path
+                    && $0.manualReview
+            }
+            guard risky || sensitive || isStranded || needsByRepo else { return nil }
 
             var why: [String] = []
             if risky { why.append("碰了构建/CI/签名这类路径") }
             if sensitive { why.append("分诊判成高危") }
             if isStranded { why.append("任务图搁浅，已完成的步骤要单独判能不能落地") }
+            if needsByRepo && why.isEmpty {
+                why.append("这个仓库要「看效果才合」，代码能不能合由 agent 判")
+            }
             return Candidate(branch: item.branch, repo: repo, files: item.files,
                              subject: item.subject,
                              whyNotMechanical: why.joined(separator: "；"),
