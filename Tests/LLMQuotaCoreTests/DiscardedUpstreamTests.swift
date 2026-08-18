@@ -186,6 +186,43 @@ final class DiscardedUpstreamTests: XCTestCase {
                        "真挂了的图必须报 —— 它已经不会自己好了")
     }
 
+    /// **上游「done 但零产出」不放行下游。**
+    ///
+    /// 图里的步骤首尾相接：s2 的提示词写着「依据上一步产出的
+    /// `reviews/privacy-api-audit.md`」。上一步零产出，那文件就不存在，
+    /// s2 只能对着空气干活 —— 它也零产出，s3、s4 接着空跑。
+    ///
+    /// 实测（2026-08-18）：Greed 隐私清单那张图**四步全跑完、全零产出**，
+    /// 烧掉 262 + 159 + 52 + 40 秒，一个文件都没产出，
+    /// 而外面看起来每一步都是「完成」。
+    func testZeroOutputUpstreamBlocksDownstream() {
+        var up = step("s1", state: .done)
+        up.changedFiles = 0
+        let down = step("s2", state: .queued, dependsOn: ["s1"])
+        XCTAssertFalse(TaskGraph.isReady(down, in: [up, down]),
+                       "上游一个文件都没产出，下游只能对着空气干活")
+    }
+
+    /// 有产出就放行 —— 别把闸做成「什么都不许过」。
+    func testUpstreamWithOutputUnblocks() {
+        var up = step("s1", state: .done)
+        up.changedFiles = 3
+        let down = step("s2", state: .queued, dependsOn: ["s1"])
+        XCTAssertTrue(TaskGraph.isReady(down, in: [up, down]))
+    }
+
+    /// **`nil` 不等于 `0`。**
+    ///
+    /// nil 是「没记录过」（老任务、执行器没回报），0 是「真的没改」。
+    /// 拿 nil 当 0 会把所有历史任务判成断点 ——
+    /// 宁可放过不知道的，也不能把「不知道」当成「没干」。
+    func testUnrecordedChangeCountIsNotTreatedAsZero() {
+        let up = step("s1", state: .done)      // changedFiles 没设 = nil
+        let down = step("s2", state: .queued, dependsOn: ["s1"])
+        XCTAssertTrue(TaskGraph.isReady(down, in: [up, down]),
+                      "没记录过改动数的上游不该被当成零产出")
+    }
+
     /// 多个上游里只要有一个没让开，就还是不能走。
     func testAllUpstreamsMustClear() {
         let a = step("s1", state: .failed, discarded: true)

@@ -59,7 +59,30 @@ public enum TaskGraph {
     static func upstreamCleared(_ up: WorkTask?) -> Bool {
         guard let up else { return false }        // 上游记录没了：不放行
         if up.discardedAt != nil { return true }  // 明确处置过了 —— 让开
-        return up.state == .done
+        guard up.state == .done else { return false }
+
+        // **「done 但一个文件都没改」不算干完了。**
+        //
+        // 图里的步骤是首尾相接的：s2 的提示词写着「依据上一步产出的
+        // `reviews/privacy-api-audit.md`」。上一步零产出，那个文件就不存在，
+        // s2 只能对着空气干活 —— 它也零产出，然后 s3、s4 接着空跑。
+        //
+        // 实测（2026-08-18）：Greed 隐私清单那张图**四步全跑完、全零产出**，
+        // 烧掉 262 + 159 + 52 + 40 秒，产出一个文件都没有。
+        // 而外面看起来每一步都是「完成」。
+        //
+        // 只看 `state == .done` 判不出这种情况 —— 零产出也是 done。
+        // 所以：上游没产出任何文件时不放行下游，让这张图**停在第一处断点**，
+        // 由搁浅那条路暴露出来（它已完成的步骤为 0，会被正确识别）。
+        //
+        // **例外：最后一步没有下游**，所以「验收步骤本来就不改文件」
+        // 这种正当情况不受影响 —— 没人依赖它。
+        // `nil` 和 `0` 不是一回事：nil 是**没记录过**（老任务、或者
+        // 执行器没回报），0 是**真的一个文件都没改**。
+        // 拿 nil 当 0 会把历史任务和测试构造的节点全判成断点 ——
+        // 宁可放过没记录的，也不能把「不知道」当成「没干」。
+        if let n = up.changedFiles, n == 0 { return false }
+        return true
     }
 
     /// 下一个该跑的节点。
