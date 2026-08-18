@@ -55,7 +55,7 @@ public enum TaskIntake {
                 isSelfContained: true,
                 rationale: "评审任务：读材料给判断，不改代码")
         }
-        let mediaTask = prompt.hasPrefix("【媒体】")
+        let mediaTask = TaskKind.isMedia(prompt)
         if mediaTask {
             t.profile = TaskProfile(
                 tier: .standard, risk: .safe, estimatedMinutes: 15,
@@ -78,7 +78,7 @@ public enum TaskIntake {
         // 【评审】也永远不拆。实测：一个「评审 Greed 项目是否达标」的任务
         // 被拆成 7 步开发子任务（「模拟器实跑取证」「终审汇总与合入」）——
         // 拆解器把评审当成了开发计划。评审的产出是一份判断，不是一串动作。
-        let isMedia = prompt.hasPrefix("【媒体】")
+        let isMedia = TaskKind.isMedia(prompt)
         if split, !isMedia, !reviewTask, TaskDecomposer.shouldDecompose(t),
            var nodes = TaskDecomposer.plan(t, dashboard: LLMQuota.dashboard()),
            nodes.count > 1 {
