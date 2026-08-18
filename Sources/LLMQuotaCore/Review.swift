@@ -48,8 +48,71 @@ public enum Review {
     /// 列出所有待审分支。
     ///
     /// - Parameter base: 合并目标，通常是 main。
+    /// `list` 的短命缓存。
+    ///
+    /// ## 为什么必须有
+    ///
+    /// `list` 对**每一条待审分支**跑 merge-base / numstat / merge-tree ——
+    /// 实测单个仓库 10 条分支要 **33.9 秒**。
+    ///
+    /// 而 2026-08-18 这天我一口气加了五个新调用点（BaselineFreshness、
+    /// MergeReview、EvidenceGate、StaleBranch 的两个），加上原有的五个，
+    /// 一轮循环里同一个仓库要重算六七遍。后果是「下发视图」（60 秒预算）
+    /// 和「提醒」（20 秒预算）**每轮都超时**，连着几十轮 ——
+    /// 手机端于是什么都收不到。
+    ///
+    /// 这是我自己引入的回归：每个新检查单看都合理，合起来把循环压垮了。
+    ///
+    /// ## 为什么敢缓存
+    ///
+    /// 待审集合变化很慢：一个任务跑几分钟才产生一条新分支。
+    /// 真正会让它立刻变的只有**我们自己执行的合并/丢弃**，
+    /// 那两处显式清缓存（`invalidate`）。
+    ///
+    /// 12 秒：短于循环间隔（30 秒），所以跨轮一定重算；
+    /// 长于一轮内部所有调用点的总耗时，所以一轮里只算一次。
+    static let listCacheTTL: TimeInterval = 12
+    nonisolated(unsafe) private static var listCache:
+        [String: (at: Date, items: [Item])] = [:]
+    private static let listCacheLock = NSLock()
+
+    /// 合并 / 丢弃之后必须清 —— 那两件事会立刻改变待审集合。
+    public static func invalidateListCache() {
+        listCacheLock.lock(); defer { listCacheLock.unlock() }
+        listCache.removeAll()
+    }
+
     public static func list(repo: String, base: String = "main",
                             tasks: [WorkTask] = TaskStore.all()) -> [Item] {
+        // **键里必须带任务集的指纹。**
+        //
+        // `list` 的结果依赖 `tasks`（图有没有跑完、任务是不是 done 都会
+        // 改变哪些分支进名单）。只用 repo|base 当键的话，同一个仓库换一份
+        // 任务集去查会拿到上一次的结果 —— 测试立刻抓到了这一点
+        //（testUnfinishedGraphIsExcludedFromReview）。
+        //
+        // 指纹只取 id + 状态：这两样变了结果才可能变，而算它比一次 git 便宜
+        // 好几个数量级。
+        var fp = Hasher()
+        fp.combine(tasks.count)
+        for x in tasks { fp.combine(x.id); fp.combine(x.state.rawValue) }
+        let cacheKey = repo + "|" + base + "|" + String(fp.finalize())
+        listCacheLock.lock()
+        if let hit = listCache[cacheKey],
+           Date().timeIntervalSince(hit.at) < listCacheTTL {
+            listCacheLock.unlock()
+            return hit.items
+        }
+        listCacheLock.unlock()
+        let computed = listUncached(repo: repo, base: base, tasks: tasks)
+        listCacheLock.lock()
+        listCache[cacheKey] = (Date(), computed)
+        listCacheLock.unlock()
+        return computed
+    }
+
+    static func listUncached(repo: String, base: String = "main",
+                             tasks: [WorkTask] = TaskStore.all()) -> [Item] {
         let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
 
         let raw = GitWorkspace.git(
@@ -441,6 +504,9 @@ public enum Review {
     public static func merge(repo: String, branch: String, base: String = "main",
                              deleteBranch: Bool = true,
                              verify: Bool = true) -> Result<String, NSError> {
+        // 合并会立刻改变待审集合 —— 缓存必须作废，否则同一轮里后面的
+        // 调用点会拿着「这条还在待审」的旧清单再处理它一遍。
+        defer { invalidateListCache() }
         if verify, let reg = RepoRegistry.all().first(where: {
             NSString(string: $0.localPath).expandingTildeInPath
                 == NSString(string: repo).expandingTildeInPath
@@ -600,6 +666,8 @@ public enum Review {
 
     /// 丢弃一个分支和它的工作区。
     public static func discard(repo: String, branch: String, reason: String? = nil) {
+        // 和 merge 同理：丢弃立刻改变待审集合。
+        defer { invalidateListCache() }
         markDisposition(branch: branch, landed: false, reason: reason)
         // 先摘 worktree 再删分支：分支被 worktree 占用时 git 拒绝删除，
         // 而错误信息（"used by worktree at ..."）不看文档很难懂。
