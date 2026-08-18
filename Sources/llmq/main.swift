@@ -2602,13 +2602,28 @@ func cmdWorkLoop(_ args: [String]) throws {
             ViewFeed.publish(ViewFeed.playbookPage())
             ViewFeed.publishMenu(ViewFeed.menu())
             for inv in ViewFeed.pendingInvocations() {
+                // **试够了就别再试。** 一个必然失败的动作（比如合一条和 main
+                // 有冲突的分支），重试一次和重试三百八十次得到的信息一样多，
+                // 而后者每轮都跑一遍全量构建 —— 实测烧了七个小时。
+                if ViewFeed.exhausted(inv) {
+                    ViewFeed.markDone(inv)
+                    print(Ansi.yellow("  手机上（放弃）：") + inv.id
+                        + Ansi.dim("  试了 \(ViewFeed.maxAttempts) 次都没成，"
+                                 + "不再重试 —— 原因见上一次的失败说明"))
+                    continue
+                }
                 guard let done = runInvocation(inv) else {
                     print(Ansi.dim("  不认识的动作：" + inv.id))
                     continue
                 }
-                print((done ? Ansi.green("  手机上：") : Ansi.red("  手机上（失败）："))
-                      + inv.id)
-                if done { ViewFeed.markDone(inv) }
+                if done {
+                    ViewFeed.markDone(inv)
+                    print(Ansi.green("  手机上：") + inv.id)
+                } else {
+                    let n = ViewFeed.recordFailure(inv, reason: "执行返回失败")
+                    print(Ansi.red("  手机上（失败）：") + inv.id
+                        + Ansi.dim("  第 \(n)/\(ViewFeed.maxAttempts) 次"))
+                }
             }
         }
 

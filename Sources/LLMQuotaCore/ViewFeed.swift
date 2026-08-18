@@ -191,7 +191,21 @@ public enum ViewFeed {
     /// 收手机点过的动作。
     ///
     /// **不删文件**（和 approvals 一样的理由：双向同步下删了会被拉回来），
-    /// 靠 `.done` 记已执行的。执行失败不记 —— 下一轮会重试。
+    /// 靠 `.done` 记已执行的。
+    ///
+    /// ## 失败必须收口，不能无限重试
+    ///
+    /// 这里原来写的是「执行失败不记 —— 下一轮会重试」。想法没错
+    ///（网络抖一下不该让人白点一次），错在**没有上限**。
+    ///
+    /// 实况（2026-08-17，老板的原话「已经到构建 38 了」）：
+    /// 手机上点了合入 `agent/codex/74c79d4b`，那条分支和 main 有冲突、
+    /// 永远合不上。于是循环每转一圈就重试一次，**每次都跑一遍 Maw 的
+    /// 全量 Xcode 构建** —— 从 10:36 一直重试到 18:0x，日志里数出 380 次。
+    ///
+    /// 一个必然失败的动作，重试一次和重试三百八十次得到的信息一样多，
+    /// 而后者把机器烧了七个小时。所以：**失败也要收口**，
+    /// 记下试了几次、最后为什么失败，让人看得见。
     public static func pendingInvocations() -> [Invocation] {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: actionsDir.path)
@@ -213,6 +227,51 @@ public enum ViewFeed {
 
     /// 记一个动作已经执行成功。**只有成功才记** ——
     /// 失败留着下一轮重试，这是从「验收结论悄悄失败」那次事故里学到的。
+    /// 一个动作最多试几次。
+    ///
+    /// 3 次：够扛住网络抖动、iCloud 还没同步完这类真·瞬时故障，
+    /// 又不至于让一个必然失败的动作把机器烧掉。
+    ///
+    /// 上限的存在本身比数字重要 —— 没有上限时，
+    /// 「合不上的分支」和「烧七个小时」之间没有任何东西挡着。
+    public static let maxAttempts = 3
+
+    static var failuresFile: URL {
+        actionsDir.appendingPathComponent(".failures.json")
+    }
+
+    static func failureCounts() -> [String: Int] {
+        guard let d = try? Data(contentsOf: failuresFile) else { return [:] }
+        return (try? JSONDecoder().decode([String: Int].self, from: d)) ?? [:]
+    }
+
+    /// 记一次失败。返回**这个动作已经失败了几次**。
+    ///
+    /// key 用 id + 时间戳：同一个动作人点两次是两条，各自计数 ——
+    /// 人重点一次的意思就是「再试一轮」，不该被上一条的计数拖累。
+    @discardableResult
+    public static func recordFailure(_ inv: Invocation, reason: String) -> Int {
+        var m = failureCounts()
+        let key = inv.id + "@" + ISO8601DateFormatter().string(from: inv.at)
+        let n = (m[key] ?? 0) + 1
+        m[key] = n
+        // 只留最近 200 条，和 .done 一个道理：这是防重试的账，不是审计日志。
+        if m.count > 200 {
+            m = Dictionary(uniqueKeysWithValues: m.sorted { $0.key < $1.key }
+                .suffix(200).map { ($0.key, $0.value) })
+        }
+        if let d = try? JSONEncoder().encode(m) {
+            try? ICloudSafe.write(d, to: failuresFile)
+        }
+        return n
+    }
+
+    /// 试够了没有。够了就该收口，别再重试。
+    public static func exhausted(_ inv: Invocation) -> Bool {
+        let key = inv.id + "@" + ISO8601DateFormatter().string(from: inv.at)
+        return (failureCounts()[key] ?? 0) >= maxAttempts
+    }
+
     public static func markDone(_ inv: Invocation) {
         let f = actionsDir.appendingPathComponent(".done")
         let key = inv.id + "@" + ISO8601DateFormatter().string(from: inv.at)

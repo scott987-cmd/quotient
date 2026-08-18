@@ -884,6 +884,24 @@ extension Review {
 
             var ok = false
             var failure = ""
+            // **分支已经不存在 = 这件事早就办完了，不是失败。**
+            //
+            // 合并成功之后分支会被删掉（merge 的 deleteBranch 默认为真）。
+            // 所以一条已经执行过的结论，下次再看到时分支必然不在 ——
+            // 而 `merge` 对着不存在的分支只会返回失败，于是这条结论
+            // 永远留在待办里重试。
+            //
+            // 实测（2026-08-18）：30 条手机结论里 **24 条的分支已经不存在**，
+            // 它们每一轮都被重试一次、每次都失败，把「下发视图」和「提醒」
+            // 两个环节挤到超时。人在手机上看到的是这些产出一直没被处理，
+            // 而实际上它们早就合进去了。
+            if v.action == "merge",
+               !GitWorkspace.branchExists(v.branch, in: v.repo) {
+                done.insert(key)
+                bumpAttempts(key, to: 0)
+                applied.append((v, true))
+                continue
+            }
             if v.action == "merge" {
                 switch merge(repo: v.repo, branch: v.branch) {
                 case .success: ok = true
@@ -907,14 +925,34 @@ extension Review {
             // 顺手解决）。但重试也不能无限：写一份失败记录，让人看得见。
             if ok {
                 done.insert(key)
+                bumpAttempts(key, to: 0)
             } else {
+                // **重试要有上限，而且必须真的生效。**
+                //
+                // 这段原来的注释写着「重试也不能无限：写一份失败记录，
+                // 让人看得见」—— 但它只写了记录，**从来没设上限**。
+                //
+                // 实测代价（2026-08-18，老板的原话「已经到构建 38 了」）：
+                // 20 条手机上点过合入的分支全都合不上（和 main 有冲突），
+                // 于是每一轮循环重试 20 次合并，每次都可能跑构建验收。
+                // 连带把「下发视图」（60 秒预算）和「提醒」（20 秒预算）
+                // 挤到每轮超时 —— 整个循环被这件事拖垮。
+                //
+                // 一个因为真冲突而失败的合并，重试一次和重试三百次
+                // 得到的信息一样多。所以：试满就收口，把最后一次的原因留下。
+                let n = bumpAttempts(key, to: nil)
                 let note = failedDir.appendingPathComponent(
                     (v.repo + "-" + v.branch).replacingOccurrences(of: "/", with: "_")
                     + ".txt")
                 try? FileManager.default.createDirectory(
                     at: failedDir, withIntermediateDirectories: true)
-                try? (v.action + " 失败：" + failure + "\n").write(
-                    to: note, atomically: true, encoding: .utf8)
+                let giveUp = n >= maxVerdictAttempts
+                try? (v.action + " 失败（第 \(n)/\(maxVerdictAttempts) 次）："
+                      + failure
+                      + (giveUp ? "\n试满了，不再自动重试。修掉原因之后在手机上重点一次。"
+                                : "")
+                      + "\n").write(to: note, atomically: true, encoding: .utf8)
+                if giveUp { done.insert(key) }
             }
             applied.append((v, ok))
         }
@@ -925,6 +963,34 @@ extension Review {
 }
 
 extension Review {
+    /// 一条手机结论最多试几次。
+    ///
+    /// 3 次：够扛住「冲突被别的合并顺手解决了」这种真能自愈的情况，
+    /// 又不至于让一堆合不上的分支把循环拖垮。
+    static let maxVerdictAttempts = 3
+
+    static var verdictAttemptsFile: URL {
+        verdictsDir.appendingPathComponent(".attempts.json")
+    }
+
+    /// 记一次尝试，返回累计次数。`to: 0` 表示清零（成功之后）。
+    @discardableResult
+    static func bumpAttempts(_ key: String, to reset: Int?) -> Int {
+        var m = (try? JSONDecoder().decode(
+            [String: Int].self, from: Data(contentsOf: verdictAttemptsFile))) ?? [:]
+        let n: Int
+        if let reset { n = reset; m[key] = nil }
+        else { n = (m[key] ?? 0) + 1; m[key] = n }
+        if m.count > 200 {
+            m = Dictionary(uniqueKeysWithValues:
+                m.sorted { $0.key < $1.key }.suffix(200).map { ($0.key, $0.value) })
+        }
+        if let d = try? JSONEncoder().encode(m) {
+            try? ICloudSafe.write(d, to: verdictAttemptsFile)
+        }
+        return n
+    }
+
     /// 距离上次发布够久了吗。
     ///
     /// 发布一次要对每个仓库的每个待审分支跑 git —— 挂在 30 秒的循环里
