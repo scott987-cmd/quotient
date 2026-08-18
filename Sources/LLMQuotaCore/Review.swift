@@ -956,7 +956,25 @@ extension Review {
             }
             applied.append((v, ok))
         }
-        try? done.joined(separator: "\n").write(to: doneFile,
+        // **写之前先重读合并，绝不能整个覆盖。**
+        //
+        // 这个文件在 iCloud 上，而**两台机器都在跑同一个工作循环**
+        //（mac-mini 和 macbook-pro-intel，实测两边都有 llmq work loop 进程）。
+        // 原来的写法是 `done.joined().write(...)` —— 整份覆盖、最后写的赢。
+        // 于是 A 机刚收口的条目，被 B 机用它自己那份旧集合整个盖掉，
+        // 下一轮又活过来。
+        //
+        // 这是那场失控的**真正根因**：不是「失败不收口」那么简单，
+        // 是「收口了也会被另一台机器抹掉」。实测同一批分支反复重试了
+        // 几百次，人工止血也一次次失效 —— 因为止血写进去的东西被覆盖了。
+        //
+        // 共享文件 + 多写者 = 只能合并，不能覆盖。
+        var merged = Set((try? String(contentsOf: doneFile, encoding: .utf8))?
+            .split(separator: "\n").map(String.init) ?? [])
+        merged.formUnion(done)
+        // 只留最近 500 条，和别处一个道理：这是防重复执行的账，不是审计日志。
+        let keep = merged.sorted().suffix(500)
+        try? keep.joined(separator: "\n").write(to: doneFile,
                                                 atomically: true, encoding: .utf8)
         return applied
     }

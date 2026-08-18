@@ -275,13 +275,24 @@ public enum ViewFeed {
     public static func markDone(_ inv: Invocation) {
         let f = actionsDir.appendingPathComponent(".done")
         let key = inv.id + "@" + ISO8601DateFormatter().string(from: inv.at)
-        var lines = (try? String(contentsOf: f, encoding: .utf8))?
-            .split(separator: "\n").map(String.init) ?? []
+        // **写之前紧挨着重读一次。**
+        //
+        // 这是「读 → 改 → 写」，本身已经是合并语义，但**两台机器并发时
+        // 照样会丢**：A 读完 → B 写入 → A 再写，B 那次就被盖掉了。
+        // 而这个文件在 iCloud 上，mac-mini 和 macbook-pro-intel
+        // 两边都在跑 llmq work loop（实测两边都有进程）。
+        //
+        // 丢一条收口记录的后果不是「少记一笔」，是**那个动作复活并永远重试**
+        // —— 实测同一条合并重试了 380 次、每次跑一遍全量构建。
+        // 窗口缩到最小挡不住全部竞争，但能把绝大多数消掉；
+        // 真正的根治是别让两台机器抢同一个文件，那是另一件事。
+        var lines = Set((try? String(contentsOf: f, encoding: .utf8))?
+            .split(separator: "\n").map(String.init) ?? [])
         guard !lines.contains(key) else { return }
-        lines.append(key)
+        lines.insert(key)
         // 只留最近 500 条：这个文件只用来防重复执行，不是审计日志。
-        if lines.count > 500 { lines.removeFirst(lines.count - 500) }
-        try? lines.joined(separator: "\n").write(to: f, atomically: true, encoding: .utf8)
+        let keep = lines.sorted().suffix(500)
+        try? keep.joined(separator: "\n").write(to: f, atomically: true, encoding: .utf8)
     }
 }
 
