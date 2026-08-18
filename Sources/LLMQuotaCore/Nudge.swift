@@ -120,12 +120,19 @@ public enum Nudge {
         // 或者执行失败了（比如合并冲突）—— 这两种情况那个分支都还在
         // Review.list 里。不扣的话就是「反复提醒人去做他已经做过的事」，
         // 而他打开一看列表是空的（App 端会过滤），于是这个数字彻底失信。
-        let decided = Review.decidedBranches()
-        let awaiting = RepoRegistry.all().flatMap { repo -> [Review.Item] in
-            let path = NSString(string: repo.localPath).expandingTildeInPath
-            guard GitWorkspace.isRepo(path) else { return [] }
-            return Review.list(repo: path).filter { !decided.contains(path + "|" + $0.branch) }
-        }
+        // **推送必须和手机页面读同一份数据。**
+        //
+        // 原来这里自己跑一遍 Review.list 算「有几条待审」，而手机页面读的是
+        // 已发布的 reviews.json —— 两份数据**在多机环境下必然不一致**：
+        // 每台机器看得见的仓库不一样，各算各的。
+        //
+        // 实测（老板的原话「移动端老是弹出一个消息，但是点进去看里面又没有」）：
+        // Mac mini 算出 1 条并推送，MacBook 上没有那两个游戏仓库、算出 0 条，
+        // 页面被它清空 —— 于是消息弹了，点进去是空的。
+        //
+        // 现在直接读已发布的那份：**推送里说的数，就是人点进去能看到的数**。
+        // 数据源只有一个，就不会有两套算法打架。
+        let awaiting = Review.publishedDigests()
         // **只推「人一眼能看出成败」的那些，其余一律不打扰。**
         //
         // 老板的原话：「验收任务发给我的，怎么还有一堆合代码的，

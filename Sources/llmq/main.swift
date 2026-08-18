@@ -1114,6 +1114,22 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.dim("加 --dispatch 派刷新任务回给原平台（它还留着当时的会话）"))
         }
 
+    case "why":
+        // llmq work why —— 每条待审分支为什么没落地。
+        // 存在的理由见 Review.whyNotLanding：autoLand 的闸全是静默 continue，
+        // 「一条都不合」和「没有待审」在日志里长得一模一样。
+        for repo in RepoRegistry.all() {
+            let path = NSString(string: repo.localPath).expandingTildeInPath
+            guard GitWorkspace.isRepo(path) else { continue }
+            let blocked = Review.whyNotLanding(repo: path)
+            guard !blocked.isEmpty else { continue }
+            print(Ansi.bold(repo.alias) + Ansi.dim("  " + path))
+            for b in blocked {
+                print("  " + Ansi.yellow(b.branch))
+                print(Ansi.dim("    " + b.reason))
+            }
+        }
+
     case "install-loop":
         try cmdInstallLoop()
 
@@ -2480,6 +2496,18 @@ func cmdWorkLoop(_ args: [String]) throws {
             phase("落地", 1500) {
                 for repo in RepoRegistry.all() {
                     let path = NSString(string: repo.localPath).expandingTildeInPath
+                    // **标了人工审的仓库要说一声。** 这个守卫在 autoLand 里是
+                    // 静默 return []，于是「按设计留给人」和「机制坏了」
+                    // 在日志里长得一模一样 —— 实测查了一个多小时才认出来。
+                    if repo.manualReview {
+                        let n = Review.list(repo: path).count
+                        if n > 0 {
+                            print(Ansi.dim("  人工审 " + repo.alias
+                                + "：\(n) 条待审，按设计自动落地不碰"
+                                + "（llmq repo manual \(repo.alias) off 可改）"))
+                        }
+                        continue
+                    }
                     for o in Review.autoLand(repo: path) {
                         let mark = o.landed ? Ansi.green("  ✓ 落地 ")
                                             : Ansi.yellow("  ⚠︎ 没落 ")

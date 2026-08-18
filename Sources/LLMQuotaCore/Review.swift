@@ -355,6 +355,122 @@ public enum Review {
     ///
     /// - Parameter maxPerCall: 一轮最多合几个。默认 1 —— 验收可能要跑
     ///   十几分钟的全量构建，循环每轮只吃一个，别把收答复、派活饿着。
+    /// 每条待审分支**为什么**没被自动合入。
+    ///
+    /// ## 为什么必须有这个
+    ///
+    /// `autoLand` 的每一条闸都是 `continue` —— 不满足就静默跳过。
+    /// 于是「一条都不合」和「没有待审分支」在日志里长得一模一样：
+    /// 都是没有任何输出。
+    ///
+    /// 实测代价（2026-08-18）：Greed 有 9 条能干净合入、任务记录齐全、
+    /// 状态 done 的分支堆着不落地，而日志里落地环节**从头到尾没有一行输出**。
+    /// 查了否决名单、风险档、仓库脏否、manualReview 开关，全部排除，
+    /// 最后只能靠读代码猜是哪条闸 —— 这正是今天反复咬人的那个形状：
+    /// **静默跳过**。
+    ///
+    /// 跳过可以，不吭声不行。
+    public struct Blocked: Sendable {
+        public var branch: String
+        public var reason: String
+    }
+
+    static func pending0(repo: String, base: String,
+                         tasks: [WorkTask]) -> [Item] {
+        list(repo: repo, base: base, tasks: tasks)
+    }
+
+    /// 列出每条没落地的分支和原因。判据和 `autoLand` 逐条对齐 ——
+    /// 两边分叉的话这个诊断就会撒谎，那比没有还糟。
+    public static func whyNotLanding(repo: String, base: String = "main",
+                                     tasks: [WorkTask] = TaskStore.all())
+        -> [Blocked] {
+        let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        let veto = autoLandVeto()
+        let stranded = Set(TaskGraph.stranded(tasks).filter { $0.doneCount > 0 }
+            .map(\.branch))
+        // **先说清楚两个「整仓库一刀切」的守卫**，它们在 autoLand 里都是
+        // 静默 return [] —— 于是「按设计留给人」和「机制坏了」在日志里
+        // 长得一模一样。2026-08-18 实测：Greed 有 9 条能干净合入的分支
+        // 堆着不动，查了一个多小时才发现是 manualReview 按设计挡住的。
+        let wantPath = URL(fileURLWithPath: repo).standardizedFileURL.path
+        if RepoRegistry.all().contains(where: {
+            URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
+                && $0.manualReview
+        }) {
+            return pending0(repo: repo, base: base, tasks: tasks).map {
+                Blocked(branch: $0.branch,
+                        reason: "这个仓库标了「人工审」（manualReview）—— "
+                              + "按设计自动落地一律不碰它。"
+                              + "游戏仓库的手感和画面只有实跑才看得出来。"
+                              + "要改：llmq repo manual <别名> off")
+            }
+        }
+        let dirty = GitWorkspace.git(["status", "--porcelain"], in: repo).stdout
+        if !dirty.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return pending0(repo: repo, base: base, tasks: tasks).map {
+                Blocked(branch: $0.branch,
+                        reason: "仓库里有未提交的改动（多半是人正在里面写代码）"
+                              + " —— 自动落地整轮让开，免得把人的改动卷进合并")
+            }
+        }
+
+        let pending = list(repo: repo, base: base, tasks: tasks)
+        let landable = pending.filter { i in
+            guard i.mergesCleanly, veto[i.branch] == nil else { return false }
+            guard let t = byID[i.taskID] else { return false }
+            if !stranded.contains(i.branch), t.state != .done { return false }
+            let needsReview = stranded.contains(i.branch)
+                || t.profile?.risk == .sensitive
+                || GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
+            if needsReview {
+                return MergeReview.approved(branch: i.branch, files: i.files, tasks: tasks)
+            }
+            return true
+        }
+        var out: [Blocked] = []
+        var landedOne = false
+        for item in pending {
+            func note(_ s: String) { out.append(Blocked(branch: item.branch, reason: s)) }
+            guard let t = byID[item.taskID] else {
+                note("任务记录没了 —— 自动环节一律不碰，只能人工处置"); continue
+            }
+            guard item.mergesCleanly else {
+                note("合不进去（有冲突）—— 归 StaleBranch 刷新那条路管"); continue
+            }
+            let isStranded = stranded.contains(item.branch)
+            if !isStranded, t.state != .done {
+                note("任务状态是 \(t.state)，不是 done"); continue
+            }
+            if let v = veto[item.branch] {
+                note("在否决名单里：" + String(v.prefix(60))); continue
+            }
+            let needsReview = isStranded || t.profile?.risk == .sensitive
+                || GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
+            if needsReview,
+               !MergeReview.approved(branch: item.branch, files: item.files, tasks: tasks) {
+                let r = MergeReview.approvalsSoFar(branch: item.branch, tasks: tasks)
+                note("要 agent 审核（\(isStranded ? "搁浅图" : "高危/敏感路径")）"
+                     + "，现在 \(r.approvals)/\(MergeReview.requiredApprovals(files: item.files)) 票"
+                     + (r.attempts == 0 ? " —— **还没派过审核**" : "")
+                     + (r.rejected ? " —— 已被判不合入" : ""))
+                continue
+            }
+            if !item.overlapsWith.isEmpty,
+               !isOldestInOverlapGroup(item, among: landable) {
+                note("和别的分支改了同一批文件，排队等 —— 这一组里先合最老的那条")
+                continue
+            }
+            if landedOne {
+                note("这一轮的名额（每轮只合 1 个）已经被前面那条占了")
+                continue
+            }
+            landedOne = true
+            note("**该合而没合** —— 所有闸都过了，说明落地环节根本没被执行到")
+        }
+        return out
+    }
+
     public static func autoLand(repo: String, base: String = "main",
                                 tasks: [WorkTask] = TaskStore.all(),
                                 maxPerCall: Int = 1) -> [AutoLandOutcome] {
@@ -861,6 +977,18 @@ extension Review {
         return out.sorted()
     }
 
+    /// 读回**已经发布给手机的**那份待审清单。
+    ///
+    /// 存在的理由：推送和手机页面必须读同一份数据。各算各的话，
+    /// 在多机环境下必然对不上 —— 每台机器看得见的仓库不一样。
+    /// 实测就是这么产生「弹了消息、点进去是空的」。
+    public static func publishedDigests() -> [Digest] {
+        let f = Paths.sharedRoot.appendingPathComponent("reviews.json")
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return (try? Data(contentsOf: f))
+            .flatMap { try? dec.decode([Digest].self, from: $0) } ?? []
+    }
+
     /// 把所有仓库的待审产出写给手机。
     @discardableResult
     public static func publishDigests(repos: [RepoAlias] = RepoRegistry.all()) -> [Digest] {
@@ -887,13 +1015,40 @@ extension Review {
                         digestID: path + "|" + item.branch)))
             }
         }
+        // **按仓库合并，绝不整份覆盖。**
+        //
+        // 这份文件是发给手机的待审清单，而**每台机器看得见的仓库不一样**：
+        // 上面那句 `guard isRepo(path) else { continue }` 会把本机没有的
+        // 仓库直接跳过 —— 然后整份写出去，把别的机器发的内容一起抹掉。
+        //
+        // 实测（2026-08-18，老板的原话「移动端老是弹出一个消息，
+        // 但是点进去看里面又没有」）：MacBook 上**根本没有 Greed 和 Maw
+        // 这两个目录**，但它跑着同一个工作循环，于是每轮算出「0 条待审」
+        // 并把 Mac mini 发的 10 条覆盖成空。
+        // 推送是 Mac mini 发的（它看得见），页面是 MacBook 清空的
+        // （它看不见）—— 于是「弹了消息，点进去是空的」。
+        //
+        // 所以：只替换**本机看得见的那些仓库**的条目，
+        // 别的仓库的条目原样留着，等那台机器自己来更新。
+        let seen = Set(repos.compactMap { r -> String? in
+            let p = NSString(string: r.localPath).expandingTildeInPath
+            return GitWorkspace.isRepo(p) ? p : nil
+        })
+        let existingURL = Paths.sharedRoot.appendingPathComponent("reviews.json")
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        let previous = (try? Data(contentsOf: existingURL))
+            .flatMap { try? dec.decode([Digest].self, from: $0) } ?? []
+        // 本机看不见的仓库：保留上一份里的条目
+        let kept = previous.filter { !seen.contains($0.repo) }
+        let merged = kept + out
+
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         try? FileManager.default.createDirectory(
             at: Paths.sharedRoot, withIntermediateDirectories: true)
-        if let d = try? enc.encode(out) {
-            try? d.write(to: Paths.sharedRoot.appendingPathComponent("reviews.json"))
+        if let d = try? enc.encode(merged) {
+            try? d.write(to: existingURL)
         }
         return out
     }
