@@ -149,7 +149,32 @@ if [ "$INSTALL" -eq 1 ]; then
   # 实测代价：一整晚我改了五次代码、装了五次，worker 一直跑着最早那份
   # 二进制，任务按旧规则被拒，而我在日志里反复看到「已经修好的」行为。
   # grep -c 会读完整个输入，不产生 SIGPIPE。
-  worker_loaded=$(launchctl list 2>/dev/null | grep -c com.llmquotabar.worker || true)
+  # **有任务在跑就别踢。**
+  #
+  # `launchctl kickstart -k` 会杀掉 worker 的整棵进程树 —— 正在执行的
+  # agent 跟着一起死。`llmq release publish` 早就有这道闸（它会 exit 1
+  # 让人先等任务跑完），**但这里没有**，而 `--install` 才是开发时
+  # 跑得最频繁的那个入口。
+  #
+  # 实测代价（2026-08-18）：一条跑了 **1004 秒**（16 分多钟）的任务
+  # 被一次 --install 干掉。中断恢复逻辑会自动重排（上限两次），
+  # 所以活没丢，但那 16 分钟的额度是白烧的 —— 而且我这一天里
+  # 跑了十几次 --install。
+  #
+  # 环境变量 LLMQ_FORCE_RESTART=1 强踢（比如修的正是让任务卡死的 bug）。
+  if [ "${LLMQ_FORCE_RESTART:-0}" != "1" ] && [ -x "$HOME/.local/bin/llmq" ]; then
+    running=$("$HOME/.local/bin/llmq" brief 2>/dev/null \
+      | grep -oE '在跑 [0-9]+' | grep -oE '[0-9]+' || true)
+    if [ "${running:-0}" -gt 0 ]; then
+      echo "   ⚠︎ 有 ${running} 个任务正在跑，**没有重启工作循环** ——"
+      echo "      踢它会把正在执行的 agent 一起杀掉（实测白烧过 16 分钟）。"
+      echo "      等它跑完（llmq brief 看进度）再装，或者："
+      echo "        LLMQ_FORCE_RESTART=1 ./build-app.sh --install"
+      worker_loaded=0
+    fi
+  fi
+
+  worker_loaded=${worker_loaded:-$(launchctl list 2>/dev/null | grep -c com.llmquotabar.worker || true)}
   if [ "${worker_loaded:-0}" -gt 0 ]; then
     if launchctl kickstart -k "gui/$(id -u)/com.llmquotabar.worker"; then
       echo "   已重启工作循环（换了二进制）"
