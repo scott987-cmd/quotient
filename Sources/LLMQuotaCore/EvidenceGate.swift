@@ -48,8 +48,26 @@ public enum EvidenceGate {
             // 图片和录屏本身就是证据，不算「被改的东西」
             if [".png", ".jpg", ".jpeg", ".gif", ".mov", ".mp4"]
                 .contains(where: { l.hasSuffix($0) }) { return false }
+            // **测试文件不算。** 测试的证据是它自己跑绿了 ——
+            // `xcodebuild test` 的输出比任何截图都有说服力，
+            // 而截图证明不了一个断言成不成立。
+            //
+            // 实测（2026-08-18）：Maw 那条「补第一批单元测试」交了 10 个测试、
+            // 验证通过，却被判成「改了看得见的东西、没交证据」，
+            // 差点派它回去跑一遍模拟器截图 —— 纯白烧一次额度。
+            if isTestPath(l) { return false }
             return true
         }
+    }
+
+    /// 这个路径是不是测试代码。
+    ///
+    /// 认目录名和文件名两种约定：Swift 项目惯例是 `XxxTests/` 目录
+    /// 加 `XxxTests.swift` 文件名，两者都认才不会漏。
+    static func isTestPath(_ lowercased: String) -> Bool {
+        lowercased.contains("tests/") || lowercased.contains("test/")
+            || lowercased.hasSuffix("tests.swift")
+            || lowercased.hasSuffix("test.swift")
     }
 
     /// 挑出该补证据的分支。
