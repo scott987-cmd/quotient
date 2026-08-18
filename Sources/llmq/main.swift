@@ -2496,17 +2496,16 @@ func cmdWorkLoop(_ args: [String]) throws {
             phase("落地", 1500) {
                 for repo in RepoRegistry.all() {
                     let path = NSString(string: repo.localPath).expandingTildeInPath
-                    // **标了人工审的仓库要说一声。** 这个守卫在 autoLand 里是
-                    // 静默 return []，于是「按设计留给人」和「机制坏了」
-                    // 在日志里长得一模一样 —— 实测查了一个多小时才认出来。
+                    // 标了「要人看」的仓库现在也走全套自动环节 ——
+                    // 只是门槛更高（见 Review.autoLand 里 manualReview 那段）。
+                    // 上一版我在这里 `continue`，把补证据、agent 审核、
+                    // 分支刷新**一起**挡掉了，结果是既要人审又没图可看。
                     if repo.manualReview {
-                        let n = Review.list(repo: path).count
+                        let n = Review.list(repo: path).filter { $0.evidence.isEmpty }.count
                         if n > 0 {
-                            print(Ansi.dim("  人工审 " + repo.alias
-                                + "：\(n) 条待审，按设计自动落地不碰"
-                                + "（llmq repo manual \(repo.alias) off 可改）"))
+                            print(Ansi.dim("  要看效果 " + repo.alias
+                                + "：\(n) 条还没交证据，先派它们去跑一遍截图"))
                         }
-                        continue
                     }
                     for o in Review.autoLand(repo: path) {
                         let mark = o.landed ? Ansi.green("  ✓ 落地 ")

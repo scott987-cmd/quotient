@@ -394,17 +394,9 @@ public enum Review {
         // 长得一模一样。2026-08-18 实测：Greed 有 9 条能干净合入的分支
         // 堆着不动，查了一个多小时才发现是 manualReview 按设计挡住的。
         let wantPath = URL(fileURLWithPath: repo).standardizedFileURL.path
-        if RepoRegistry.all().contains(where: {
+        let needsEvidenceAndReview = RepoRegistry.all().contains {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
                 && $0.manualReview
-        }) {
-            return pending0(repo: repo, base: base, tasks: tasks).map {
-                Blocked(branch: $0.branch,
-                        reason: "这个仓库标了「人工审」（manualReview）—— "
-                              + "按设计自动落地一律不碰它。"
-                              + "游戏仓库的手感和画面只有实跑才看得出来。"
-                              + "要改：llmq repo manual <别名> off")
-            }
         }
         let dirty = GitWorkspace.git(["status", "--porcelain"], in: repo).stdout
         if !dirty.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -445,12 +437,22 @@ public enum Review {
             if let v = veto[item.branch] {
                 note("在否决名单里：" + String(v.prefix(60))); continue
             }
-            let needsReview = isStranded || t.profile?.risk == .sensitive
+            if needsEvidenceAndReview, item.evidence.isEmpty,
+               EvidenceGate.changesVisibleBehavior(item.files) {
+                note("这个仓库要「看效果才合」，而这条还没交证据 —— "
+                     + "已派回原平台跑一遍截图（EvidenceGate），交了图再判")
+                continue
+            }
+            let needsReview = isStranded || needsEvidenceAndReview
+                || t.profile?.risk == .sensitive
                 || GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
             if needsReview,
                !MergeReview.approved(branch: item.branch, files: item.files, tasks: tasks) {
                 let r = MergeReview.approvalsSoFar(branch: item.branch, tasks: tasks)
-                note("要 agent 审核（\(isStranded ? "搁浅图" : "高危/敏感路径")）"
+                let why = isStranded ? "搁浅图"
+                    : needsEvidenceAndReview ? "这个仓库要 agent 审过才合"
+                    : "高危/敏感路径"
+                note("要 agent 审核（\(why)）"
                      + "，现在 \(r.approvals)/\(MergeReview.requiredApprovals(files: item.files)) 票"
                      + (r.attempts == 0 ? " —— **还没派过审核**" : "")
                      + (r.rejected ? " —— 已被判不合入" : ""))
@@ -486,12 +488,28 @@ public enum Review {
 
         // 登记为「必须人工终审」的仓库（游戏那两个）整个绕行：
         // 构建通过 ≠ 可以合入，手感和画面只有实跑才看得出来。
+        // **`manualReview` 不再是「一律不碰」，是「门槛更高」。**
+        //
+        // 老板的原话（2026-08-18）：「我只看效果，代码合入让 agent review」。
+        //
+        // 这个标记原来的实现是整个仓库 `return []` —— 自动落地一步都不做。
+        // 后果是最坏的组合：**人既要人工审，又没有图可看** ——
+        // 因为补证据、agent 审核、分支刷新全被同一个守卫挡在外面，
+        // 人只能自己 checkout、构建、跑模拟器才能判。
+        // 那正是这套系统存在的意义的反面。
+        //
+        // 现在它的含义是：这个仓库的产出要合进去，**必须同时满足**
+        //   ① 有人能一眼看出成败的证据（截图 / 录屏 / 实跑输出）；
+        //   ② 专用评审 agent 判「合入」。
+        //
+        // 原注释里的理由一个字都没变、只是换了执行者：
+        // 「构建通过 ≠ 可以合入 —— 手感和画面只有模拟器实跑才看得出来」。
+        // 实跑还是要跑，只是跑的人从「老板」换成了「agent」，
+        // 而老板要做的从「读 diff」变成「看图」。
         let wantPath = URL(fileURLWithPath: repo).standardizedFileURL.path
-        if RepoRegistry.all().contains(where: {
+        let needsEvidenceAndReview = RepoRegistry.all().contains {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
                 && $0.manualReview
-        }) {
-            return []
         }
 
         var outcomes: [AutoLandOutcome] = []
@@ -506,7 +524,10 @@ public enum Review {
             guard i.mergesCleanly, veto[i.branch] == nil else { return false }
             guard let t = byID[i.taskID] else { return false }
             if !strandedForQueue.contains(i.branch), t.state != .done { return false }
+            if needsEvidenceAndReview, i.evidence.isEmpty,
+               EvidenceGate.changesVisibleBehavior(i.files) { return false }
             let needsReview = strandedForQueue.contains(i.branch)
+                || needsEvidenceAndReview
                 || t.profile?.risk == .sensitive
                 || GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
             if needsReview {
@@ -549,7 +570,22 @@ public enum Review {
             // 现在这两类走 MergeReview：派专用评审 agent 出结论，
             // 够票才继续往下走。够票之后**构建和测试照样跑**，
             // 放宽的只是「谁来拿主意」，不是「拿主意前查什么」。
+            // 这类仓库先卡证据：没有图就别谈合入 —— 缺证据的分支
+            // 由 EvidenceGate 派回去跑一遍截图，下一轮再来。
+            //
+            // **但纯文档 / 报告类不要求证据。** 判据复用 EvidenceGate 的
+            // `changesVisibleBehavior`，不另写一套 —— 同一个概念两套实现
+            // 今天已经害了四次（见 DiscardedUpstreamTests 里那条模式测试）。
+            //
+            // 不排掉的后果实测过：Greed 那 9 条待审里 8 条只改了一个
+            // `reviews/EVAL-*.md`。给一份 Markdown 报告截图毫无意义，
+            // 而卡着不放会让它们**永远合不进去** —— 要不到图，就永远不满足门槛。
+            if needsEvidenceAndReview, item.evidence.isEmpty,
+               EvidenceGate.changesVisibleBehavior(item.files) {
+                continue
+            }
             let needsAgentReview = isStranded
+                || needsEvidenceAndReview
                 || t.profile?.risk == .sensitive
                 || GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
             if needsAgentReview,
@@ -837,7 +873,21 @@ public enum Review {
 
     static func numstat(repo: String, from: String, to: String)
         -> (files: [String], insertions: Int, deletions: Int) {
-        let r = GitWorkspace.git(["diff", "--numstat", from, to], in: repo)
+        // **`-c core.quotePath=false`：别让 git 把非 ASCII 文件名转义。**
+        //
+        // 默认行为是把中文路径写成 `"reviews/EVAL-\351\241\271….md"` ——
+        // 带引号、带八进制转义。于是**所有按后缀判断的地方全部失效**：
+        // 这个字符串结尾是 `"` 而不是 `.md`。
+        //
+        // 实测代价（2026-08-18）：Greed 有 8 条只改了一个中文名的
+        // `reviews/EVAL-项目-*.md` 的分支，被 `changesVisibleBehavior`
+        // 判成「改了看得见的东西」，于是卡在证据门槛后面 —— 而给一份
+        // Markdown 报告截图毫无意义，图永远交不上来，它们就永远合不进去。
+        //
+        // 在**产生文件名的这一处**修，不在每个消费者那里补解引号 ——
+        // 后者是同一个概念多处实现，今天已经害过四次了。
+        let r = GitWorkspace.git(
+            ["-c", "core.quotePath=false", "diff", "--numstat", from, to], in: repo)
         var files: [String] = []
         var ins = 0, del = 0
         for line in r.stdout.split(separator: "\n") {
