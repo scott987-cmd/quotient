@@ -1137,6 +1137,33 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.dim("加 --dispatch 派刷新任务回给原平台（它还留着当时的会话）"))
         }
 
+    case "land":
+        // llmq work land —— **手动跑一轮落地。**
+        //
+        // 存在的理由：落地原先只能靠常驻循环跑，人既不能手动触发、
+        // 也看不到它的判断过程。2026-08-20 排查「该合而没合」时，
+        // 我连着四次想前台跑一轮循环来观察，全被防重入拦下
+        //（launchd 的 KeepAlive 比 pkill 快）—— 而 `work why` 只是**模拟**
+        // 一遍闸序，它说「所有闸都过了」时，真正的 autoLand 仍然什么都不做。
+        //
+        // 模拟和实跑对不上时，只有实跑说了算。这个命令就是那个实跑入口。
+        for repo in RepoRegistry.all() {
+            let path = NSString(string: repo.localPath).expandingTildeInPath
+            guard GitWorkspace.isRepo(path) else { continue }
+            if let only = rest.first, only != repo.alias, only != path { continue }
+            let outcomes = Review.autoLand(repo: path)
+            print(Ansi.bold(repo.alias) + Ansi.dim("  " + path))
+            if outcomes.isEmpty {
+                print(Ansi.yellow("  一条都没动 ") + Ansi.dim(
+                    "—— 跑 llmq work why " + repo.alias + " 看每条卡在哪"))
+                continue
+            }
+            for o in outcomes {
+                let mark = o.landed ? Ansi.green("  ✓ 落地 ") : Ansi.yellow("  ⚠︎ 没落 ")
+                print(mark + o.branch + Ansi.dim("  " + o.note))
+            }
+        }
+
     case "why":
         // llmq work why —— 每条待审分支为什么没落地。
         // 存在的理由见 Review.whyNotLanding：autoLand 的闸全是静默 continue，
@@ -1464,7 +1491,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|approve|retry|discard|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|retry|discard|log]")
         exit(2)
     }
 }

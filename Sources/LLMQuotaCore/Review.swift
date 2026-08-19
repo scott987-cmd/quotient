@@ -640,10 +640,20 @@ public enum Review {
                EvidenceGate.changesVisibleBehavior(item.files) {
                 continue
             }
-            let needsAgentReview = isStranded
-                || needsEvidenceAndReview
-                || t.profile?.risk == .sensitive
-                || GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
+            // **走统一判据，别再内联一份。**
+            //
+            // 这里原先是第六份手写的同款逻辑，而且用的是无条件的
+            // `|| needsEvidenceAndReview`（没有文书豁免）。
+            // 于是 `work why` 说「所有闸都过了」、`autoLand` 却一直
+            // 挡在这道闸上 —— 两条路径对同一件事给出相反答案，
+            // 系统停摆而诊断查不出原因。
+            //
+            // 2026-08-19 我统一了另外三处并写下「三处共用」，**漏了这一处**。
+            // 教训：统一判据时要按**被调用的次数**去数，不是按记忆去数。
+            let needsAgentReview = requiresAgentReview(
+                files: item.files, isStranded: isStranded,
+                repoNeedsManualReview: needsEvidenceAndReview,
+                risk: t.profile?.risk)
             if needsAgentReview,
                !MergeReview.approved(branch: item.branch, files: item.files,
                                      tasks: tasks) {
