@@ -120,6 +120,51 @@ final class MergeReviewTests: XCTestCase {
                       "前缀决定它走评审平台、以及执行器选哪套材料")
     }
 
+    // MARK: 派活上限：读不出结论时不能永远重派
+
+    /// **隔夜跑飞的正面复刻。**
+    ///
+    /// 2026-08-19 早上盘点：同两条分支被派了 **16 次和 13 次**合入审核，
+    /// 每次跑 8~20 秒、零产出，一夜 29 次调用全打了水漂。
+    ///
+    /// 机制：第二票要跳过查重，所以 `dispatch` 传了 `force: attempts > 0`。
+    /// 审核任务读不出结论时票数恒为 0、attempts 却一直涨 ——
+    /// 「读不出就再派一次」在读不出结论时等于「永远再派」。
+    ///
+    /// 这条规则原先内联在 `dispatch` 里，而 `dispatch` 要跑 git、没法单测，
+    /// 于是最该被钉住的规则一行覆盖都没有。抽出来就是为了这条测试。
+    func testRunawayRedispatchIsCutOff() {
+        XCTAssertTrue(MergeReview.exhausted(attempts: 16, needed: 1),
+                      "派了 16 次还读不出结论必须停 —— 这就是那一夜烧掉的 29 次调用")
+        XCTAssertTrue(MergeReview.exhausted(attempts: 13, needed: 1))
+    }
+
+    /// **别把「不失控」做成「不重试」。**
+    ///
+    /// 第一次读不出结论、重试一次就成，是正常抖动。
+    /// 一次都不给重试等于把这条路直接堵死 —— 那是反方向的同一种坏。
+    func testNormalRetryIsStillAllowed() {
+        XCTAssertFalse(MergeReview.exhausted(attempts: 0, needed: 1), "还没派过")
+        XCTAssertFalse(MergeReview.exhausted(attempts: 1, needed: 1),
+                       "第一次没读出结论，得允许再派一次")
+        XCTAssertFalse(MergeReview.exhausted(attempts: 2, needed: 1),
+                       "宽限 2 次，这次还在额度内")
+    }
+
+    /// 上限跟着要求的票数走：要两票的分支，本来就得多派几次。
+    func testGraceScalesWithRequiredVotes() {
+        XCTAssertFalse(MergeReview.exhausted(attempts: 3, needed: 2),
+                       "要两票，派 3 次还在合理范围")
+        XCTAssertTrue(MergeReview.exhausted(attempts: 4, needed: 2),
+                      "要两票却派了 4 次还没凑齐 —— 停")
+    }
+
+    /// 边界钉死：是 `>=` 不是 `>`。差这一个，跑飞的那条路就又通了。
+    func testBoundaryIsInclusive() {
+        XCTAssertTrue(MergeReview.exhausted(attempts: 3, needed: 1),
+                      "needed + 2 这个点上就该停，不是过了才停")
+    }
+
     // MARK: 辅助
 
     private func reviewTask(_ id: String, branch: String,

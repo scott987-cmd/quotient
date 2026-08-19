@@ -160,6 +160,28 @@ public enum MergeReview {
     }
 
     /// 派审核任务。一轮最多一个 —— 评审也烧额度。
+    /// **派够次数还读不出结论 —— 收口，别再派。**
+    ///
+    /// 第二票要跳过查重，所以 `dispatch` 里传了 `force: attempts > 0`。
+    /// 但审核任务如果**读不出结论**（比如它零产出），票数永远是 0
+    /// 而 attempts 一直涨 —— 于是每一轮都 force 重派，永远不停。
+    ///
+    /// 实测（2026-08-19 隔夜）：同两条分支被派了 **16 次和 13 次**审核，
+    /// 每次跑 8~20 秒、零产出，一夜烧掉 29 次调用。
+    ///
+    /// 「读不出结论就不算票，会再派一次」——「再派一次」在读不出结论时
+    /// 就是「永远再派」。这就是为什么这里必须有个硬上限。
+    ///
+    /// 宽限 2 次：容得下「第一次读不出、重试一次成功」这种正常抖动，
+    /// 超过就说明这条路走不通，该留给人工。
+    ///
+    /// **这个判断只准有一处实现。** 它原先内联在 `dispatch` 里，
+    /// 而 `dispatch` 要跑 git、没法单测 —— 于是这条最该被测的规则
+    /// 一行覆盖都没有。抽出来是为了让它能被钉住。
+    public static func exhausted(attempts: Int, needed: Int) -> Bool {
+        attempts >= needed + 2
+    }
+
     public static func dispatch(repo: String, base: String = "main",
                                tasks: [WorkTask] = TaskStore.all(),
                                maxPerCall: Int = 1) -> [Outcome] {
@@ -175,6 +197,14 @@ public enum MergeReview {
             if done.rejected {
                 out.append(Outcome(branch: c.branch, action: "已否决",
                                    note: "评审 agent 判不合入，不再派"))
+                continue
+            }
+            if exhausted(attempts: done.attempts, needed: c.needed) {
+                out.append(Outcome(
+                    branch: c.branch, action: "放弃审核",
+                    note: "派了 \(done.attempts) 次都没读出结论"
+                        + "（只拿到 \(done.approvals)/\(c.needed) 票）——"
+                        + "不再重试，留给人工处置"))
                 continue
             }
             do {
