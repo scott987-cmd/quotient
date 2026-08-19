@@ -63,4 +63,55 @@ final class PaperworkNotForHumanTests: XCTestCase {
                 ["docs/evidence/s7/00-save-survives-terminate.mp4"]),
             "录屏是拿来看的，不是拿来验收的")
     }
+    // MARK: 统一判据本身
+
+    /// **纯文书在人工终审仓库里也不用过 agent 审。**
+    ///
+    /// 这一条盯的是抽出来的那个统一判据。它之所以存在，是因为
+    /// 「这条要不要过 agent 审」原先在三个地方各写一份 ——
+    /// 落地过滤、诊断输出、排队过滤。2026-08-19 我只改了落地那一处，
+    /// 于是落地放行了、`llmq work why` 还在说「要 agent 审核……
+    /// 还没派过审核」。**是系统自己的诊断把我的不彻底暴露的。**
+    func testPaperworkSkipsAgentReviewEvenInManualReviewRepo() {
+        XCTAssertFalse(Review.requiresAgentReview(
+            files: ["reviews/EVAL-合入-f0172ef-b42387d0.md"],
+            isStranded: false, repoNeedsManualReview: true, risk: nil),
+            "让评审 agent 去评审一份评审报告是循环的，还要人在中间点一下")
+    }
+
+    /// **真碰了游戏代码的，人工终审仓库里一定要审。**
+    func testGameCodeInManualReviewRepoNeedsAgentReview() {
+        XCTAssertTrue(Review.requiresAgentReview(
+            files: ["Maw/Tuning.swift"],
+            isStranded: false, repoNeedsManualReview: true, risk: nil),
+            "改了调参就是改了手感 —— manualReview 存在的理由一个字没变")
+    }
+
+    /// 非人工终审的仓库，普通改动本来就不用 agent 审。
+    func testOrdinaryRepoDoesNotNeedAgentReview() {
+        XCTAssertFalse(Review.requiresAgentReview(
+            files: ["Sources/Foo.swift"],
+            isStranded: false, repoNeedsManualReview: false, risk: nil))
+    }
+
+    /// **另外三个理由一个都不能被文书豁免顺手带掉。**
+    ///
+    /// 别把「别拿文书烦人」做成「什么都不用审」：搁浅图捞回来的、
+    /// 敏感档的、碰构建/CI/签名的，哪怕改的全是 .md 也照样要审。
+    func testOtherReasonsSurviveThePaperworkExemption() {
+        let doc = ["docs/notes.md"]
+        XCTAssertTrue(Review.requiresAgentReview(
+            files: doc, isStranded: true,
+            repoNeedsManualReview: false, risk: nil),
+            "搁浅图捞回来的 —— 没人知道它当初为什么停")
+        XCTAssertTrue(Review.requiresAgentReview(
+            files: doc, isStranded: false,
+            repoNeedsManualReview: false, risk: .sensitive),
+            "敏感档就是敏感档，跟改了什么文件无关")
+        XCTAssertTrue(Review.requiresAgentReview(
+            files: ["build-app.sh"], isStranded: false,
+            repoNeedsManualReview: false, risk: nil),
+            "碰构建脚本 —— 验证会不会被绕过只有人/agent 看得出来")
+    }
+
 }

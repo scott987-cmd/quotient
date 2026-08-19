@@ -412,9 +412,9 @@ public enum Review {
             guard i.mergesCleanly, veto[i.branch] == nil else { return false }
             guard let t = byID[i.taskID] else { return false }
             if !stranded.contains(i.branch), t.state != .done { return false }
-            let needsReview = stranded.contains(i.branch)
-                || t.profile?.risk == .sensitive
-                || GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
+            let needsReview = requiresAgentReview(
+                files: i.files, isStranded: stranded.contains(i.branch),
+                repoNeedsManualReview: needsEvidenceAndReview, risk: t.profile?.risk)
             if needsReview {
                 return MergeReview.approved(branch: i.branch, files: i.files, tasks: tasks)
             }
@@ -443,9 +443,9 @@ public enum Review {
                      + "已派回原平台跑一遍截图（EvidenceGate），交了图再判")
                 continue
             }
-            let needsReview = isStranded || needsEvidenceAndReview
-                || t.profile?.risk == .sensitive
-                || GitWorkspace.mentionsRiskyPath(item.files.joined(separator: " "))
+            let needsReview = requiresAgentReview(
+                files: item.files, isStranded: isStranded,
+                repoNeedsManualReview: needsEvidenceAndReview, risk: t.profile?.risk)
             if needsReview,
                !MergeReview.approved(branch: item.branch, files: item.files, tasks: tasks) {
                 let r = MergeReview.approvalsSoFar(branch: item.branch, tasks: tasks)
@@ -543,11 +543,9 @@ public enum Review {
             // 就是它。**这里绝不能另写一个**：两处对「这改动人看得见吗」
             // 给出不同答案，就会出现「不用交证据、却要等 agent 审」
             // 这种半卡死状态。
-            let needsReview = strandedForQueue.contains(i.branch)
-                || (needsEvidenceAndReview
-                    && EvidenceGate.changesVisibleBehavior(i.files))
-                || t.profile?.risk == .sensitive
-                || GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
+            let needsReview = requiresAgentReview(
+                files: i.files, isStranded: strandedForQueue.contains(i.branch),
+                repoNeedsManualReview: needsEvidenceAndReview, risk: t.profile?.risk)
             if needsReview {
                 return MergeReview.approved(branch: i.branch, files: i.files,
                                             tasks: tasks)
@@ -1076,6 +1074,29 @@ extension Review {
             if conv.exitCode == 0 { out.append(jpg) }
         }
         return out.sorted()
+    }
+
+    /// **这条分支要不要过 agent 审核 —— 只准有这一个实现。**
+    ///
+    /// 这个判断原先在三个地方各写一份（落地过滤、诊断输出、排队过滤）。
+    /// 2026-08-19 我只改了其中一处「纯文书不用审」，另外两处没动 ——
+    /// 于是 `llmq work why` 照旧说「要 agent 审核……还没派过审核」，
+    /// 而落地那条路已经放行了。**系统自己的诊断把我的不彻底暴露了。**
+    ///
+    /// 四个理由任一成立就要审：
+    /// - 搁浅图捞回来的（没人知道它当初为什么停）
+    /// - 仓库登记了人工终审 **且这条真碰了人看得见的东西**
+    ///   （EVAL 报告、证据日志这类系统记账不算 —— 让评审 agent
+    ///   去评审一份评审报告是循环的，还要人在中间点一下）
+    /// - 任务被判成敏感档
+    /// - 碰了高危路径（构建 / CI / 签名）
+    static func requiresAgentReview(
+        files: [String], isStranded: Bool,
+        repoNeedsManualReview: Bool, risk: TaskProfile.Risk?) -> Bool {
+        isStranded
+            || (repoNeedsManualReview && EvidenceGate.changesVisibleBehavior(files))
+            || risk == .sensitive
+            || GitWorkspace.mentionsRiskyPath(files.joined(separator: " "))
     }
 
     /// 本机那一份待审清单写在哪。
