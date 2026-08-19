@@ -526,8 +526,26 @@ public enum Review {
             if !strandedForQueue.contains(i.branch), t.state != .done { return false }
             if needsEvidenceAndReview, i.evidence.isEmpty,
                EvidenceGate.changesVisibleBehavior(i.files) { return false }
+            // **系统自己的记账不用过人工终审那道高门槛。**
+            //
+            // manualReview 的意思是「游戏产出要合进去，得有人能看的效果
+            // + agent 判合入」。可 EVAL 报告、证据日志、进度记录**一行
+            // 游戏代码都不碰** —— 它们没有任何「效果」可看，而让评审 agent
+            // 去评审一份评审报告本身就是循环的。
+            //
+            // 实测（2026-08-19）：老板批完三条真产出之后，待审列表里
+            // 立刻又冒出两条 —— 一份 42 行的单元测试复跑日志、
+            // 一份 30 行的 EVAL 合入报告。老板的原话（2026-08-18）：
+            //「验收任务发给我的，怎么还有一堆合代码的，我只看人可阅读
+            // 验证的成功，比如游戏截图、运行结果」。一份 markdown 不是那个。
+            //
+            // 判据复用 `changesVisibleBehavior` —— 上面那道证据闸用的
+            // 就是它。**这里绝不能另写一个**：两处对「这改动人看得见吗」
+            // 给出不同答案，就会出现「不用交证据、却要等 agent 审」
+            // 这种半卡死状态。
             let needsReview = strandedForQueue.contains(i.branch)
-                || needsEvidenceAndReview
+                || (needsEvidenceAndReview
+                    && EvidenceGate.changesVisibleBehavior(i.files))
                 || t.profile?.risk == .sensitive
                 || GitWorkspace.mentionsRiskyPath(i.files.joined(separator: " "))
             if needsReview {
