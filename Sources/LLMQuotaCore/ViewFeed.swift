@@ -164,14 +164,53 @@ public enum ViewFeed {
     }
 
     @discardableResult
+    /// 这一页有多少条**真内容**（卡片 / 仪表 / 正文）。
+    ///
+    /// 只有 banner、标题这些框架不算 —— 空页面上它们照样在，
+    /// 拿字节数或 section 数判「有没有内容」会被它们骗过去
+    ///（实测：一张卡都没有的待审页仍有 2 个 section、6032 字节）。
+    public static func contentCount(_ page: Page) -> Int {
+        page.sections.reduce(0) { n, s in
+            n + (s.cards?.count ?? 0) + (s.meters?.count ?? 0)
+              + ((s.text?.isEmpty == false) ? 1 : 0)
+        }
+    }
+
+    /// **空页面不许盖掉有内容的页面。**
+    ///
+    /// `views/` 是「只推不拉」的：每台机器整份推到 iCloud 同一路径，
+    /// 后推的盖先推的。而**每台机器看得见的东西不一样** ——
+    /// MacBook 上根本没有 Greed 和 Maw 两个目录，它生成的待审页
+    /// 只有 268 字节、一张卡都没有，推上去就把 Mac mini 那份
+    /// 3 张卡的盖掉。人看到的就是「弹了消息，点进去是空的」。
+    ///
+    /// 和 `Review.worthWriting` 是同一条规则，只是换了个文件 ——
+    /// 上一轮只堵了 `reviews.json`，可**手机真正读的是 `views/review.json`**，
+    /// 于是同一个病换个位置继续犯。
+    ///
+    /// 但别把「不发」做成「永远不发」：真要清掉最后一条时得发得出去，
+    /// 否则已经合掉的分支会永远挂在手机上。判据是**本机自己上一份**
+    /// 有没有内容 —— views 只推不拉，本地那份就是本机最后写出去的东西。
+    public static func worthPublishing(_ page: Page, over previous: Page?) -> Bool {
+        if contentCount(page) > 0 { return true }   // 自己有内容 —— 照常发
+        guard let previous else { return true }     // 还没有过 —— 建立初始页面
+        return contentCount(previous) > 0           // 自己清空了自己 —— 该发
+    }
+
     public static func publish(_ page: Page) -> Bool {
         try? FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(page.page + ".json")
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        let previous = (try? Data(contentsOf: url))
+            .flatMap { try? dec.decode(Page.self, from: $0) }
+        // 跳过不算失败：这一页本来就没有任何要说的。
+        guard worthPublishing(page, over: previous) else { return true }
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
         guard let d = try? enc.encode(page) else { return false }
-        return (try? d.write(to: dir.appendingPathComponent(page.page + ".json"))) != nil
+        return (try? d.write(to: url)) != nil
     }
 
     // MARK: - 收动作
