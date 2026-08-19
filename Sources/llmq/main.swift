@@ -1594,7 +1594,13 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let fresh = freshByRepo[key]
             ?? BaselineFreshness.check(repo: cand.repo, tasks: history)
         freshByRepo[key] = fresh
-        if case .stale = fresh {
+        // **只有在 main 上盖东西的活才要等基线。**
+        //
+        // 审查 / 证据 / 刷新 / 媒体拿旧基线也不会重造任何东西
+        //（见 TaskKind.needsFreshBaseline）。不放行它们就是死结：
+        // 基线旧 → 挡住审查任务 → 分支等不到 agent 审核 →
+        // 永远合不进去 → 基线永远旧。**解开基线的钥匙被基线锁在外面。**
+        if case .stale = fresh, TaskKind.needsFreshBaseline(cand.prompt) {
             if !quiet {
                 print(Ansi.dim("  等基线 " + cand.id + "："
                     + BaselineFreshness.describe(fresh)))

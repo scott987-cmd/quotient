@@ -91,4 +91,46 @@ final class TaskKindRoutingTests: XCTestCase {
                       "编码任务要么明确拒掉评审执行器，要么根本不该把它列成候选 —— "
                       + "否则它会把这活写成一份报告：\(d.rejected)")
     }
+    // MARK: 基线闸：解锁的钥匙不能被锁在外面
+
+    /// **审查 / 证据 / 刷新 / 媒体不该等基线。**
+    ///
+    /// 实测（2026-08-19）：基线闸原先对所有任务一视同仁，于是
+    ///
+    ///   基线旧（有分支没合）→ 挡住所有任务 → 审查任务跑不了
+    ///     → 分支等不到 agent 审核 → 永远合不进去 → 基线永远旧
+    ///
+    /// **解开基线的钥匙被基线锁在外面。** 整套系统停摆两天，
+    /// 老板在手机上看到的是「正在进行」永远空着。
+    func testUnblockingKindsDoNotWaitForBaseline() {
+        let exempt = [
+            "【审查】复查刚合入 main 的合并 fc6c225（来源分支 agent/graph/f2872114）",
+            "【审查·合入】分支 agent/kimi/x 的改动能不能合进 main",
+            "【评审·项目】Greed 卡牌游戏",
+            "【证据】把分支 agent/qwen/abc21d46 的改动跑起来",
+            "【刷新】把 main 合进分支 agent/a/x",
+            "【媒体】生成 4 张遗物图标",
+        ]
+        for p in exempt {
+            XCTAssertFalse(TaskKind.needsFreshBaseline(p),
+                           "这类活拿旧基线也不会重造任何东西，"
+                           + "挡住它就是把解锁的钥匙锁在外面：\(p)")
+        }
+    }
+
+    /// **但编码活必须等。** 别把「解死结」做成「闸全拆了」——
+    /// 基线闸挡住的是最贵的一种浪费：agent 拿落后几十个提交的 main
+    /// 当「现状」，把已经做好的东西重造一遍。
+    func testCodingWorkStillWaitsForBaseline() {
+        let coding = [
+            "把 Maw 里的临时调试入口清干净，让它能作为正式版发布。",
+            "给 Greed 补上苹果强制要求的隐私清单",
+            "修一下翻牌手感",
+        ]
+        for p in coding {
+            XCTAssertTrue(TaskKind.needsFreshBaseline(p),
+                          "编码活拿旧基线会重造已有的东西：\(p)")
+        }
+    }
+
 }
