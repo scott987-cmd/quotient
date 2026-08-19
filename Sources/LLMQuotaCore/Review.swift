@@ -1027,6 +1027,20 @@ extension Review {
         return out.sorted()
     }
 
+    /// 本机那一份待审清单写在哪。
+    ///
+    /// **路径里带机器 ID 是这个设计的全部要点**：两台机器永远不会
+    /// 写同一个文件，也就永远不可能盖掉对方 —— 不需要合并、不需要锁、
+    /// 不需要守卫。合并交给读的一方（手机端把各机器的合起来）。
+    ///
+    /// 布局照抄 `snapshots/<machineID>.json`，MirrorService 的
+    /// `perMachineDirs` 已经有这套搬运逻辑。
+    public static func machineDigestURL(machineID: String = Paths.machineID()) -> URL {
+        Paths.sharedRoot
+            .appendingPathComponent("reviews", isDirectory: true)
+            .appendingPathComponent(machineID + ".json")
+    }
+
     /// **这一份值不值得写出去。**
     ///
     /// 自己算不出内容、也没有别人的内容要保留时，写出去的就是个空数组，
@@ -1142,6 +1156,24 @@ extension Review {
         //
         // 空写只可能造成破坏，不可能带来信息。所以：什么都没有就不写。
         // （真要清空最后一条时 `previous` 非空，照常写得下去。）
+        // **每台机器写自己那一份 —— 这才是根治。**
+        //
+        // `reviews.json` 是「只推不拉」的单文件：两台机器整份推到 iCloud
+        // 同一路径，后推的盖先推的。守卫（worthWriting）只挡得住
+        // 「一边空一边有」，挡不住两台都有内容时的互相覆盖 ——
+        // 那时候先推的那台的条目照样会消失。
+        //
+        // 每机一份就没有这个问题：**这个文件本机独占**，写空也只是
+        // 如实说「我这儿没有」，伤不到别人的条目。合并交给读的一方。
+        // 布局照抄 `snapshots/<machineID>.json`，MirrorService 的
+        // perMachineDirs 已经有这套搬运逻辑。
+        let mine = machineDigestURL()
+        try? FileManager.default.createDirectory(
+            at: mine.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let d = try? enc.encode(out) { try? d.write(to: mine) }
+
+        // 旧路径继续写：手机上还没更新的版本读的是它。
+        // 等两端都升上去之后这一段可以删。
         guard worthWriting(merged: merged, previous: previous) else { return out }
         if let d = try? enc.encode(merged) {
             try? d.write(to: existingURL)

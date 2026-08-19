@@ -125,4 +125,24 @@ final class MultiMachineDigestTests: XCTestCase {
         XCTAssertTrue(Review.worthWriting(merged: mine, previous: []))
     }
 
+    // MARK: 每机一份：根治，而不是靠守卫挡
+
+    /// **两台机器永远不会写同一个文件。**
+    ///
+    /// 守卫（`worthWriting`）只挡得住「一边空一边有」。两台**都有内容**时
+    /// 它一点用没有 —— 整份推到同一路径，先推的那台的条目照样消失。
+    ///
+    /// 每机一份把这个可能性从根上去掉：路径里带机器 ID，
+    /// 谁也盖不着谁，不需要合并、不需要锁。合并交给读的一方。
+    func testEachMachineWritesItsOwnFile() {
+        let a = Review.machineDigestURL(machineID: "AAAA-1111")
+        let b = Review.machineDigestURL(machineID: "BBBB-2222")
+        XCTAssertNotEqual(a, b,
+                          "两台机器写同一个路径 = 又回到互相覆盖")
+        XCTAssertEqual(a.lastPathComponent, "AAAA-1111.json")
+        XCTAssertEqual(a.deletingLastPathComponent().lastPathComponent, "reviews",
+                       "目录名要和 MirrorService.perMachineDirs 里登记的对上，"
+                       + "对不上就根本不会被搬到 iCloud")
+    }
+
 }

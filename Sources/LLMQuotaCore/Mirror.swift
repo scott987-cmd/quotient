@@ -111,7 +111,13 @@ public enum MirrorService {
     /// mtime 比较容差。iCloud 搬运会轻微抖动 mtime，1 秒内的差别不算新。
     public static let tolerance: TimeInterval = 2
 
-    static let perMachineDirs = ["snapshots", "taskboards", "presence"]
+    /// 每机一份的目录：`<dir>/<machineID>.json`，各写各的，读的一方合并。
+    ///
+    /// `reviews` 是 2026-08-19 加进来的 —— 它原先在 rootPushFiles 里
+    /// （整份推、后推的盖先推的），可它是**多写者**数据：每台机器
+    /// 只看得见自己有的仓库。实测 MacBook 上根本没有 Greed 和 Maw，
+    /// 它推上去的空清单把 Mac mini 的 3 条盖掉了，人点开手机是空的。
+    static let perMachineDirs = ["snapshots", "taskboards", "presence", "reviews"]
     static let rootPushFiles = ["dashboard.json", "office.json", "repos.json",
                                 "reviews.json"]
     /// 双向同步的目录。
