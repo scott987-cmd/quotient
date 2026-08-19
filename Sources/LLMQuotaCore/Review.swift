@@ -82,6 +82,45 @@ public enum Review {
         listCache.removeAll()
     }
 
+    /// 按分支上的 ID 找它的任务记录。**只准有这一个实现。**
+    ///
+    /// ## 图任务的分支名和记录对不上
+    ///
+    /// 普通分支是 `agent/<平台>/<任务ID>`，拿末段直接查 `byID` 就行。
+    /// 但**图任务的分支名是 `agent/graph/<图ID>`**，而任务记录是按
+    /// **步骤**存的（`<图ID>s1`、`<图ID>s2`…）—— 图 ID 本身在 `byID`
+    /// 里根本不存在，查出来永远是 nil。
+    ///
+    /// 实测（2026-08-19）：两个游戏仓库里全部 **5 条** `agent/graph/*`
+    /// 分支，精确匹配**全是 0**。它们被一律判成
+    /// 「任务记录没了 —— 自动环节一律不碰，只能人工处置」，
+    /// 也就是**图任务的产出从来没进过自动落地**，一条都没有。
+    ///
+    /// 代价是连锁的：`agent/graph/3f68707c`（08-17，38 个文件，
+    /// 能干净合入）卡了两天 → main 基线落后 38 个文件 →
+    /// `BaselineFreshness` 拿旧基线挡住队列里所有的活 → 什么都不跑 →
+    /// 老板在手机上看到的是「正在进行」永远空着。
+    /// **一条分支认不出记录，拖停了整套系统两天。**
+    ///
+    /// 找不到精确匹配时退回到这张图里**最后一个 done 的步骤**：
+    /// 分支上的产出就是它提交的，它的状态和风险档才是该拿来判闸的。
+    static func taskFor(_ id: String, in byID: [String: WorkTask],
+                        all tasks: [WorkTask]) -> WorkTask? {
+        if let t = byID[id] { return t }
+        guard !id.isEmpty else { return nil }
+        // graphID 字段和 `<图ID>sN` 命名约定两条都认：老任务可能没写
+        // graphID，只认一条的话老数据会继续卡着。
+        let steps = tasks.filter {
+            $0.graphID == id || ($0.id.hasPrefix(id) && $0.id != id)
+        }
+        guard !steps.isEmpty else { return nil }
+        // done 的优先：分支上的提交是它打的。都没 done 就返回最后一步，
+        // 让上层的状态闸自己去判 —— 而不是在这里假装记录不存在。
+        // 「记录没了」走的是「只能人工处置」，「记录在、状态不对」
+        // 走的是正常状态闸、会自己好，两者绝不能混。
+        return steps.last { $0.state == .done } ?? steps.max { $0.id < $1.id }
+    }
+
     public static func list(repo: String, base: String = "main",
                             tasks: [WorkTask] = TaskStore.all()) -> [Item] {
         // **键里必须带任务集的指纹。**
@@ -410,7 +449,7 @@ public enum Review {
         let pending = list(repo: repo, base: base, tasks: tasks)
         let landable = pending.filter { i in
             guard i.mergesCleanly, veto[i.branch] == nil else { return false }
-            guard let t = byID[i.taskID] else { return false }
+            guard let t = taskFor(i.taskID, in: byID, all: tasks) else { return false }
             if !stranded.contains(i.branch), t.state != .done { return false }
             let needsReview = requiresAgentReview(
                 files: i.files, isStranded: stranded.contains(i.branch),
@@ -424,7 +463,7 @@ public enum Review {
         var landedOne = false
         for item in pending {
             func note(_ s: String) { out.append(Blocked(branch: item.branch, reason: s)) }
-            guard let t = byID[item.taskID] else {
+            guard let t = taskFor(item.taskID, in: byID, all: tasks) else {
                 note("任务记录没了 —— 自动环节一律不碰，只能人工处置"); continue
             }
             guard item.mergesCleanly else {
@@ -522,7 +561,7 @@ public enum Review {
         }.map(\.branch))
         let landable = pending.filter { i in
             guard i.mergesCleanly, veto[i.branch] == nil else { return false }
-            guard let t = byID[i.taskID] else { return false }
+            guard let t = taskFor(i.taskID, in: byID, all: tasks) else { return false }
             if !strandedForQueue.contains(i.branch), t.state != .done { return false }
             if needsEvidenceAndReview, i.evidence.isEmpty,
                EvidenceGate.changesVisibleBehavior(i.files) { return false }
@@ -571,10 +610,11 @@ public enum Review {
             }.map(\.branch))
             let isStranded = strandedBranches.contains(item.branch)
             if !isStranded {
-                guard let t0 = byID[item.taskID], t0.state == .done else { continue }
+                guard let t0 = taskFor(item.taskID, in: byID, all: tasks),
+                      t0.state == .done else { continue }
                 _ = t0
             }
-            guard let t = byID[item.taskID] else { continue }
+            guard let t = taskFor(item.taskID, in: byID, all: tasks) else { continue }
             guard item.mergesCleanly else { continue }
             // **机械条件判不了的，问评审 agent，不问人。**
             //
