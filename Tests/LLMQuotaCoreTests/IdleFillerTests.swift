@@ -97,6 +97,55 @@ final class IdleFillerTests: XCTestCase {
         XCTAssertNil(IdleFiller.findWork(for: opp, repos: [], tasks: [t]),
                      "队列有活时不该再填")
     }
+
+    // MARK: 卡住的排队任务不该把所有平台一起饿死
+
+    private func qTask(_ id: String, state: WorkTask.State,
+                       dependsOn: [String] = []) -> WorkTask {
+        var t = WorkTask(id: id, prompt: "活 \(id)", repo: "/tmp/x")
+        t.state = state
+        t.dependsOn = dependsOn
+        if !dependsOn.isEmpty { t.graphID = "g1" }
+        return t
+    }
+
+    /// **派得动的活排着队 → 填活器让开**，别抢调度器的事。
+    func testDispatchableQueuedWorkSuppressesFilling() {
+        let t = qTask("a", state: .queued)
+        XCTAssertTrue(IdleFiller.schedulerWillHandle(t, in: [t]),
+                      "没有依赖的排队任务，调度器下一轮就会派 —— 不用填")
+    }
+
+    /// **卡住的排队任务不算「会被处理」。**
+    ///
+    /// 这是 codex 空转 18 天的正面复刻：队列里确实躺着一条活，
+    /// 但它的上游没让开、永远派不动。原先的判据只看 `state == .queued`，
+    /// 于是填活器认定「调度器会处理」而闭嘴，所有平台跟着一起空转 ——
+    /// 两天记了 249 次「没活可填」。
+    func testStuckQueuedWorkDoesNotSuppressFilling() {
+        let up = qTask("up", state: .running)
+        let down = qTask("down", state: .queued, dependsOn: ["up"])
+        XCTAssertFalse(IdleFiller.schedulerWillHandle(down, in: [up, down]),
+                       "上游没让开，这条永远派不动 —— "
+                       + "拿它当「调度器会处理」就是把所有平台一起饿死")
+    }
+
+    /// 上游整个没记录 → 同样派不动，同样不该压制填活。
+    func testQueuedWithMissingUpstreamDoesNotSuppress() {
+        let down = qTask("down", state: .queued, dependsOn: ["ghost"])
+        XCTAssertFalse(IdleFiller.schedulerWillHandle(down, in: [down]),
+                       "上游记录都没了，「不知道」不该当成「会被处理」")
+    }
+
+    /// 跑着的、干完的都不算排队 —— 别把闸做成「什么都压制」。
+    func testNonQueuedStatesDoNotSuppress() {
+        for st in [WorkTask.State.running, .done, .failed, .blocked] {
+            let t = qTask("x", state: st)
+            XCTAssertFalse(IdleFiller.schedulerWillHandle(t, in: [t]),
+                           "\(st) 不是排队中，不该压制填活")
+        }
+    }
+
 }
 
 /// 方向清单：**方向是人的决定，不是 agent 该自己拍的。**

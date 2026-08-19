@@ -1455,6 +1455,25 @@ func probePlatforms() throws {
     let probeDir = NSTemporaryDirectory() + "llmq-probe"
     try? FileManager.default.createDirectory(
         atPath: probeDir, withIntermediateDirectories: true)
+    // **探针目录必须是个 git 仓库 —— 真活就跑在 git 仓库里。**
+    //
+    // 真实干活跑在 worktree（那当然是 git 仓库），探针却跑在一个光秃秃的
+    // 临时目录。于是 codex 这种「不在 git 仓库里就拒绝启动」的 CLI
+    // 被判成不可用 —— 探的不是它能不能干活，是它在一个**不会出现的环境**
+    // 里能不能干活。
+    //
+    // 实测（2026-08-19）：同一条命令，在 ~/dev/Maw 里正常返回「可用」，
+    // 在临时目录里报 `Not inside a trusted directory and
+    // --skip-git-repo-check was not specified.`
+    //
+    // 代价：codex 连续 **18 天**一轮没跑过，白扔一整个套餐周期的额度。
+    // 更糟的是这个失败**没有任何人看得见** —— 填活器把它记成
+    // 「空窗没活可填」（两天 249 次），坏掉的平台伪装成闲着。
+    if !GitWorkspace.isRepo(probeDir) {
+        _ = GitWorkspace.git(["init", "--initial-branch=main"], in: probeDir)
+        _ = GitWorkspace.git(["config", "user.email", "probe@llmq.local"], in: probeDir)
+        _ = GitWorkspace.git(["config", "user.name", "llmq-probe"], in: probeDir)
+    }
 
     print(Ansi.bold("平台可用性探针") + Ansi.dim("  每个平台发一句最短的话，只看认证通不通"))
     print(Ansi.dim(pad("平台", 10) + pad("结果", 12) + pad("耗时", 8) + "说明"))

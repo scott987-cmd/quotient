@@ -157,13 +157,30 @@ public enum IdleFiller {
     }
 
     /// 找到的活，连同它出自哪个项目（清单项目要回记一次取用）。
+    /// **这条排队的活，调度器真的会去派吗。**
+    ///
+    /// 原先这里只看 `state == .queued` —— 那等于假设「排着队 = 会被处理」。
+    /// 可是**卡住的排队任务永远不会被派**：上游没让开、图搁浅、
+    /// 依赖的那步零产出，它就一直躺在队列里。而填活器看见「有活排队」
+    /// 就闭嘴不填，于是所有平台跟着一起空转。
+    ///
+    /// 实测（2026-08-19）：codex 连续 **18 天**一轮没开，
+    /// 两天里系统记了 249 次「空窗没活可填」—— 队列里确实有一条活，
+    /// 但它派不动，而这一条把所有平台一起饿死了。
+    ///
+    /// 「不知道」不该当成「会被处理」：就绪判定用 `TaskGraph.isReady`，
+    /// 和调度器同一个判据 —— **这里绝不能再造第二个**。
+    static func schedulerWillHandle(_ t: WorkTask, in tasks: [WorkTask]) -> Bool {
+        t.state == .queued && TaskGraph.isReady(t, in: tasks)
+    }
+
     public static func found(for opp: Opportunity,
                              repos: [RepoAlias] = RepoRegistry.all(),
                              tasks: [WorkTask] = TaskStore.all())
     -> (prompt: String, repo: String?, projectID: String?,
         publishes: Bool, usedTopic: Bool)? {
-        // 队列里已经有活 → 不用填，调度器自己会派
-        if tasks.contains(where: { $0.state == .queued }) { return nil }
+        // 队列里已经有**派得动的**活 → 不用填，调度器自己会派。
+        if tasks.contains(where: { schedulerWillHandle($0, in: tasks) }) { return nil }
 
         // **先看项目清单。** 那里面是老板批过方案的、有产出价值的常态化项目
         //（资产包、内容生产）；储备池里是从代码扫出来的零碎维护活。
