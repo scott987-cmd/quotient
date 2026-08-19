@@ -4,6 +4,24 @@ import LLMQuotaCore
 // MARK: - Terminal helpers
 
 enum Ansi {
+    /// 去掉转义色码。
+    ///
+    /// 落盘的东西不能带色码：写进 JSON 之后手机和别的机器读到的是
+    /// 一串 `\u{1B}[32m` 垃圾，而不是「可用」。
+    static func strip(_ s: String) -> String {
+        var out = ""
+        var inEscape = false
+        for ch in s {
+            if inEscape {
+                if ch == "m" { inEscape = false }
+                continue
+            }
+            if ch == "\u{1B}" { inEscape = true; continue }
+            out.append(ch)
+        }
+        return out
+    }
+
     static let enabled = isatty(fileno(stdout)) == 1
 
     static func wrap(_ s: String, _ code: String) -> String {
@@ -560,6 +578,11 @@ func cmdBrief(_ args: [String]) {
     if !s.pendingReview.isEmpty {
         print("  待审：" + s.pendingReview
             .map { "\($0.repo) \($0.branches) 条" }.joined(separator: " · "))
+    }
+    // 平台在**某台机器上**坏了。冷却是「额度用完了，等等就好」，
+    // 这个是「那台机器上它根本跑不了」—— 两回事，分开报。
+    for line in s.platformProblems {
+        print(Ansi.red("  平台异常：") + line)
     }
     if !s.cooling.isEmpty {
         let cool = s.cooling.map { c -> String in
@@ -1478,10 +1501,18 @@ func probePlatforms() throws {
     print(Ansi.bold("平台可用性探针") + Ansi.dim("  每个平台发一句最短的话，只看认证通不通"))
     print(Ansi.dim(pad("平台", 10) + pad("结果", 12) + pad("耗时", 8) + "说明"))
 
+    // 结果要落盘共享 —— 见 PlatformHealth。只打在终端上的话，
+    // 别的机器（和手机）永远不知道这台机器上哪个平台坏了。
+    var health: [PlatformHealth.Entry] = []
+
     for runner in RunnerRegistry.all {
         guard runner.isAvailable else {
             print(pad(runner.platform.displayName, 10) + pad(Ansi.dim("未安装"), 12)
                 + pad("—", 8) + runner.binaryName + " 不在 PATH 上")
+            health.append(.init(platform: runner.platform.displayName,
+                                status: "未安装",
+                                detail: runner.binaryName + " 不在 PATH 上",
+                                seconds: 0))
             continue
         }
         let cmd = runner.command(prompt: "回复两个字：可用", cwd: probeDir)
@@ -1514,7 +1545,13 @@ func probePlatforms() throws {
         }
         print(pad(runner.platform.displayName, 10) + pad(verdict, 12)
             + pad(String(format: "%.0fs", dt), 8) + detail)
+        health.append(.init(
+            platform: runner.platform.displayName,
+            status: verdict.contains("不可用") ? "不可用" : "可用",
+            detail: Ansi.strip(detail), seconds: dt))
     }
+    PlatformHealth.record(health)
+    print(Ansi.dim("  结果已记入共享目录，别的机器和 brief 都看得到"))
     print()
     print(Ansi.dim("在你自己的终端里跑这个命令，和从别的进程里跑，结果可能不一样 ——"))
     print(Ansi.dim("凭据存在 Keychain 里，访问权限按调用方的代码签名授权。"))

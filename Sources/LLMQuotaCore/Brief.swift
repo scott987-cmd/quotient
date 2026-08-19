@@ -66,6 +66,10 @@ public enum Brief {
         public var queued: [WorkTask] = []
         public var blocked: [WorkTask] = []
         public var pendingReview: [(repo: String, branches: Int)] = []
+
+        /// 各机器上不能用的平台。**只列坏的** ——
+        /// 每天都出现的「一切正常」会被训练成背景噪音。
+        public var platformProblems: [String] = []
         public var cooling: [(platform: String, reason: String, until: Date)] = []
         public var pendingAsks: Int = 0
         /// 最近七天有多少次「窗口开着但没活可填」，按平台归并。
@@ -89,6 +93,15 @@ public enum Brief {
             }
             if t.pendingAsk != nil, t.state == .blocked { s.pendingAsks += 1 }
         }
+        // 各机器的平台健康（见 PlatformHealth）。探针原先「谁跑谁知道」，
+        // 一台机器上平台坏了别处完全看不见 —— MacBook 的 codex
+        // 因此坏了 27 次才被发现。
+        // 冷却中的平台不算「异常」—— 下面 cooling 那一行已经写了
+        // 「还有几天恢复」。报两遍会让人跳过整段。
+        let cooling = Set(CooldownLedger.active(now: now).map(\.0.displayName))
+        s.platformProblems = PlatformHealth.problems(
+            excusedBy: cooling, now: now)
+
         for (p, cd) in CooldownLedger.active(now: now) {
             s.cooling.append((p.displayName, cd.cause.displayName, cd.until))
         }

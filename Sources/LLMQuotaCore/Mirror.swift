@@ -117,7 +117,10 @@ public enum MirrorService {
     /// （整份推、后推的盖先推的），可它是**多写者**数据：每台机器
     /// 只看得见自己有的仓库。实测 MacBook 上根本没有 Greed 和 Maw，
     /// 它推上去的空清单把 Mac mini 的 3 条盖掉了，人点开手机是空的。
-    static let perMachineDirs = ["snapshots", "taskboards", "presence", "reviews"]
+    /// `probes` 是 2026-08-19 加的：探针原先是「谁跑谁知道」，
+    /// 结果只打在终端上。MacBook 的 codex 因此坏了 27 次没人看见。
+    static let perMachineDirs = ["snapshots", "taskboards", "presence",
+                                 "reviews", "probes"]
     static let rootPushFiles = ["dashboard.json", "office.json", "repos.json",
                                 "reviews.json"]
     /// 双向同步的目录。
