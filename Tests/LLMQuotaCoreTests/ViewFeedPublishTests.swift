@@ -84,6 +84,44 @@ final class ViewFeedPublishTests: XCTestCase {
         XCTAssertTrue(ViewFeed.worthPublishing(page(cards: 1), over: page(cards: 5)))
     }
 
+    /// **空状态的提示语不是内容。**
+    ///
+    /// 这一条是被**生产环境打脸**打出来的：守卫第一版把非空 `text`
+    /// 算成内容，而 MacBook 生成的页面正好只有一个 text 段 ——
+    ///
+    /// ```json
+    /// { "kind": "text", "title": "没有等验收的产出",
+    ///   "text": "agent 交的活都已经合入或丢弃了。" }
+    /// ```
+    ///
+    /// 于是它被判成「有内容」照发不误，Mac mini 那份 3 张卡的页面
+    /// 照样被盖成这 268 字节。守卫加了，一点用都没有。
+    ///
+    /// 这句话恰恰证明这一页**没有**内容。只有卡片和仪表才是
+    /// 「这台机器真的看见了东西」的证据。
+    func testEmptyStateMessageIsNotContent() {
+        let placeholder = ViewFeed.Page(page: "review", sections: [
+            ViewFeed.Section(kind: "text", title: "没有等验收的产出",
+                             tone: .good,
+                             text: "agent 交的活都已经合入或丢弃了。"),
+        ])
+        XCTAssertEqual(ViewFeed.contentCount(placeholder), 0,
+                       "「没有待审」这句话证明的是没内容，不是有内容")
+        XCTAssertFalse(ViewFeed.worthPublishing(placeholder, over: placeholder),
+                       "MacBook 每轮都生成这一页 —— 它一次都不该盖掉别人的")
+    }
+
+    /// 但 Mac mini 自己清空时，这句提示语必须发得出去。
+    func testOwnerMachinePublishesTheEmptyStateMessage() {
+        let placeholder = ViewFeed.Page(page: "review", sections: [
+            ViewFeed.Section(kind: "text", title: "没有等验收的产出",
+                             text: "agent 交的活都已经合入或丢弃了。"),
+        ])
+        XCTAssertTrue(ViewFeed.worthPublishing(placeholder, over: page(cards: 3)),
+                      "自己上一份有 3 张卡、现在真清空了 —— "
+                      + "这句提示语必须发出去，否则手机上一直挂着已经合掉的分支")
+    }
+
     /// 还没有过这一页时要建立初始页面 —— 否则手机上一直是「页面不存在」。
     func testFirstEverPublishGoesThrough() {
         XCTAssertTrue(ViewFeed.worthPublishing(emptyPage(), over: nil),
