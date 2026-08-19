@@ -95,7 +95,7 @@ public enum Brief {
         s.cooling.sort { $0.until < $1.until }
         for r in RepoRegistry.all() {
             let path = NSString(string: r.localPath).expandingTildeInPath
-            let n = Review.list(repo: path, tasks: tasks).count
+            let n = Review.pendingForHuman(repo: path, tasks: tasks).count
             if n > 0 { s.pendingReview.append((r.alias, n)) }
         }
         // 空窗记账（见 idleWindows 的说明）。只算最近 7 天，

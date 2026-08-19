@@ -1027,6 +1027,36 @@ extension Review {
         return out.sorted()
     }
 
+    /// **这一份值不值得写出去。**
+    ///
+    /// 自己算不出内容、也没有别人的内容要保留时，写出去的就是个空数组，
+    /// 而这份文件是多机整份推到 iCloud 同一路径的 —— 空写只可能盖掉
+    /// 别人刚推上去的东西，不可能带来任何信息。
+    ///
+    /// 抽成函数是因为它原先内联在 `publishDigests` 里，
+    /// 而那个函数要跑 git、要读仓库注册表，没法单测 ——
+    /// 于是这条唯一能挡住「手机页面变空」的规则会一行覆盖都没有。
+    public static func worthWriting(merged: [Digest], previous: [Digest]) -> Bool {
+        !(merged.isEmpty && previous.isEmpty)
+    }
+
+    /// **「这个仓库还有几条要人验收」——只准有这一个判据。**
+    ///
+    /// 曾经有两处各判各的：`Brief` 用 `list().count`（不扣已表态的），
+    /// `publishDigests` 扣掉 `decided` 的。于是同一时刻，
+    /// 手机通知说「6 条待审」、点进去的页面只有 3 条 ——
+    /// 人会觉得这个数字是编的。
+    ///
+    /// 已经表过态的必须扣掉：人做过决定了，列表里还挂着
+    /// 只会让他以为自己点了没用。
+    public static func pendingForHuman(repo: String, base: String = "main",
+                                       tasks: [WorkTask] = TaskStore.all(),
+                                       decided: Set<String>? = nil) -> [Item] {
+        let d = decided ?? decidedBranches()
+        return list(repo: repo, base: base, tasks: tasks)
+            .filter { !d.contains(repo + "|" + $0.branch) }
+    }
+
     /// 读回**已经发布给手机的**那份待审清单。
     ///
     /// 存在的理由：推送和手机页面必须读同一份数据。各算各的话，
@@ -1049,7 +1079,7 @@ extension Review {
         for r in repos {
             let path = NSString(string: r.localPath).expandingTildeInPath
             guard GitWorkspace.isRepo(path) else { continue }
-            for item in list(repo: path) where !decided.contains(path + "|" + item.branch) {
+            for item in pendingForHuman(repo: path, decided: decided) {
                 out.append(Digest(
                     repo: path, repoName: r.alias, branch: item.branch,
                     platform: item.platform, subject: item.subject,
@@ -1097,6 +1127,22 @@ extension Review {
         enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         try? FileManager.default.createDirectory(
             at: Paths.sharedRoot, withIntermediateDirectories: true)
+        // **自己没内容、也没有别人的内容要保留时，一个字都别写。**
+        //
+        // 这份文件是「只推不拉」的：每台机器整份推到 iCloud 同一个路径，
+        // 后推的盖掉先推的。而 `previous` 读的是**本机自己的**暂存文件 ——
+        // MacBook 那份里从来就没有 Mac mini 的条目，所以上面那段
+        // 「保留我看不见的仓库」无事可保，它推上去的就是个空数组。
+        //
+        // 实测（2026-08-19，老板的原话「弹消息有两份待验收，但是点击去
+        // 验收的页面又没有，过了好几分钟才加载出来」）：
+        // Mac mini 算出 3 条推上去并发推送 → MacBook（**根本没有 Greed
+        // 和 Maw 这两个目录**）算出 0 条把它盖成 `[]` → 人点进去是空的
+        // → 下一轮 Mac mini 又写回 3 条，就成了「过几分钟才加载出来」。
+        //
+        // 空写只可能造成破坏，不可能带来信息。所以：什么都没有就不写。
+        // （真要清空最后一条时 `previous` 非空，照常写得下去。）
+        guard worthWriting(merged: merged, previous: previous) else { return out }
         if let d = try? enc.encode(merged) {
             try? d.write(to: existingURL)
         }
