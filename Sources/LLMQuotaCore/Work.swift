@@ -1324,6 +1324,21 @@ public enum GitWorkspace {
     static let hardening = [
         "-c", "core.hooksPath=/dev/null",
         "-c", "core.fsmonitor=",
+        // **别让 git 把非 ASCII 文件名转义。**
+        //
+        // 默认行为下 `reviews/EVAL-合入-x.md` 会被输出成
+        // `"reviews/EVAL-\345\220\210\345\205\245-x.md"` —— 带引号、
+        // 八进制转义。这个字符串**不以 `.md` 结尾，以 `"` 结尾**，
+        // 于是所有 `hasSuffix(".md")` 之类的判断全部失效。
+        //
+        // 这个坑咬过两次：第一次是 numstat 那条路（改动统计对不上），
+        // 当时只在那一个调用点加了 `-c core.quotePath=false`。
+        // 第二次（2026-08-19）是 Review.list 这条路 —— EVAL 报告的文件名
+        // 带中文，被判成「改了人看得见的东西」，于是纯文书分支被要求
+        // 走 agent 审核、永远合不进去，把整条流水线堵着。
+        //
+        // 放进 hardening 就没有第三次了：**任何调用点都不可能忘**。
+        "-c", "core.quotePath=false",
     ]
     static let hardEnv = [
         "GIT_CONFIG_GLOBAL": "/dev/null",

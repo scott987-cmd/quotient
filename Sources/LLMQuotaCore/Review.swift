@@ -943,7 +943,7 @@ public enum Review {
         // 在**产生文件名的这一处**修，不在每个消费者那里补解引号 ——
         // 后者是同一个概念多处实现，今天已经害过四次了。
         let r = GitWorkspace.git(
-            ["-c", "core.quotePath=false", "diff", "--numstat", from, to], in: repo)
+            ["diff", "--numstat", from, to], in: repo)   // quotePath 已在 hardening 里统一关掉
         var files: [String] = []
         var ins = 0, del = 0
         for line in r.stdout.split(separator: "\n") {
