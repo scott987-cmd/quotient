@@ -981,6 +981,15 @@ extension Review {
     ///
     /// - Returns: 抽出来的文件名（相对 evidence/<id>/）。
     @discardableResult
+    /// 这个文件名是不是录屏。
+    ///
+    /// **只准有这一处判定** —— 抽取、去重、手机端渲染都得给同一个答案，
+    /// 分叉的话会出现「抽出来了但手机不认」这种静默失败。
+    public static func isVideoName(_ name: String) -> Bool {
+        let l = name.lowercased()
+        return l.hasSuffix(".mp4") || l.hasSuffix(".mov") || l.hasSuffix(".m4v")
+    }
+
     static func extractEvidence(repo: String, branch: String,
                                 files: [String], digestID: String,
                                 limit: Int = 4) -> [String] {
@@ -994,7 +1003,9 @@ extension Review {
         let fm = FileManager.default
         let prefix = safe + "__"
         if let have = try? fm.contentsOfDirectory(atPath: dir.path) {
-            let mine = have.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".jpg") }
+            let mine = have.filter {
+                $0.hasPrefix(prefix) && (isVideoName($0) || $0.hasSuffix(".jpg"))
+            }
             // 已经抽过就不重复干 —— 这个函数挂在 5 分钟一次的发布里。
             if !mine.isEmpty { return mine.sorted() }
         }
@@ -1003,6 +1014,28 @@ extension Review {
         var out: [String] = []
         for f in files.prefix(limit) {
             let base = (f as NSString).lastPathComponent
+            // **录屏原样搬，不进 sips。**
+            //
+            // 老板要的是「模拟器跑通的视频」，而这条管线原先端到端只认图片：
+            // 这里 sips 转 jpeg，手机那边 evidenceCache 是 [String: UIImage]。
+            // mp4 进来 sips 直接失败，一帧都到不了手机。
+            //
+            // 有些东西静态图证明不了：存档扛不扛得住强杀，要看
+            //「玩到某个状态 → 强杀 → 重开数字还对得上」这一整串动作。
+            if isVideoName(base) {
+                let dest = dir.appendingPathComponent(prefix + base)
+                let esc = { (x: String) in
+                    "'" + x.replacingOccurrences(of: "'", with: "'\\''") + "'"
+                }
+                let cmd = "git show " + esc(branch + ":" + f) + " > " + esc(dest.path)
+                let r = Proc.run("/bin/sh", ["-c", cmd], cwd: repo, env: [:], timeout: 60)
+                if r.exitCode == 0, (try? dest.checkResourceIsReachable()) == true {
+                    out.append(prefix + base)
+                } else {
+                    try? fm.removeItem(at: dest)
+                }
+                continue
+            }
             let jpg = prefix + ((base as NSString).deletingPathExtension) + ".jpg"
             let raw = dir.appendingPathComponent("." + prefix + base)
             let esc = { (x: String) in

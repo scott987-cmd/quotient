@@ -89,6 +89,23 @@ public struct RateGate: Sendable {
         return true
     }
 
+    /// **退回刚才那一槽 —— 那次派发根本没花额度。**
+    ///
+    /// `allow()` 必须在真跑之前调用（它是闸），可有些结局一个字都没发出去：
+    /// 所有平台都在冷却时 `runOneTask` 返回 `.noPlatform`，
+    /// 任务原样留在队列里，什么都没消耗。这种情况扣一槽就是纯亏。
+    ///
+    /// 实测（2026-08-19）：队列里一条钉在 qwen 的证据任务，
+    /// 而 **qwen 冷却还有 5 天** —— 每小时 12 个槽**全部**烧在它身上，
+    /// 20 分钟耗光（日志里 12 次「取到任务」、0 个任务创建、0 个完成），
+    /// 然后上限把所有真活挡在门外，剩下 40 分钟整台机器空转。
+    ///
+    /// **调用契约**：紧跟在 `allow()` 返回 true 的那次之后调用，中间不能
+    /// 再有别的 `allow()`。这个循环是单线程顺序执行的，满足这个前提。
+    public mutating func refund() {
+        if !recent.isEmpty { recent.removeLast() }
+    }
+
     public mutating func nextAllowed(now: Date = Date()) -> Date? {
         recent.removeAll { now.timeIntervalSince($0) > window }
         guard recent.count >= limit, let oldest = recent.min() else { return nil }
