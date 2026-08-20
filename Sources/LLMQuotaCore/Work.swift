@@ -923,6 +923,7 @@ public struct MiniMaxRunner: AgentRunner {
 ///
 /// 任务提示词以【媒体】开头，正文里每行一个资产：
 ///
+///     REF  refs/hero.png                     ← 之后的 IMG 都锁这个角色
 ///     IMG assets/creature-stage1.png :: 深渊里的小型发光生物，青色荧光，剪影感
 ///     IMG assets/zone-2.png 16:9 :: 中层海域背景，体积光从上方打下
 ///     MUSIC assets/ambient.mp3 :: 深海环境音，缓慢，压迫感渐强
@@ -968,8 +969,32 @@ public struct MiniMaxMediaRunner: AgentRunner {
         ok=0; bad=0
         tmperr="${TMPDIR:-/tmp}/mmx-err-$$"
         tmpout="${TMPDIR:-/tmp}/mmx-out-$$"
+        subjref=""
         while IFS= read -r line; do
           case "$line" in
+            REF\ *)
+              # **角色参考图：一条 REF 管住后面所有 IMG。**
+              #
+              # 漫画和素材包的根本区别就在这儿：素材包每张独立，
+              # 漫画要同一个角色在几十格里长得一样。纯文生图做不到 ——
+              # 实测（2026-08-20）逐行带足角色词之后，发型/服装/道具
+              # 能 8/8 保住，但**脸不是同一张**，读者对脸最敏感。
+              #
+              # mmx 本来就有 --subject-ref（type=character,image=...），
+              # 只是这条 IMG 语法没把它接出来。
+              #
+              # `REF -` 或空 REF 清除，之后的 IMG 回到纯文生图。
+              subjref="${line#REF }"
+              subjref="${subjref## }"
+              [ "$subjref" = "-" ] && subjref=""
+              if [ -n "$subjref" ] && [ ! -s "$subjref" ]; then
+                case "$subjref" in
+                  http*) ;;   # URL 交给 mmx 自己取
+                  *) echo "FAIL 参考图不存在: $subjref"; bad=$((bad+1)); subjref="";;
+                esac
+              fi
+              [ -n "$subjref" ] && echo "REF  $subjref（后续 IMG 锁定同一角色）" \
+                                || echo "REF  已清除，后续 IMG 走纯文生图";;
             IMG\ *)
               rest="${line#IMG }"
               spec="${rest%%::*}"; desc="${rest#*::}"
@@ -983,8 +1008,10 @@ public struct MiniMaxMediaRunner: AgentRunner {
               # 不做词切分，整段并成**一个**参数 —— mmx 收到
               # "--aspect-ratio 1:1"（一个词）当场打用法退出。
               # 实测：6 张带比例的图秒败、不带比例的音乐独活，就是它。
+              # 比例和参考图都必须走数组展开，理由同上（整段并成一个参数会被 mmx 拒）。
               extra=()
               [ -n "$ratio" ] && extra=(--aspect-ratio "$ratio")
+              [ -n "$subjref" ] && extra+=(--subject-ref "type=character,image=$subjref")
               run_mmx image generate --prompt "$desc" --out "$path" \
                 --timeout 300 "${extra[@]}" </dev/null >"$tmpout" 2>"$tmperr"
               if [ -s "$path" ]; then
@@ -1022,6 +1049,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
         # 排查时只能去读驱动源码才知道要写成 `IMAGE <路径> :: <描述>`。
         if [ "$ok" -eq 0 ] && [ "$bad" -eq 0 ]; then
           echo "提示词里一条媒体规格都没有 —— 这个执行器只认逐行的："
+          echo "  REF   <参考图路径>          （之后的 IMG 锁定同一角色，REF - 清除）"
           echo "  IMG   <相对路径> [宽高比] :: <画面描述>"
           echo "  MUSIC <相对路径> :: <音乐描述>"
           echo "注意图片关键字是 IMG，不是 IMAGE（写错了就一行都不匹配）。"
