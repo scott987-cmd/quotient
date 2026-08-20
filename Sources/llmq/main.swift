@@ -1906,6 +1906,17 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         if handoff == nil, task.handoff == nil, task.profile?.tier != .trivial {
             effectivePrompt += RepoMap.briefing(repo: ws.path)
         }
+        // 产品事实（AGENTS.md）：让每个 agent 知道自己在给什么产品干活、
+        // 什么不能动。地图管「去哪找」，这份管「别碰什么」——
+        // 不注入的话这份知识只存在于老板脑子里，agent 只能临场猜。
+        // 老板（2026-08-20）：「让不同的 agent 不知道自己在干啥」说的就是这个。
+        // 接力任务也要：换了平台的 agent 更不知道铁律。
+        effectivePrompt += ProductBrief.briefing(repo: ws.path)
+        // 证据条款（事前）：干活的 agent 在同一次执行里自己交证据，
+        // 别等落地闸发现缺图再另派一个从零认路的 agent 去补 ——
+        // 老板（2026-08-20）：「尽量让一个任务在一个 agent 内完成工作」。
+        effectivePrompt += EvidenceGate.inlineClause(repoPath: task.repo,
+                                                     prompt: task.prompt)
         // 图内节点要知道自己在整件事里的位置。
         //
         // 换了平台的 agent 对前面发生了什么一无所知 —— 这正是「上下文丢失」
