@@ -160,3 +160,16 @@ final class EvidenceFileRecognitionTests: XCTestCase {
                       "豁免的只是「要不要截图」，2 票审核那道闸必须还在")
     }
 }
+
+extension EvidenceFileRecognitionTests {
+    /// 媒体产物本身就是证据 —— 音频和图片同理。
+    /// 实测:主题曲+立绘的分支被 .mp3 判成「看得见、没证据」,
+    /// 系统给一首歌派了截图任务。
+    func testAudioDeliverablesAreNotVisibleBehavior() {
+        XCTAssertFalse(EvidenceGate.changesVisibleBehavior(
+            ["docs/audio/theme-demo.mp3", "docs/artdirection/operator-yan.png"]),
+            "给一首歌拍截图证明不了任何事")
+        XCTAssertTrue(EvidenceGate.changesVisibleBehavior(["Flint/Sim/Audio.swift"]),
+                      "音频**代码**照样算看得见 —— 豁免的只是媒体产物文件")
+    }
+}

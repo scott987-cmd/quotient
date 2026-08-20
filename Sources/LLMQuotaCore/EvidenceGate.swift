@@ -80,8 +80,11 @@ public enum EvidenceGate {
             // 「人看得见吗」= 否。它改坏的风险另有人管 ——
             // isRiskyPath 对它要 2 票审核，那道闸不动。
             if l.hasSuffix(".pbxproj") { return false }
-            // 图片和录屏本身就是证据，不算「被改的东西」
-            if [".png", ".jpg", ".jpeg", ".gif", ".mov", ".mp4"]
+            // 图片/录屏/音频这类媒体产物本身就是证据，不算「被改的东西」。
+            // 音频是实测补的：主题曲 + 立绘的分支被 .mp3 判成「看得见、
+            // 没证据」，给一首歌派了截图任务（2026-08-20，Flint 2841e486）。
+            if [".png", ".jpg", ".jpeg", ".gif", ".mov", ".mp4",
+                ".mp3", ".m4a", ".wav", ".caf"]
                 .contains(where: { l.hasSuffix($0) }) { return false }
             // **测试文件不算。** 测试的证据是它自己跑绿了 ——
             // `xcodebuild test` 的输出比任何截图都有说服力，
