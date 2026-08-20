@@ -1,0 +1,116 @@
+import XCTest
+@testable import LLMQuotaCore
+
+/// **审核结论是针对某一版 diff 的，不是针对分支名的。**
+///
+/// ## 这条对应的真实故障（2026-08-20）
+///
+/// `approvalsSoFar` 原来只按 `t.prompt.contains(branch)` 匹配审核任务 ——
+/// 结论**永久绑在分支名上**。两个方向都出事，而且第二个更严重：
+///
+/// **① 被否的分支永远进不去。**
+/// `agent/claude/009f44f5` 把 107 个伪装成 PNG 的 JPEG 转成真 PNG，
+/// 评审判不合入，理由是「分支里看不到任何验证证据」—— 这条理由成立。
+/// 证据（可重跑的核对脚本 + 真实输出）补进分支之后，`rejected` 照旧为真。
+/// 唯一的出路变成「人工丢弃那条否决」，而**人工绕过一个 no**
+/// 正是这套审核机制存在的意义所要防的事。
+///
+/// **② 拿到票之后往分支上推什么都能进。**
+/// 一票同意之后追加任意提交，`approvals` 照样成立 ——
+/// 审核闸对新提交等于不存在。这一头没人报过障，因为它不会让人卡住，
+/// 只会让东西**悄悄合进去**。
+final class VerdictScopeTests: XCTestCase {
+
+    private func review(_ branch: String, head: String?, verdict: String,
+                        endedAt: Date? = nil) -> WorkTask {
+        var p = "【审查·合入】分支 \(branch) 的改动能不能合进 main。\n"
+        if let head { p += MergeReview.headMarker(head) + "\n" }
+        var t = WorkTask(id: "r-" + branch, prompt: p, repo: "/tmp/x")
+        t.state = .done
+        t.outputs = ["**结论**：\(verdict)"]
+        t.endedAt = endedAt
+        return t
+    }
+
+    // MARK: 标记要能写进去、读回来
+
+    func testHeadMarkerRoundTrips() {
+        let p = "【审查·合入】分支 agent/a/b\n" + MergeReview.headMarker("2b555f4")
+        XCTAssertEqual(MergeReview.reviewedHead(in: p), "2b555f4")
+    }
+
+    /// 老格式（2026-08-20 之前派的）没有这个标记。
+    func testOldPromptHasNoRecordedHead() {
+        XCTAssertNil(MergeReview.reviewedHead(in: "【审查·合入】分支 agent/a/b 能不能合"))
+    }
+
+    /// 空 head 不写标记 —— 免得写出个「被审提交：」的空壳，
+    /// 读回来是 nil 却看着像有记录。
+    func testEmptyHeadWritesNoMarker() {
+        XCTAssertEqual(MergeReview.headMarker(""), "")
+    }
+
+    // MARK: ① 改好了要能重新判
+
+    func testRejectionDoesNotStickAfterBranchMovesOn() {
+        let old = review("agent/claude/009f44f5", head: "2b555f4", verdict: "不合入")
+        // 分支现在的头是 7a1c11d —— 补证据那个提交。
+        let r = MergeReview.approvalsSoFar(branch: "agent/claude/009f44f5",
+                                           tasks: [old], head: "7a1c11d")
+        XCTAssertFalse(r.rejected,
+                       "那条否决审的是 2b555f4；改动已经回应了意见并重新提交，"
+                       + "结论不该跟着分支名一直生效 —— 否则唯一的出路是"
+                       + "人工绕过一个 no，而那正是这套机制要防的事")
+        XCTAssertEqual(r.attempts, 0,
+                       "过期的结论连 attempts 都不能算：贴着上限的话 "
+                       + "exhausted 会立刻收口，新的一版根本轮不到被审")
+    }
+
+    /// **但同一版被否就是被否** —— 别把「能重判」做成「否决无效」。
+    func testRejectionStillHoldsForTheSameCommit() {
+        let no = review("agent/a/x", head: "2b555f4", verdict: "不合入")
+        let r = MergeReview.approvalsSoFar(branch: "agent/a/x",
+                                           tasks: [no], head: "2b555f4")
+        XCTAssertTrue(r.rejected, "同一个提交，结论照旧算数")
+    }
+
+    // MARK: ② 拿到票之后不能再推东西进去
+
+    func testApprovalDoesNotCarryOverToNewCommits() {
+        let yes = review("agent/a/y", head: "aaaaaaa", verdict: "合入")
+        XCTAssertTrue(
+            MergeReview.approved(branch: "agent/a/y", files: ["a.swift"],
+                                 tasks: [yes], head: "aaaaaaa"),
+            "审过的那一版当然算数")
+        XCTAssertFalse(
+            MergeReview.approved(branch: "agent/a/y", files: ["a.swift"],
+                                 tasks: [yes], head: "bbbbbbb"),
+            "拿到票之后又推了新提交 —— 那一票没审过它。"
+            + "这一头不会让人卡住，只会让没审过的东西悄悄合进 main")
+    }
+
+    // MARK: 老审核任务的兜底
+
+    /// 老格式没记 sha。全当有效则上面第二个洞继续开着；
+    /// 全当无效会把判过的分支重派一遍白烧额度。用时间兜底。
+    func testOldVerdictGoesStaleWhenBranchGotNewerCommits() {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        let old = review("agent/a/z", head: nil, verdict: "不合入", endedAt: t0)
+        let after = MergeReview.approvalsSoFar(
+            branch: "agent/a/z", tasks: [old],
+            headAt: t0.addingTimeInterval(60))     // 审完之后又提交了
+        XCTAssertFalse(after.rejected, "审核结束之后分支又动了 —— 那条结论过期")
+
+        let before = MergeReview.approvalsSoFar(
+            branch: "agent/a/z", tasks: [old],
+            headAt: t0.addingTimeInterval(-60))    // 分支停在审核之前
+        XCTAssertTrue(before.rejected, "分支没动过，老结论照旧算数")
+    }
+
+    /// 什么都不传时保持老行为 —— 还没接上的调用点不该被这次改动改变语义。
+    func testWithoutHeadInfoBehaviourIsUnchanged() {
+        let no = review("agent/a/w", head: "aaaaaaa", verdict: "不合入")
+        XCTAssertTrue(MergeReview.approvalsSoFar(branch: "agent/a/w",
+                                                  tasks: [no]).rejected)
+    }
+}

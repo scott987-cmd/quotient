@@ -21,6 +21,12 @@ public enum Review {
         public var deletions: Int
         public var subject: String
         public var committedAt: Date?
+        /// 分支头的短 sha。
+        ///
+        /// **审核结论是针对某一版 diff 的，不是针对分支名的。** 有了它，
+        /// 「这条分支被否过」才能收窄成「这条分支的**那一版**被否过」——
+        /// 改了之后重新提交，理应重新判。
+        public var head: String = ""
         /// 能不能干净地合进目标分支。
         public var mergesCleanly: Bool
         /// 和哪些**别的待审分支**改了同一个文件。
@@ -219,7 +225,7 @@ public enum Review {
             let taskID = parts.count >= 3 ? String(parts[2]) : ""
 
             let log = GitWorkspace.git(
-                ["log", "-1", "--format=%s%n%cI", b], in: repo).stdout
+                ["log", "-1", "--format=%s%n%cI%n%h", b], in: repo).stdout
                 .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
             items.append(Item(
@@ -227,6 +233,7 @@ public enum Review {
                 files: stat.files, insertions: stat.insertions, deletions: stat.deletions,
                 subject: log.first ?? "",
                 committedAt: log.count > 1 ? ISO8601DateFormatter().date(from: log[1]) : nil,
+                head: log.count > 2 ? log[2] : "",
                 mergesCleanly: mergesCleanly(repo: repo, base: base, branch: b),
                 overlapsWith: [],
                 prompt: byID[taskID]?.prompt,
@@ -455,7 +462,8 @@ public enum Review {
                 files: i.files, isStranded: stranded.contains(i.branch),
                 repoNeedsManualReview: needsEvidenceAndReview, risk: t.profile?.risk)
             if needsReview {
-                return MergeReview.approved(branch: i.branch, files: i.files, tasks: tasks)
+                return MergeReview.approved(branch: i.branch, files: i.files, tasks: tasks,
+                                            head: i.head, headAt: i.committedAt)
             }
             return true
         }
@@ -486,8 +494,11 @@ public enum Review {
                 files: item.files, isStranded: isStranded,
                 repoNeedsManualReview: needsEvidenceAndReview, risk: t.profile?.risk)
             if needsReview,
-               !MergeReview.approved(branch: item.branch, files: item.files, tasks: tasks) {
-                let r = MergeReview.approvalsSoFar(branch: item.branch, tasks: tasks)
+               !MergeReview.approved(branch: item.branch, files: item.files, tasks: tasks,
+                                     head: item.head, headAt: item.committedAt) {
+                let r = MergeReview.approvalsSoFar(branch: item.branch, tasks: tasks,
+                                                   head: item.head,
+                                                   headAt: item.committedAt)
                 let why = isStranded ? "搁浅图"
                     : needsEvidenceAndReview ? "这个仓库要 agent 审过才合"
                     : "高危/敏感路径"
@@ -587,7 +598,8 @@ public enum Review {
                 repoNeedsManualReview: needsEvidenceAndReview, risk: t.profile?.risk)
             if needsReview {
                 return MergeReview.approved(branch: i.branch, files: i.files,
-                                            tasks: tasks)
+                                            tasks: tasks,
+                                            head: i.head, headAt: i.committedAt)
             }
             return true
         }
@@ -656,7 +668,9 @@ public enum Review {
                 risk: t.profile?.risk)
             if needsAgentReview,
                !MergeReview.approved(branch: item.branch, files: item.files,
-                                     tasks: tasks) {
+                                     tasks: tasks,
+                                     head: item.head,
+                                     headAt: item.committedAt) {
                 continue
             }
             // **重叠不是「永远不合」，是「排队一个一个合」。**

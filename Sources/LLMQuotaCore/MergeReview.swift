@@ -73,6 +73,10 @@ public enum MergeReview {
         /// 为什么机械条件判不了
         public var whyNotMechanical: String
         public var needed: Int
+        /// 被审的那个提交（短 sha）。见 `Review.Item.head`。
+        public var head: String = ""
+        /// 那个提交的时间。老格式审核任务没记 sha 时用它兜底。
+        public var headAt: Date?
     }
 
     /// 挑出该派给评审 agent 的分支。
@@ -122,7 +126,8 @@ public enum MergeReview {
             return Candidate(branch: item.branch, repo: repo, files: item.files,
                              subject: item.subject,
                              whyNotMechanical: why.joined(separator: "；"),
-                             needed: requiredApprovals(files: item.files))
+                             needed: requiredApprovals(files: item.files),
+                             head: item.head, headAt: item.committedAt)
         }
     }
 
@@ -134,6 +139,7 @@ public enum MergeReview {
         var s = """
         【审查·合入】分支 \(c.branch) 的改动能不能合进 main。
 
+        \(headMarker(c.head))
         这条分支：\(c.subject)
         机器不敢自己拿主意的原因：\(c.whyNotMechanical)
 
@@ -188,7 +194,8 @@ public enum MergeReview {
         var out: [Outcome] = []
         for c in candidates(repo: repo, base: base, tasks: tasks) {
             if out.count >= maxPerCall { break }
-            let done = approvalsSoFar(branch: c.branch, tasks: tasks)
+            let done = approvalsSoFar(branch: c.branch, tasks: tasks,
+                                      head: c.head, headAt: c.headAt)
             if done.approvals >= c.needed {
                 out.append(Outcome(branch: c.branch, action: "已够票",
                                    note: "\(done.approvals)/\(c.needed) 票同意合入"))
@@ -235,11 +242,72 @@ public enum MergeReview {
     ///
     /// 从已完成的审核任务的输出里读结论。认任务的办法是提示词里带着分支名 ——
     /// 和 `DuplicateGuard` 依赖的是同一个约定。
-    public static func approvalsSoFar(branch: String, tasks: [WorkTask])
+    /// 写进审核提示词的「被审提交」标记。
+    ///
+    /// 格式固定，因为它要被 `reviewedHead` 读回来 —— 改动格式就等于
+    /// 让所有历史审核任务的标记失效，别顺手改。
+    static func headMarker(_ head: String) -> String {
+        head.isEmpty ? "" : "被审提交：\(head)"
+    }
+
+    /// 从审核任务的提示词里读回它当时审的是哪个提交。
+    ///
+    /// 老格式（2026-08-20 之前派的）没有这个标记，返回 nil ——
+    /// 那种情况下由时间兜底，见 `verdictIsStale`。
+    static func reviewedHead(in prompt: String) -> String? {
+        guard let r = prompt.range(of: "被审提交：") else { return nil }
+        let rest = prompt[r.upperBound...]
+        let sha = rest.prefix { $0.isHexDigit }
+        return sha.isEmpty ? nil : String(sha)
+    }
+
+    /// 这条审核结论是不是**已经过期了** —— 它审的那一版已经不是现在这一版。
+    ///
+    /// ## 为什么必须有这个判断
+    ///
+    /// 原来 `approvalsSoFar` 只按分支名匹配审核任务，于是结论**永久绑在
+    /// 分支名上**。两个方向都出事：
+    ///
+    /// - **被否的分支永远进不去。** 哪怕后来的提交正是为了回应审核意见 ——
+    ///   实测 2026-08-20：`agent/claude/009f44f5` 被判不合入，理由是
+    ///   「分支里看不到任何验证证据」；证据补进分支之后，`rejected` 照旧为真，
+    ///   唯一的出路变成「人工丢弃那条否决」。而「人工绕过一个 no」正是
+    ///   这套审核机制存在的意义所要防的事。
+    /// - **拿到票之后推什么都能进。** 这一头更严重：一票同意之后再往分支上
+    ///   追加任意提交，`approvals` 照样成立 —— 审核闸对新提交等于不存在。
+    ///
+    /// 结论是针对**某一版 diff** 的，不是针对一个名字的。
+    ///
+    /// ## 兜底为什么用时间
+    ///
+    /// 老的审核任务没记 sha。全当成有效，上面第二个洞就继续开着；
+    /// 全当成无效，会把已经判过的分支重新派一遍、白烧额度。
+    /// 用「分支在这次审核**结束之后**又有新提交」兜底，两头都站得住。
+    static func verdictIsStale(_ t: WorkTask, head: String?, headAt: Date?) -> Bool {
+        if let recorded = reviewedHead(in: t.prompt) {
+            guard let head, !head.isEmpty else { return false }
+            return recorded != head
+        }
+        // 老格式：没记提交，看时间。
+        guard let headAt, let ended = t.endedAt else { return false }
+        return headAt > ended
+    }
+
+    /// - Parameters:
+    ///   - head: 分支现在的头（短 sha）。传 nil 就是老行为（只按分支名），
+    ///     留给还没接上的调用点和单测。
+    ///   - headAt: 分支头的提交时间，给没记 sha 的老审核任务兜底。
+    public static func approvalsSoFar(branch: String, tasks: [WorkTask],
+                                      head: String? = nil,
+                                      headAt: Date? = nil)
         -> (approvals: Int, rejected: Bool, attempts: Int) {
         var approvals = 0, attempts = 0, rejected = false
         for t in tasks where TaskKind.isReview(t.prompt)
             && t.prompt.contains("合入") && t.prompt.contains(branch) {
+            // 过期的结论连 attempts 都不算 —— 否则分支改好之后，
+            // 「派了几次」这个计数从一开始就贴着上限，
+            // `exhausted` 会立刻收口，新的一版根本轮不到被审。
+            if verdictIsStale(t, head: head, headAt: headAt) { continue }
             attempts += 1
             guard t.state == .done else { continue }
             let text = t.outputs.joined(separator: "\n") + "\n" + (t.note ?? "")
@@ -257,8 +325,11 @@ public enum MergeReview {
     /// 没派过审核 → `false`（还没轮到它）。够票 → `true`。
     /// 被否 → `false`，理由已经进了否决名单。
     public static func approved(branch: String, files: [String],
-                               tasks: [WorkTask]) -> Bool {
-        let r = approvalsSoFar(branch: branch, tasks: tasks)
+                               tasks: [WorkTask],
+                               head: String? = nil,
+                               headAt: Date? = nil) -> Bool {
+        let r = approvalsSoFar(branch: branch, tasks: tasks,
+                               head: head, headAt: headAt)
         return !r.rejected && r.approvals >= requiredApprovals(files: files)
     }
 }
