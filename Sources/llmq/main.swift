@@ -1667,6 +1667,31 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             }
             continue
         }
+        // **派生任务的目标分支还在吗。** 审查/证据/刷新入队时分支活着,
+        // 执行时可能早合入或没了 —— 实锤一晚五例对着已合入的分支白跑,
+        // 产出还把正主挤成冲突(详见 TaskKind.boundBranch)。
+        // 作废方式抄 OutputExists:如实记因,不烧一分额度。
+        if let bb = TaskKind.boundBranch(cand.prompt) {
+            let repoPath = NSString(string: cand.repo).expandingTildeInPath
+            let exists = GitWorkspace.git(
+                ["rev-parse", "--verify", "--quiet", "refs/heads/" + bb],
+                in: repoPath).exitCode == 0
+            let merged = exists && GitWorkspace.git(
+                ["merge-base", "--is-ancestor", bb, "main"],
+                in: repoPath).exitCode == 0
+            if !exists || merged {
+                let why = exists ? "目标分支 \(bb) 已合入 main" : "目标分支 \(bb) 已不存在"
+                if !quiet { print(Ansi.yellow("  作废 " + cand.id + "：") + Ansi.dim(why)) }
+                var x = cand
+                x.state = .failed
+                x.discardedAt = Date()
+                x.discardReason = "派活前核目标：" + why
+                x.note = "自动作废（派生任务的目标已了结）：" + why
+                x.frozenBy = nil
+                try? TaskStore.append(x)
+                continue
+            }
+        }
         // 输出侧：这一步要造的东西是不是已经在了（详见 OutputExists）。
         // 和 PremiseCheck 是两个不同的问题 —— 那条问输入，这条问输出。
         if case .alreadyDone(let paths) = OutputExists.check(

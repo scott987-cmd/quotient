@@ -52,6 +52,31 @@ public enum TaskKind {
         prompt.hasPrefix("【刷新")
     }
 
+    /// 这条任务绑的目标分支(审查/证据/刷新这三类派生任务才有)。
+    ///
+    /// ## 为什么要能读出来
+    ///
+    /// 派生任务入队时分支还活着,执行时可能早就合入或没了 —— 2026-08-20
+    /// 一晚五例:三条审核(288s+两快审)、一条证据(267s)全对着已合入的
+    /// 2841e486 白跑,产出还污染 docs/evidence 把正主挤成冲突。
+    /// 派活前要核「分支还在且未合」,第一步就是从提示词读出它绑的是谁。
+    ///
+    /// **和三份模板成对**(改模板必须同步改这里,反之亦然):
+    /// - `MergeReview.reviewPrompt`: 「【审查·合入】分支 <b> 的改动…」
+    /// - `EvidenceGate.evidencePrompt`: 「【证据】把分支 <b> 的改动跑起来…」
+    /// - `StaleBranch` 刷新: 「【刷新】把 main 合进分支 <b>，解决冲突。」
+    public static func boundBranch(_ prompt: String) -> String? {
+        for marker in ["【审查·合入】分支 ", "【证据】把分支 ", "把 main 合进分支 "] {
+            guard let r = prompt.range(of: marker) else { continue }
+            let rest = prompt[r.upperBound...]
+            let end = rest.firstIndex { $0 == " " || $0 == "，" || $0 == "\n" }
+                ?? rest.endIndex
+            let b = String(rest[..<end])
+            return b.isEmpty ? nil : b
+        }
+        return nil
+    }
+
     /// 普通编码任务 —— 上面几类都不是。
     ///
     /// 这是**默认**：一个没写前缀的任务就是要改代码的活，
