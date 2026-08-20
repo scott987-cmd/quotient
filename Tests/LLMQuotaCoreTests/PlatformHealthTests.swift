@@ -66,8 +66,13 @@ final class PlatformHealthTests: XCTestCase {
     /// 正好是这套机制要防的东西。
     ///
     /// 额度用尽等几天会好；没装等多久都不会好。两回事。
+    ///
+    /// 2026-08-20 更新：判据改成「装过又没了才算故障」之后，这一条的
+    /// 前提要写明 —— 冷却豁免不了的是**故障性的**未安装
+    /// （以前能用、现在没了）。一直没装的那种根本不进这个列表，
+    /// 见 `testNeverInstalledIsNotAFault`。
     func testCoolingDoesNotExcuseNotInstalled() {
-        let r = report("MacBook", [entry("Qwen", "未安装")])
+        let r = report("MacBook", [entry("Qwen", "未安装", wasUsable: true)])
         let out = PlatformHealth.problems(reports: [r], excusedBy: ["Qwen"])
         // **先 guard 再取下标。** 断言失败后继续 out[0] 会越界 fatalError，
         // 把整个测试进程连同同一批其他测试的结果一起带走 ——
@@ -85,8 +90,8 @@ final class PlatformHealthTests: XCTestCase {
     /// MiniMax 有媒体和评审两个 runner，显示名一样 ——
     /// 实测输出过 `MiniMax（未安装） · MiniMax（未安装）`。
     func testDuplicateRunnersOfSamePlatformAreCollapsed() {
-        let r = report("MacBook", [entry("MiniMax", "未安装"),
-                                   entry("MiniMax", "未安装")])
+        let r = report("MacBook", [entry("MiniMax", "未安装", wasUsable: true),
+                                   entry("MiniMax", "未安装", wasUsable: true)])
         let out = PlatformHealth.problems(reports: [r])
         guard let line = out.first else { return XCTFail("该报出来却一条都没有") }
         XCTAssertEqual(out.count, 1)
@@ -120,4 +125,46 @@ final class PlatformHealthTests: XCTestCase {
                        "没探过的机器要单独列 —— 我们不知道它怎么样，"
                        + "不等于它没问题")
     }
+    // MARK: 「没装」是配置，不是故障
+
+    private func entry(_ platform: String, _ status: String,
+                       wasUsable: Bool) -> PlatformHealth.Entry {
+        var e = PlatformHealth.Entry(platform: platform, status: status,
+                                     detail: "", seconds: 1)
+        e.wasUsableHere = wasUsable
+        return e
+    }
+
+    /// **一直没装的平台不该天天报异常。**
+    ///
+    /// 老板（2026-08-20）：「不需要装，每台电脑本来安装的东西就不一样」。
+    /// MacBook 上没有 Qwen 和 MiniMax 是那台机器的配置，不是坏了。
+    /// 天天报一遍，人会被训练成跳过整段 —— 真出事那天也一起跳过。
+    func testNeverInstalledIsNotAFault() {
+        let r = report("MacBook", [entry("Qwen", "未安装", wasUsable: false)])
+        XCTAssertTrue(PlatformHealth.problems(reports: [r]).isEmpty,
+                      "这台机器本来就没装它，这是配置不是故障")
+    }
+
+    /// **但装过又没了是故障。**
+    ///
+    /// 要么被误删、要么 PATH 断了，而系统会继续往它派活 ——
+    /// MacBook 上 codex 失败 27 次就是这么来的。
+    func testWasWorkingThenVanishedIsAFault() {
+        let r = report("MacBook", [entry("Codex", "未安装", wasUsable: true)])
+        let out = PlatformHealth.problems(reports: [r])
+        XCTAssertEqual(out.count, 1,
+                       "以前能用、现在没了 —— 这是真出事了")
+        XCTAssertTrue(out.first?.contains("Codex") == true, out.first ?? "")
+    }
+
+    /// **装着却跑不通，一律算故障。**
+    ///
+    /// 不管以前怎么样：二进制在、跑不起来，就是坏了。
+    func testInstalledButBrokenIsAlwaysAFault() {
+        let r = report("mini", [entry("Codex", "不可用", wasUsable: false)])
+        XCTAssertEqual(PlatformHealth.problems(reports: [r]).count, 1,
+                       "装着却跑不通就是坏了，跟以前能不能用无关")
+    }
+
 }

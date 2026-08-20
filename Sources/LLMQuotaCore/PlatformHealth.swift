@@ -45,7 +45,29 @@ public enum PlatformHealth {
             self.seconds = seconds
         }
 
+        /// 这台机器上**以前**这个平台能用过吗。
+        ///
+        /// 由 `record` 在覆盖前对比上一份报告自动填，不用人配。
+        public var wasUsableHere: Bool = false
+
         public var isUsable: Bool { status == "可用" }
+
+        /// 这条算不算**故障**。
+        ///
+        /// 老板（2026-08-20）：「不需要装，每台电脑本来安装的东西就不一样」。
+        ///
+        /// 所以「没装」本身不是故障 —— 那是这台机器的配置。
+        /// 但**装过又没了**是故障：要么被误删，要么 PATH 断了，
+        /// 而系统会继续往它派活。
+        ///
+        /// 不用人手工声明「这台不装什么」：上一份探针报告就是答案。
+        /// 要人维护一份清单，清单迟早和现实对不上 ——
+        /// 那时候它报的就不是现实，是那份清单。
+        public var isFault: Bool {
+            if isUsable { return false }
+            if status == "未安装" { return wasUsableHere }
+            return true      // 装着却跑不通 —— 一律算故障
+        }
     }
 
     /// 一台机器的一次完整探测。
@@ -62,9 +84,24 @@ public enum PlatformHealth {
 
     /// 记下本机这一轮的探测结果。
     public static func record(_ entries: [Entry], now: Date = Date()) {
-        let r = Report(machineID: Paths.machineID(),
+        // 覆盖前先看上一份：哪些平台在这台机器上**曾经**是可用的。
+        // 「一直没装」和「装过又没了」是两回事，只有后者是故障。
+        let id = Paths.machineID()
+        let before = all().first { $0.machineID == id }
+        var everUsable = Set(before?.entries.filter(\.isUsable).map(\.platform) ?? [])
+        // 上一份里已经标过的也要传下去 —— 否则平台坏掉的第二轮，
+        // 「以前能用」这个事实就丢了，故障会自己降级成「本来就没装」。
+        for e in before?.entries ?? [] where e.wasUsableHere {
+            everUsable.insert(e.platform)
+        }
+        let stamped = entries.map { e -> Entry in
+            var e = e
+            e.wasUsableHere = e.isUsable || everUsable.contains(e.platform)
+            return e
+        }
+        let r = Report(machineID: id,
                        machineName: Paths.machineName(),
-                       at: now, entries: entries)
+                       at: now, entries: stamped)
         try? FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true)
         let enc = JSONEncoder()
@@ -129,7 +166,9 @@ public enum PlatformHealth {
             // 「MacBook 上 Qwen 压根没装」被 Mac mini 的冷却记录盖住 ——
             // **豁免规则把一个真问题藏了起来**，正好是这套机制要防的事。
             let bad = r.entries.filter {
-                guard !$0.isUsable else { return false }
+                guard $0.isFault else { return false }
+                // 冷却只豁免「不可用」（额度用尽有专门一行讲）；
+                // 「装过又没了」冷却解释不了，照报。
                 return $0.status == "未安装" || !excusedBy.contains($0.platform)
             }
             guard !bad.isEmpty else { continue }
