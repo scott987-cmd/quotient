@@ -114,3 +114,58 @@ final class VerdictScopeTests: XCTestCase {
                                                   tasks: [no]).rejected)
     }
 }
+
+/// **高危提示词要点名是哪个文件触发的，不要替评审下结论。**
+///
+/// ## 这条对应的真实故障（2026-08-20）
+///
+/// 触发判据 `GitWorkspace.isRiskyPath` 很粗：**任何** `.sh` 都算，
+/// 包括 `reviews/verify-*.sh` 这种纯核对脚本 —— 它跟「验收算不算数」
+/// 毫无关系。而提示词原来直接断言「这条改动碰了决定验收通过算不算数的
+/// 东西（构建脚本 / CI / 签名配置）」。
+///
+/// 后果：评审拿**整个第 1 条**去反驳这句话（「分诊器判成高危是误报」），
+/// 而它是对的。一句不准确的断言，换来的是评审注意力被引开。
+///
+/// **判据本身不放松。** 它的假阳性只是多要一票，假阴性是审核闸被绕过 ——
+/// 不对称摆在那，为了减少摩擦去放松一道安全闸是本末倒置。该改的是措辞。
+final class RiskyPromptWordingTests: XCTestCase {
+
+    private func candidate(files: [String]) -> MergeReview.Candidate {
+        .init(branch: "agent/a/x", repo: "/tmp/x", files: files,
+              subject: "改了点东西", whyNotMechanical: "分诊判成高危",
+              needed: 2, head: "abc1234", headAt: nil)
+    }
+
+    func testNamesTheFileThatTriggeredIt() {
+        let p = MergeReview.reviewPrompt(
+            candidate(files: ["reviews/verify-png.sh", "pack-01/a.png"]))
+        XCTAssertTrue(p.contains("reviews/verify-png.sh"),
+                      "要点名是哪个文件触发的，评审才能自己判断是不是误报：\n\(p)")
+        XCTAssertFalse(p.contains("pack-01/a.png"),
+                       "没触发判据的文件别混进来 —— 那会让这份名单失去意义")
+    }
+
+    /// **别再断言它「碰了构建/CI/签名」** —— 那句话可能是假的。
+    func testDoesNotAssertWhatTheChangeTouched() {
+        let p = MergeReview.reviewPrompt(candidate(files: ["reviews/x.sh"]))
+        XCTAssertFalse(p.contains("**这条改动碰了决定「验收通过」算不算数的东西**"),
+                       "这是断言，不是事实 —— 判据粗到任何 .sh 都算")
+        XCTAssertTrue(p.contains("误报"),
+                      "要明确告诉评审「判据很粗，可能误报，误报就直说」，"
+                      + "否则它会花一整条去反驳这个前提：\n\(p)")
+    }
+
+    /// 需要 1 票的改动不该看到这一整段。
+    func testSingleVoteChangesGetNoRiskSection() {
+        var c = candidate(files: ["reviews/x.sh"])
+        c.needed = 1
+        XCTAssertFalse(MergeReview.reviewPrompt(c).contains("误报"))
+    }
+
+    /// 被审提交要写进提示词 —— 结论绑提交靠的就是它。
+    func testPromptCarriesTheReviewedHead() {
+        let p = MergeReview.reviewPrompt(candidate(files: ["a.png"]))
+        XCTAssertEqual(MergeReview.reviewedHead(in: p), "abc1234")
+    }
+}
