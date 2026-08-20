@@ -34,6 +34,36 @@ public enum EvidenceGate {
         public var subject: String
     }
 
+    /// 这个文件算不算**证据**。
+    ///
+    /// ## 为什么有文本这一条
+    ///
+    /// `criteria` 白纸黑字写着「改了命令行行为 → 实跑输出，连命令一起贴」——
+    /// 而这个过滤器原来只认图片/录屏。2026-08-20 当场兑现：DragonTales 的
+    /// 资产完整性测试任务按条款交了 `docs/evidence/asset-integrity-tests.log`
+    /// （64 行真实测试输出），落地闸却判「没有证据」，又派了一个补证据 agent
+    /// 去跑截图 —— **条款按 A 标准要、闸门按 B 标准收**，正是条款注释里
+    /// 声称要防的那种漂移，引入当天就被全流程验证抓个正着。
+    ///
+    /// 文本证据收紧到 `evidence` 目录下的 .log/.txt：报告类的 .md
+    ///（reviews/EVAL-*.md）不算 —— 那是**评审的产出**，不是**改动的证据**，
+    /// 混了的话每份评审报告都会给自己发证据豁免。
+    public static func isEvidenceFile(_ f: String) -> Bool {
+        let l = f.lowercased()
+        let isVisual = [".png", ".jpg", ".jpeg", ".gif", ".mov", ".mp4"]
+            .contains { l.hasSuffix($0) }
+        if isVisual {
+            return l.contains("evidence") || l.contains("shot")
+                || l.contains("screen") || l.contains("验收")
+                || l.contains("playtest") || l.contains("review")
+        }
+        // 实跑输出：只认 evidence 目录里的
+        if l.hasSuffix(".log") || l.hasSuffix(".txt") {
+            return l.contains("evidence")
+        }
+        return false
+    }
+
     /// 这条分支改的东西，人看得见吗。
     ///
     /// 判据故意从宽：只要动了源码就算「看得见」。反过来（只动文档 / 报告 /
@@ -44,7 +74,12 @@ public enum EvidenceGate {
             let l = f.lowercased()
             // 文档、报告、纯资源清单：看不见，不用截图
             if l.hasSuffix(".md") || l.hasSuffix(".txt") || l.hasSuffix(".json")
-                || l.hasSuffix(".yml") || l.hasSuffix(".yaml") { return false }
+                || l.hasSuffix(".yml") || l.hasSuffix(".yaml")
+                || l.hasSuffix(".log") { return false }
+            // pbxproj 是 xcodegen 的机器产物：加个测试文件它就变。
+            // 「人看得见吗」= 否。它改坏的风险另有人管 ——
+            // isRiskyPath 对它要 2 票审核，那道闸不动。
+            if l.hasSuffix(".pbxproj") { return false }
             // 图片和录屏本身就是证据，不算「被改的东西」
             if [".png", ".jpg", ".jpeg", ".gif", ".mov", ".mp4"]
                 .contains(where: { l.hasSuffix($0) }) { return false }

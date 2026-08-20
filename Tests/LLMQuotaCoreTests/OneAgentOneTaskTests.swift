@@ -116,3 +116,47 @@ final class OneAgentOneTaskTests: XCTestCase {
         }
     }
 }
+
+/// **证据的「要」和「收」必须是同一套标准。**
+///
+/// 2026-08-20 当场兑现的漂移：条款（criteria）写着「改了命令行行为 →
+/// 实跑输出」，DragonTales 的测试任务照办交了
+/// `docs/evidence/asset-integrity-tests.log`（64 行真实输出）——
+/// 落地闸的过滤器却只认图片，判「没有证据」，又派了一个补证据 agent
+/// 去跑截图。条款按 A 标准要、闸门按 B 标准收。
+final class EvidenceFileRecognitionTests: XCTestCase {
+
+    func testRunOutputUnderEvidenceDirCounts() {
+        XCTAssertTrue(EvidenceGate.isEvidenceFile("docs/evidence/asset-integrity-tests.log"),
+                      "criteria 白纸黑字说实跑输出算证据 —— 收的时候不能不认")
+        XCTAssertTrue(EvidenceGate.isEvidenceFile("docs/evidence/run-output.txt"))
+    }
+
+    /// 评审报告不算证据 —— 那是**评审的产出**，不是**改动的证据**。
+    /// 混了的话每份 EVAL 报告都会给自己发证据豁免。
+    func testReviewReportsDoNotCount() {
+        XCTAssertFalse(EvidenceGate.isEvidenceFile("reviews/EVAL-合入-abc-def.md"))
+        XCTAssertFalse(EvidenceGate.isEvidenceFile("reviews/notes.log"),
+                       "文本证据只认 evidence 目录，reviews/ 下的不算")
+    }
+
+    func testVisualEvidenceStillWorksAsBefore() {
+        XCTAssertTrue(EvidenceGate.isEvidenceFile("docs/evidence/home.png"))
+        XCTAssertTrue(EvidenceGate.isEvidenceFile("shots/before-after.mov"))
+        XCTAssertFalse(EvidenceGate.isEvidenceFile("Assets/hero.png"),
+                       "随便一张美术资源不因为是图片就算证据")
+    }
+
+    /// pbxproj 是 xcodegen 的机器产物：加个测试文件它就变。
+    /// 它不该触发「改了人看得见的东西 → 要截图」；
+    /// 它的风险由 isRiskyPath 的 2 票审核单独看着，那道闸不动。
+    func testMachineArtifactsAreNotVisibleBehavior() {
+        XCTAssertFalse(EvidenceGate.changesVisibleBehavior(
+            ["DragonTales.xcodeproj/project.pbxproj",
+             "DragonTalesTests/AssetIntegrityTests.swift",
+             "docs/evidence/run.log"]),
+            "测试 + 工程文件 + 证据日志 —— 没有一样是人看得见的行为")
+        XCTAssertTrue(GitWorkspace.isRiskyPath("DragonTales.xcodeproj/project.pbxproj"),
+                      "豁免的只是「要不要截图」，2 票审核那道闸必须还在")
+    }
+}

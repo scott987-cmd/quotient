@@ -251,15 +251,9 @@ public enum Review {
                 //
                 // 不硬性要求目录，agent 放哪儿都能认出来 ——
                 // 少一条会被忘掉的规矩。
-                evidence: stat.files.filter { f in
-                    let l = f.lowercased()
-                    let isVisual = [".png", ".jpg", ".jpeg", ".gif",
-                                    ".mov", ".mp4"].contains { l.hasSuffix($0) }
-                    guard isVisual else { return false }
-                    return l.contains("evidence") || l.contains("shot")
-                        || l.contains("screen") || l.contains("验收")
-                        || l.contains("playtest") || l.contains("review")
-                }))
+                // 判定在 EvidenceGate.isEvidenceFile —— 和「什么算证据」的
+                // 条款同一个家。原来内联在这里，条款改了它不会跟着改。
+                evidence: stat.files.filter(EvidenceGate.isEvidenceFile)))
         }
 
         // 交叉比对文件重叠。O(n²) 但 n 是待审分支数，几十个顶天了。
