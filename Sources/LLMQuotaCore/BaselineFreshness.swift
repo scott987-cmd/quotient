@@ -68,6 +68,26 @@ public enum BaselineFreshness {
             : .stale(branches: names.sorted(), files: total)
     }
 
+    /// 这个候选任务到底该不该被挡 —— **亲任务豁免**在这里。
+    ///
+    /// ## 为什么要豁免
+    ///
+    /// 2026-08-20 实测死锁（Flint 首日）：移动手感任务超时失败，
+    /// 分支上躺着 7 个文件的半成品；重试它时，这道闸说「main 还差
+    /// agent/kimi/c3dcbbaa 的成果没合」把它挡住 —— **闸等分支合入，
+    /// 分支等任务跑完，任务被闸挡着**，三环扣死，整个仓库冻结。
+    ///
+    /// 亲任务不是来「拿旧基线重造」的 —— 它带着接力现场、就是去
+    /// **完成**那条分支的。挡它 = 挡住唯一能解开基线的人。
+    /// 和「审查/刷新任务豁免」同一个道理：解锁钥匙不能被锁在门外。
+    ///
+    /// 别的分支造成的不新鲜照样挡（把亲分支摘掉后还有剩 → 仍算 stale）。
+    public static func blocks(_ r: Result, candidateBranch: String?) -> Result {
+        guard case .stale(let branches, let files) = r else { return r }
+        let others = branches.filter { $0 != candidateBranch }
+        return others.isEmpty ? .fresh : .stale(branches: others, files: files)
+    }
+
     /// 给日志 / 人看的一句话。
     ///
     /// 必须写出**是什么在等**和**为什么不能先干** —— 只说「基线不新鲜」

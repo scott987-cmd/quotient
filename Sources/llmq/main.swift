@@ -1625,18 +1625,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     // 都因为把任务当成对共享代码库的独立并行单元。
     //
     // 并行度从**仓库**来（5 个活仓库 = 5 条流），不从平台来。
-    let (queue, deferred) = RepoLease.filter(rawQueue, tasks: history)
-    if !quiet {
-        for (t, why) in deferred.prefix(3) {
-            print(Ansi.dim("  让开 " + t.id + "：" + why))
-        }
-    }
-    guard !queue.isEmpty else {
-        if !quiet {
-            print(Ansi.dim("排队的任务所在仓库都有人在改，等它们落地。"))
-        }
-        return .noTask
-    }
+    // **先核前提，后上租约。** 原来的顺序反了：租约先给每个仓库占坑，
+    // 基线闸再把占坑的拒掉 —— 被拒的白白烧掉本仓库这一轮的名额，
+    // 排在后面的媒体任务每轮都被「让开」，实测把 Flint 整仓饿死
+    //（2026-08-20：一条基线阻塞的任务让 10 条队列冻了半小时）。
+    let queue = rawQueue
 
     // **派活前核一遍前提。** 任务是在定义那一刻的世界里写的，执行发生在
     // 很久以后。实测浪费：13 个「基线错了：从 main 开工，而 main 上没有
@@ -1664,10 +1657,13 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         //（见 TaskKind.needsFreshBaseline）。不放行它们就是死结：
         // 基线旧 → 挡住审查任务 → 分支等不到 agent 审核 →
         // 永远合不进去 → 基线永远旧。**解开基线的钥匙被基线锁在外面。**
-        if case .stale = fresh, TaskKind.needsFreshBaseline(cand.prompt) {
+        // 亲任务豁免见 BaselineFreshness.blocks：任务自己的分支不算
+        // 挡它的理由 —— 它是去完成那条分支的（retry/接力），不是重造。
+        let verdict = BaselineFreshness.blocks(fresh, candidateBranch: cand.branch)
+        if case .stale = verdict, TaskKind.needsFreshBaseline(cand.prompt) {
             if !quiet {
                 print(Ansi.dim("  等基线 " + cand.id + "："
-                    + BaselineFreshness.describe(fresh)))
+                    + BaselineFreshness.describe(verdict)))
             }
             continue
         }
@@ -1718,7 +1714,20 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         if !quiet { print(Ansi.dim("排队的任务前提都还没就绪。")) }
         return .noTask
     }
-    let vettedQueue = vetted
+    // 仓库级独占放在**前提核完之后**：只有真正够格开工的候选才占坑。
+    // 反过来（旧顺序）的代价见上面调序注释。
+    let (vettedQueue, leaseDeferred) = RepoLease.filter(vetted, tasks: history)
+    if !quiet {
+        for (t, why) in leaseDeferred.prefix(3) {
+            print(Ansi.dim("  让开 " + t.id + "：" + why))
+        }
+    }
+    guard !vettedQueue.isEmpty else {
+        if !quiet {
+            print(Ansi.dim("排队的任务所在仓库都有人在改，等它们落地。"))
+        }
+        return .noTask
+    }
     let dash = LLMQuota.dashboard()
 
     var task: WorkTask! = nil
