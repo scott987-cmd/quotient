@@ -59,7 +59,13 @@ public enum StaleBranch {
             guard !item.mergesCleanly else { return nil }
             // 还在跑 / 失败的不碰：跑着的下面有 agent 在动，
             // 失败的产出本来就该人看，刷新只会把一堆垃圾洗干净再端上来。
-            guard let t = byID[item.taskID], t.state == .done else { return nil }
+            // **图分支要走统一查找。** 2026-08-20 早上把 Review 侧的
+            // taskFor 统一成「图 ID 找步骤」时,这里漏了(按调用次数数的,
+            // 它自己另写了一份 byID 直查)——于是图分支永远「任务记录没了、
+            // 不自动刷」:Flint 产线图 13 个文件卡冲突数小时,连 skipped
+            // 清单都标错原因。第 7 例同概念多处判定。
+            guard let t = Review.taskFor(item.taskID, in: byID, all: tasks),
+                  t.state == .done else { return nil }
             guard item.files.count >= minFilesToRefresh else { return nil }
             let behind = commitsBehind(repo: repo, branch: item.branch, base: base)
             // main 一步没动却冲突 —— 那不是腐烂，是两条分支撞了同一处设计，
@@ -89,7 +95,7 @@ public enum StaleBranch {
         return Review.list(repo: repo, base: base, tasks: tasks).compactMap { item in
             guard !item.mergesCleanly else { return nil }
             let n = item.files.count
-            guard let t = byID[item.taskID] else {
+            guard let t = Review.taskFor(item.taskID, in: byID, all: tasks) else {
                 return Skipped(branch: item.branch,
                                reason: "任务记录没了 —— 不知道当初谁做的、跑完没有，"
                                      + "自动环节一律不碰，只能人工 work review 处置",
