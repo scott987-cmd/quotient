@@ -999,11 +999,22 @@ public struct MiniMaxMediaRunner: AgentRunner {
               rest="${line#IMG }"
               spec="${rest%%::*}"; desc="${rest#*::}"
               parts=(${=spec})              # zsh 内建分词
-              path="${parts[1]-}"; ratio="${parts[2]-}"
-              [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
+              # **这个变量绝对不能叫 `path`。** zsh 里 `path` 是绑死
+              # `PATH` 的特殊数组：`path=foo.png` 会把 PATH 直接改成
+              # `foo.png`，之后所有裸命令（file、sips、awk…）全部
+              # command not found —— 不报错、不退出，只是静静地全失败。
+              # 上面「铁律 ①」写的「同一个 zsh 里 $(…|awk…) 第一次成功、
+              # 之后每次 command not found」就是这个：第一次是在
+              # 第一条 IMG 之前跑的，PATH 还在。当时只记了现象没查出根因，
+              # 于是用「只用内建 + 绝对路径」绕了过去，绕了很久。
+              # 2026-08-20 加 PNG 格式校验时才撞出来 —— 那段校验用了裸
+              # `file`/`sips`，实测 PATH 已经是 7 个字符，校验永远走
+              # 「转换失败」分支，**比不加更糟：它会谎报「校验过了但失败」**。
+              dest="${parts[1]-}"; ratio="${parts[2]-}"
+              [ -n "$dest" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               # 幂等续跑：上一轮已经生成的不重烧额度（重试保留半成品分支）。
-              [ -s "$path" ] && { echo "SKIP $path 已存在"; ok=$((ok+1)); continue }
-              /bin/mkdir -p "${path:h}"     # :h = 目录部分，zsh 内建
+              [ -s "$dest" ] && { echo "SKIP $dest 已存在"; ok=$((ok+1)); continue }
+              /bin/mkdir -p "${dest:h}"     # :h = 目录部分，zsh 内建
               # 比例参数必须走数组展开。zsh 的 ${ratio:+--aspect-ratio "$ratio"}
               # 不做词切分，整段并成**一个**参数 —— mmx 收到
               # "--aspect-ratio 1:1"（一个词）当场打用法退出。
@@ -1012,30 +1023,55 @@ public struct MiniMaxMediaRunner: AgentRunner {
               extra=()
               [ -n "$ratio" ] && extra=(--aspect-ratio "$ratio")
               [ -n "$subjref" ] && extra+=(--subject-ref "type=character,image=$subjref")
-              run_mmx image generate --prompt "$desc" --out "$path" \
+              run_mmx image generate --prompt "$desc" --out "$dest" \
                 --timeout 300 "${extra[@]}" </dev/null >"$tmpout" 2>"$tmperr"
-              if [ -s "$path" ]; then
-                echo "OK  $path"; ok=$((ok+1))
+              if [ -s "$dest" ]; then
+                # **后缀说是什么，里面就得真是什么。**
+                #
+                # 实测（2026-08-20）：mmx 会把 JPEG 数据写进 `.png` 文件。
+                # 素材包买家是独立游戏开发者，他们买 PNG 就是冲着
+                # **透明通道**来的 —— 拿到一个伪装成 PNG 的 JPEG，
+                # 背景是白的、边缘有压缩噪点，等于这张图废了。
+                # 而这件事不报错、不崩、文件也确实存在，纯靠人打开才发现。
+                #
+                # 转成真 PNG 只能让容器诚实，**换不回透明通道**
+                #（JPEG 里本来就没有），所以必须同时喊一声让人知道。
+                case "$dest" in
+                  *.png)
+                    case "$(/usr/bin/file -b "$dest" 2>/dev/null)" in
+                      PNG*) ;;
+                      *)
+                        if /usr/bin/sips -s format png "$dest" --out "$dest.fix" >/dev/null 2>&1 \
+                           && [ -s "$dest.fix" ]; then
+                          /bin/mv "$dest.fix" "$dest"
+                          echo "FIX $dest 原本不是 PNG，已转真 PNG（**无透明通道**，需要透明就得重做）"
+                        else
+                          /bin/rm -f "$dest.fix"
+                          echo "WARN $dest 后缀 .png 但内容不是 PNG，且转换失败"
+                        fi;;
+                    esac;;
+                esac
+                echo "OK  $dest"; ok=$((ok+1))
               else
                 err="$(<$tmperr) $(<$tmpout)"
-                echo "FAIL $path :: ${err[1,400]}"; bad=$((bad+1))
+                echo "FAIL $dest :: ${err[1,400]}"; bad=$((bad+1))
               fi;;
             MUSIC\ *)
               rest="${line#MUSIC }"
               spec="${rest%%::*}"; desc="${rest#*::}"
               parts=(${=spec})
-              path="${parts[1]-}"
-              [ -n "$path" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
+              dest="${parts[1]-}"
+              [ -n "$dest" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               # 幂等续跑：上一轮已经生成的不重烧额度（重试保留半成品分支）。
-              [ -s "$path" ] && { echo "SKIP $path 已存在"; ok=$((ok+1)); continue }
-              /bin/mkdir -p "${path:h}"
+              [ -s "$dest" ] && { echo "SKIP $dest 已存在"; ok=$((ok+1)); continue }
+              /bin/mkdir -p "${dest:h}"
               run_mmx music generate --prompt "$desc" --instrumental \
-                --out "$path" --timeout 300 </dev/null >"$tmpout" 2>"$tmperr"
-              if [ -s "$path" ]; then
-                echo "OK  $path"; ok=$((ok+1))
+                --out "$dest" --timeout 300 </dev/null >"$tmpout" 2>"$tmperr"
+              if [ -s "$dest" ]; then
+                echo "OK  $dest"; ok=$((ok+1))
               else
                 err="$(<$tmperr) $(<$tmpout)"
-                echo "FAIL $path :: ${err[1,400]}"; bad=$((bad+1))
+                echo "FAIL $dest :: ${err[1,400]}"; bad=$((bad+1))
               fi;;
           esac
         done <<< "$LLMQ_MEDIA_SPEC"
@@ -2078,7 +2114,7 @@ public struct MiniMaxReviewRunner: AgentRunner {
         }
 
         tmpd="${TMPDIR:-/tmp}/mmxreview-$$"
-        mkdir -p "$tmpd"
+        /bin/mkdir -p "$tmpd"
 
         # 材料：仓库现状。**评审要有据可依，不能凭任务描述空想。**
         material=""
@@ -2284,7 +2320,7 @@ public struct MiniMaxReviewRunner: AgentRunner {
         git rev-parse --abbrev-ref HEAD > "$tmpd/branch.txt" 2>/dev/null
         br="$(<$tmpd/branch.txt)"
         tid="${br##*/}"
-        mkdir -p reviews
+        /bin/mkdir -p reviews
         if [ -n "$tid" ] && [ "$tid" != "$br" ]; then
           out="reviews/EVAL-${kind}-${stamp}-${tid}.md"
         else
