@@ -573,20 +573,26 @@ public struct WorkScheduler: Sendable {
                             + "，剩余不足为它预留的 \(Format.percent(reserve))"))
                     continue
                 }
+                let pin = pinBonus(platform: p, task: task)
                 candidates.append((Pick(
                     platform: p, runner: runner,
-                    reason: "\(tightest.0.label)已用 \(Format.percent(tightest.1))"
+                    reason: (pin > 0 ? "点名优先；" : "")
+                        + "\(tightest.0.label)已用 \(Format.percent(tightest.1))"
                         + "，剩 \(Format.percent(headroom))，是当前最闲的"
-                ), headroom + overkillPenalty(platform: p, task: task, history: history)
+                ), headroom + pin
+                    + overkillPenalty(platform: p, task: task, history: history)
                     + rolePreferenceBonus(platform: p, task: task)
                     + stickinessBonus(platform: p, task: task, history: history)))
             } else {
                 // 一条上限都没配。不能因此排除它 —— 那是默认状态，
                 // 排除的话调度器一个平台都挑不出来。给个中性分，排在有数据的后面。
+                let pin = pinBonus(platform: p, task: task)
                 candidates.append((Pick(
                     platform: p, runner: runner,
-                    reason: "未配额度上限，按中性优先级参与调度"
-                ), 0.5 + overkillPenalty(platform: p, task: task, history: history)
+                    reason: (pin > 0 ? "点名优先；" : "")
+                        + "未配额度上限，按中性优先级参与调度"
+                ), 0.5 + pin
+                    + overkillPenalty(platform: p, task: task, history: history)
                     + stickinessBonus(platform: p, task: task, history: history)))
             }
         }
@@ -615,6 +621,24 @@ public struct WorkScheduler: Sendable {
         }
         return Decision(candidates: ordered, rejected: rejected,
                         dispatcher: dispatcherPlatform)
+    }
+
+    /// 点名(`--platform` / `preferredPlatform`)的平台优先。
+    ///
+    /// ## 这条对应的真实失效(2026-08-20)
+    ///
+    /// 这个字段有**五处写入**(work add/手机/证据/刷新/拆图继承)、
+    /// 调度端**零处读取** —— 和当天早上「审核结论写了没人读」一模一样的
+    /// 形状:两侧各自正确,字段本身是死的。上线以来点名从没生效过,
+    /// 实锤是 `--platform volcark` 的零碎活被 Kimi 抢走
+    /// (e4e35d32,首选理由里点名只字未提),老板「烧掉快到期的 opencode
+    /// 套餐」的指令因此落空。
+    ///
+    /// +1.0 盖过额度余量(0..1)和所有软加分(粘性 0.12 等):
+    /// 点名的只要**活着**就赢。硬闸(用尽/静音/没装/角色上限/媒体向)
+    /// 都在打分之前,点名压不倒它们 —— **优先仍然不是命令**。
+    func pinBonus(platform: Platform, task: WorkTask?) -> Double {
+        task?.preferredPlatform == platform ? 1.0 : 0
     }
 
     /// 上次干过这个仓库的人优先。
