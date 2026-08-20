@@ -152,6 +152,43 @@ public enum TaskBoardStore {
         return publish(board)
     }
 
+    /// **立刻重发一次看板，不等采集周期。**
+    ///
+    /// 老板（2026-08-20）：「现在有进行中的任务，为啥我看不到」。
+    ///
+    /// 实测的时间尺度对不上：看板原先只在 `LLMQuota.collect` 里发，
+    /// 约 2 分钟一轮；而一条媒体任务只跑 150–170 秒。再叠加镜像 30 秒
+    /// 一轮 + iCloud 到手机的分钟级传播 —— **「进行中」这个状态在链路上
+    /// 存在的时间，比看到它所需的延迟还短**，手机上看到的永远是
+    /// 「上一个已跑完、下一个还没开始」的间隙。
+    ///
+    /// 所以任务开跑的那一刻直接重发一次：可见窗口从「最多 2 分钟」
+    /// 变成「整个任务时长」。
+    ///
+    /// 这个调用**不碰额度采集**（`TaskBoard.build` 只吃本地任务库），
+    /// 所以很便宜 —— 不会因为在派活的热路径上加了一次发布就拖慢开工。
+    @discardableResult
+    public static func publishNow(
+        tasks: [WorkTask] = TaskStore.all(),
+        machineID: String = Paths.machineID(),
+        machineName: String = Paths.machineName(),
+        now: Date = Date()
+    ) -> Bool {
+        let built = TaskBoard.build(from: tasks, machineName: machineName,
+                                    repoAliases: RepoRegistry.all(), now: now)
+        let planned = PlannedStore.all().map {
+            MachineTaskBoard.PlannedBrief(
+                id: $0.id,
+                title: TaskBrief.clampTitle($0.prompt),
+                repoAlias: $0.repoAlias)
+        }
+        return publish(MachineTaskBoard(
+            machineID: machineID, machineName: machineName,
+            generatedAt: now,
+            tasks: built.tasks, tasksTruncated: built.truncated,
+            planned: planned))
+    }
+
     @discardableResult
     public static func publish(_ board: MachineTaskBoard) -> Bool {
         guard let dir else { return false }

@@ -1814,6 +1814,13 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     task.startedAt = Date()
     try TaskStore.append(task)
     Inbox.writeResult(for: task)
+    // **开跑就立刻重发看板，不等采集周期。**
+    //
+    // 看板原先只在 collect 里发（约 2 分钟一轮），而一条媒体任务只跑
+    // 150–170 秒 —— 再加镜像 30 秒 + iCloud 分钟级传播，
+    // 「进行中」在链路上存在的时间比看到它所需的延迟还短。
+    // 老板看到的永远是「上一个跑完、下一个没开始」的间隙。
+    TaskBoardStore.publishNow()
 
     var attempts: [String] = []
     /// 上一个平台留下的交接信息。非 nil 表示这是接力，不是新开工。
@@ -2262,6 +2269,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
 
                 if c.exitCode == 0 {
                     task.state = .done
+                    // 收尾也要立刻重发：不然任务已经跑完，手机上还挂着
+                    // 「正在干」直到下一次采集（约 2 分钟）。
+                    // 开跑和收尾两头都发，「进行中」的显示才和事实同步。
+                    defer { TaskBoardStore.publishNow() }
                     // **把执行器的 stdout 存进 outputs。**
                     //
                     // 审核执行器把结论行回显到 stdout（见 Work.swift 里
