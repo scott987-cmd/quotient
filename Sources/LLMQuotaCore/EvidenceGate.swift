@@ -124,6 +124,16 @@ public enum EvidenceGate {
         public var note: String
     }
 
+    /// 这条分支已经被派过几次补证据。
+    ///
+    /// 数的是**派出去过几次**，不管跑成没跑成 —— 判「该不该再派」要的
+    /// 就是这个。
+    static func evidenceAttempts(branch: String, tasks: [WorkTask]) -> Int {
+        tasks.filter {
+            $0.prompt.hasPrefix("【证据】") && $0.prompt.contains(branch)
+        }.count
+    }
+
     /// 给缺证据的分支派补证据任务。
     ///
     /// - Parameter maxPerCall: 一轮最多派几个。默认 1 —— 跑模拟器截图是重活。
@@ -133,6 +143,27 @@ public enum EvidenceGate {
         var out: [Outcome] = []
         for c in candidates(repo: repo, base: base, tasks: tasks) {
             if out.count >= maxPerCall { break }
+            // **派够次数还交不出证据 —— 收口，别再派。**
+            //
+            // 去重只挡得住「已经派过、还没跑完」。任务一旦失败或超时，
+            // 它就不再是重复项 —— 于是下一轮立刻重派，永远重派。
+            //
+            // 实测（2026-08-20）：`agent/claude/009f44f5` 改的 107 个文件
+            // 全是素材图片，而 AssetPacks 根本没有能跑起来截图的 App。
+            // 补证据任务每轮派一次、每次跑满 601 秒超时被杀，然后再派。
+            //
+            // 这个洞旁边那条路已经补过了：审核派发有 `MergeReview.exhausted`，
+            // 就是为同一件事写的（同两条分支一夜被派了 16 次和 13 次审核）。
+            // **当时只补了审核那一侧。** 所以这里直接复用那个判据，
+            // 不再写第二份 —— 两份迟早会漂移出不一样的答案。
+            let attempts = evidenceAttempts(branch: c.branch, tasks: tasks)
+            if MergeReview.exhausted(attempts: attempts, needed: 1) {
+                out.append(Outcome(
+                    branch: c.branch, enqueued: false,
+                    note: "派了 \(attempts) 次补证据都没交出来 ——"
+                        + "不再重试，留给人工处置"))
+                continue
+            }
             do {
                 // 不分诊不拆图：说死了的机械活。
                 let r = try TaskIntake.enqueue(
