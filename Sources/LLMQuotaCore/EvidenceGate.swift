@@ -129,8 +129,13 @@ public enum EvidenceGate {
     /// 数的是**派出去过几次**，不管跑成没跑成 —— 判「该不该再派」要的
     /// 就是这个。
     static func evidenceAttempts(branch: String, tasks: [WorkTask]) -> Int {
+        // 和 `evidencePrompt` 的模板首行是一对 —— 改模板必须同步改这里。
+        // 匹配精确前缀而不是「前缀 + 任意位置含分支名」：后者会被
+        // 提示词里**提到**这条分支的其他证据任务污染（同款污染在
+        // 合入计票那边真实发生过，见 MergeReview.isMergeReviewPrompt）。
+        // 尾部空格防前缀吞并（agent/a/x ≠ agent/a/xy）。
         tasks.filter {
-            $0.prompt.hasPrefix("【证据】") && $0.prompt.contains(branch)
+            $0.prompt.hasPrefix("【证据】把分支 " + branch + " ")
         }.count
     }
 

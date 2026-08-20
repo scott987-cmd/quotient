@@ -169,3 +169,48 @@ final class RiskyPromptWordingTests: XCTestCase {
         XCTAssertEqual(MergeReview.reviewedHead(in: p), "abc1234")
     }
 }
+
+/// **计票只认「审这条分支」的任务 —— 提到这条分支的不算。**
+///
+/// ## 这条对应的真实污染（2026-08-20 实测）
+///
+/// 原判法是 `isReview && prompt.contains("合入") && prompt.contains(branch)`。
+/// 而落地后系统会自动排**复查**任务，提示词长这样：
+///
+///     【审查】复查刚合入 main 的合并 8dbb47c（来源分支 agent/graph/3f68707c）
+///
+/// 「刚合入」含「合入」、括号里含分支名 —— 三个条件全中。于是一条
+/// **复查**任务被当成那条分支的合入审核计票、计次数。票数被无关任务
+/// 污染的审核闸，判出来的就不是这条分支的事实。
+final class VoteMatchingPrecisionTests: XCTestCase {
+
+    func testPostLandRecheckDoesNotPolluteTheVote() {
+        var t = WorkTask(
+            id: "rc1",
+            prompt: "【审查】复查刚合入 main 的合并 8dbb47c（来源分支 "
+                + "agent/graph/3f68707c）。\n步骤：用 `git show 8dbb47c` 读完整 diff",
+            repo: "/tmp/x")
+        t.state = .done
+        t.outputs = ["**结论**：不合入"]   // 就算它写了结论也不关这条分支的事
+        let r = MergeReview.approvalsSoFar(branch: "agent/graph/3f68707c",
+                                           tasks: [t])
+        XCTAssertEqual(r.attempts, 0,
+                       "复查任务不是这条分支的合入审核 —— 计进去，"
+                       + "attempts 会被污染、exhausted 会提前收口")
+        XCTAssertFalse(r.rejected,
+                       "更糟的是它的「结论」会被当成这条分支的否决")
+    }
+
+    /// 前缀吞并：`agent/a/x` 不能匹配到 `agent/a/xy` 的审核。
+    func testBranchNameDoesNotSwallowSiblings() {
+        var t = WorkTask(
+            id: "rv1",
+            prompt: "【审查·合入】分支 agent/a/xy 的改动能不能合进 main。",
+            repo: "/tmp/x")
+        t.state = .done
+        t.outputs = ["**结论**：合入"]
+        let r = MergeReview.approvalsSoFar(branch: "agent/a/x", tasks: [t])
+        XCTAssertEqual(r.attempts, 0, "xy 的审核不是 x 的审核")
+        XCTAssertEqual(r.approvals, 0, "更不能把 xy 的同意票记到 x 头上")
+    }
+}

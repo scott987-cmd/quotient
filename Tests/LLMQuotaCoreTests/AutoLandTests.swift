@@ -123,12 +123,52 @@ final class AutoLandTests: XCTestCase {
         XCTAssertTrue(out.first?.landed == true, "放行的那条该真的合进去了：\(out)")
     }
 
-    /// 进过否决名单（上次验收失败）的分支不再自动重试。
+    /// 进过否决名单（上次验收失败）的分支，**同一版**不再自动重试。
     func testVetoedBranchIsSkipped() {
         makeBranch("t7")
-        Review.setAutoLandVeto(branch: "agent/qwen/t7", note: "上次验收失败")
+        let head = git(["rev-parse", "--short", "agent/qwen/t7"]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        Review.setAutoLandVeto(branch: "agent/qwen/t7",
+                               note: "上次验收失败", head: head)
         let out = Review.autoLand(repo: repo, tasks: [doneTask("t7")])
-        XCTAssertTrue(out.isEmpty, "否决过的分支每轮重验会白烧全量构建：\(out)")
+        XCTAssertTrue(out.isEmpty, "否决过的提交每轮重验会白烧全量构建：\(out)")
+    }
+
+    /// **被否 → 改好 → 要能重新验收。** 这是否决绑提交的全部意义。
+    ///
+    /// 审核结论那层（VerdictScopeTests）当天已经改成绑提交，但这层否决
+    /// 还绑分支名的话，同一条闭环走到落地这步照样被按名字扣住 ——
+    /// **两层只修一层等于没修**。这条测试钉的就是整条闭环的下半截。
+    func testVetoExpiresAfterNewCommitAndBranchLands() {
+        makeBranch("t7b")
+        let oldHead = git(["rev-parse", "--short", "agent/qwen/t7b"]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        Review.setAutoLandVeto(branch: "agent/qwen/t7b",
+                               note: "验收失败：测试红了", head: oldHead)
+        // 修复提交 —— 回应否决的那种
+        git(["checkout", "agent/qwen/t7b"])
+        write("Feature.swift", "// t7b 修好了\n")
+        git(["add", "."]); git(["commit", "-m", "t7b 修复"])
+        git(["checkout", "main"])
+        let out = Review.autoLand(repo: repo, tasks: [doneTask("t7b")])
+        XCTAssertEqual(out.count, 1,
+                       "否决是给旧提交的；新提交要能重进验收，"
+                       + "否则唯一出路是人工清否决名单：\(out)")
+        XCTAssertTrue(out.first?.landed == true, out.first?.note ?? "")
+    }
+
+    /// 老格式否决（没记提交）保持粘性 —— 升级本身不放行任何东西。
+    func testLegacyVetoWithoutHeadStaysSticky() {
+        makeBranch("t7c")
+        Review.setAutoLandVeto(branch: "agent/qwen/t7c",
+                               note: "老格式否决", head: "")
+        git(["checkout", "agent/qwen/t7c"])
+        write("Feature.swift", "// 又提交了\n")
+        git(["add", "."]); git(["commit", "-m", "t7c 新提交"])
+        git(["checkout", "main"])
+        let out = Review.autoLand(repo: repo, tasks: [doneTask("t7c")])
+        XCTAssertTrue(out.isEmpty,
+                      "head 未知的否决不知道该对哪一版过期 —— 只能留给人：\(out)")
     }
 
     /// 一轮限流：两条独立可合分支，maxPerCall=1 只吃一条。

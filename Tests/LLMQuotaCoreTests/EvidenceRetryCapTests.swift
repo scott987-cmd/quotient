@@ -72,3 +72,21 @@ final class EvidenceRetryCapTests: XCTestCase {
                       "第 3 次还交不出来，就该停了，留给人工")
     }
 }
+
+extension EvidenceRetryCapTests {
+    /// 提示词里**提到**别的分支不算给那条分支派过证据。
+    /// 同款污染在合入计票那边真实发生过（复查任务含「合入」+ 分支名）。
+    func testMentioningAnotherBranchDoesNotCount() {
+        var t = WorkTask(
+            id: "ev-b",
+            prompt: "【证据】把分支 agent/a/y 的改动跑起来，留下证据。"
+                + "参考之前 agent/a/x 交证据的方式。",
+            repo: "/tmp/x")
+        t.state = .done
+        XCTAssertEqual(EvidenceGate.evidenceAttempts(branch: "agent/a/x",
+                                                     tasks: [t]), 0,
+                       "这是给 y 派的证据任务，只是提了一嘴 x")
+        XCTAssertEqual(EvidenceGate.evidenceAttempts(branch: "agent/a/y",
+                                                     tasks: [t]), 1)
+    }
+}

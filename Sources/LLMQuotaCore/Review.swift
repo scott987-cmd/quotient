@@ -363,13 +363,51 @@ public enum Review {
     static var autoLandVetoURL: URL {
         Paths.appSupport.appendingPathComponent("autoland-veto.json")
     }
-    static func autoLandVeto() -> [String: String] {
-        guard let d = try? Data(contentsOf: autoLandVetoURL) else { return [:] }
-        return (try? JSONDecoder().decode([String: String].self, from: d)) ?? [:]
+    /// 一条否决。**记的是「哪个提交没过验收」，不是「哪条分支坏了」。**
+    ///
+    /// 和 `MergeReview.verdictIsStale` 是同一个道理、同一天修的同一个洞的
+    /// 另一层：审核结论那层 2026-08-20 改成了绑提交，而这层否决还绑着
+    /// 分支名 —— 于是「被否 → 改好 → 重新判」在上一层通了，走到这层
+    /// 又被旧否决按名字扣住，唯一出路仍是人工清单子。**两层只修一层，
+    /// 等于没修。**
+    struct VetoEntry: Codable {
+        var note: String
+        /// 验收失败时分支头的短 sha。空串 = 老格式数据，不知道是哪个提交。
+        var head: String
+        var at: Date?
     }
-    static func setAutoLandVeto(branch: String, note: String) {
+
+    static func autoLandVeto() -> [String: VetoEntry] {
+        guard let d = try? Data(contentsOf: autoLandVetoURL) else { return [:] }
+        return decodeVetoes(d)
+    }
+
+    static func decodeVetoes(_ d: Data) -> [String: VetoEntry] {
+        if let m = try? JSONDecoder().decode([String: VetoEntry].self, from: d) {
+            return m
+        }
+        // 老格式：值是纯文字。head 未知 —— 保持原来的粘性行为，
+        // 别让升级本身放行一批没验过的分支。
+        let old = (try? JSONDecoder().decode([String: String].self, from: d)) ?? [:]
+        return old.mapValues { VetoEntry(note: $0, head: "", at: nil) }
+    }
+
+    /// 这条分支现在还被否着吗。**判定只有这一处，所有调用点都走它。**
+    ///
+    /// - 否决记了提交、分支已经走到新提交 → 否决过期，放它重新验收。
+    ///   （验收本身就是闸：新提交要是还坏，会再花一次全量构建然后
+    ///   重新被否 —— 贵，但正确性不靠这条否决。）
+    /// - 老格式没记提交 → 粘性，维持旧行为。
+    static func activeVeto(_ vetoes: [String: VetoEntry],
+                           branch: String, head: String) -> String? {
+        guard let e = vetoes[branch] else { return nil }
+        if !e.head.isEmpty, !head.isEmpty, e.head != head { return nil }
+        return e.note
+    }
+
+    static func setAutoLandVeto(branch: String, note: String, head: String) {
         var m = autoLandVeto()
-        m[branch] = String(note.prefix(300))
+        m[branch] = VetoEntry(note: String(note.prefix(300)), head: head, at: Date())
         if let d = try? JSONEncoder().encode(m) {
             try? ICloudSafe.write(d, to: autoLandVetoURL)
         }
@@ -455,7 +493,9 @@ public enum Review {
 
         let pending = list(repo: repo, base: base, tasks: tasks)
         let landable = pending.filter { i in
-            guard i.mergesCleanly, veto[i.branch] == nil else { return false }
+            guard i.mergesCleanly,
+                  activeVeto(veto, branch: i.branch, head: i.head) == nil
+            else { return false }
             guard let t = taskFor(i.taskID, in: byID, all: tasks) else { return false }
             if !stranded.contains(i.branch), t.state != .done { return false }
             let needsReview = requiresAgentReview(
@@ -481,7 +521,7 @@ public enum Review {
             if !isStranded, t.state != .done {
                 note("任务状态是 \(t.state)，不是 done"); continue
             }
-            if let v = veto[item.branch] {
+            if let v = activeVeto(veto, branch: item.branch, head: item.head) {
                 note("在否决名单里：" + String(v.prefix(60))); continue
             }
             if needsEvidenceAndReview, item.evidence.isEmpty,
@@ -571,7 +611,9 @@ public enum Review {
             $0.doneCount > 0
         }.map(\.branch))
         let landable = pending.filter { i in
-            guard i.mergesCleanly, veto[i.branch] == nil else { return false }
+            guard i.mergesCleanly,
+                  activeVeto(veto, branch: i.branch, head: i.head) == nil
+            else { return false }
             guard let t = taskFor(i.taskID, in: byID, all: tasks) else { return false }
             if !strandedForQueue.contains(i.branch), t.state != .done { return false }
             if needsEvidenceAndReview, i.evidence.isEmpty,
@@ -689,11 +731,11 @@ public enum Review {
                !isOldestInOverlapGroup(item, among: landable) {
                 continue
             }
-            if let veto = autoLandVeto()[item.branch] {
-                // 上次验收就没过。不再自动重试 —— 循环每 30 秒一轮，
-                // 重试一次是十几分钟全量构建，等于把 worker 变成了烤炉。
+            if activeVeto(veto, branch: item.branch, head: item.head) != nil {
+                // 上次验收就没过（**且分支从那之后没动过**）。不再自动重试 ——
+                // 循环每 30 秒一轮，重试一次是十几分钟全量构建，等于把
+                // worker 变成了烤炉。改好重新提交后否决自动过期；
                 // 人工 `work review` 合入或 discard 之后这条自然消失。
-                _ = veto
                 continue
             }
             switch merge(repo: repo, branch: item.branch, base: base) {
@@ -703,7 +745,8 @@ public enum Review {
                     branch: item.branch, landed: true,
                     note: "任务 done、无冲突、不碰敏感路径、验收通过 —— 自动合入"))
             case .failure(let e):
-                setAutoLandVeto(branch: item.branch, note: e.localizedDescription)
+                setAutoLandVeto(branch: item.branch, note: e.localizedDescription,
+                                head: item.head)
                 outcomes.append(AutoLandOutcome(
                     branch: item.branch, landed: false,
                     note: e.localizedDescription + "（已记否决，不再自动重试，留给人工审）"))

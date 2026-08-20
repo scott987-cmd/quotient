@@ -131,10 +131,30 @@ public enum MergeReview {
         }
     }
 
+    /// 这条任务是不是「审这条分支能不能合入」的审核任务。
+    ///
+    /// **和下面 `reviewPrompt` 的模板是一对 —— 改模板必须同步改这里。**
+    ///
+    /// 匹配的是模板首行的精确前缀，不是子串。原来的判法是
+    /// `isReview && prompt.contains("合入") && prompt.contains(branch)`，
+    /// 实测（2026-08-20）被落地后自动排的复查任务污染：
+    ///
+    ///     【审查】复查刚合入 main 的合并 8dbb47c（来源分支 agent/graph/3f68707c）
+    ///
+    /// 这条**复查**任务同时含「合入」和分支名 —— 于是被当成那条分支的
+    /// 合入审核计票、计次。票数被无关任务污染的审核闸，判出来的就不是
+    /// 这条分支的事实。
+    ///
+    /// 尾部空格是防前缀吞并：`agent/a/x` 不能匹配到 `agent/a/xy` 的任务。
+    static func isMergeReviewPrompt(_ prompt: String, of branch: String) -> Bool {
+        prompt.hasPrefix("【审查·合入】分支 " + branch + " ")
+    }
+
     /// 派给评审 agent 的提示词。
     ///
     /// 前缀必须是 `【审查·合入】`：执行器按提示词里有没有「合入」二字选
     /// `kind`，而 `TaskIntake` 按 `【评审` / `【审查` 前缀决定走评审平台。
+    /// **首行格式被 `isMergeReviewPrompt` 依赖 —— 两处一起改。**
     public static func reviewPrompt(_ c: Candidate) -> String {
         var s = """
         【审查·合入】分支 \(c.branch) 的改动能不能合进 main。
@@ -326,8 +346,7 @@ public enum MergeReview {
                                       headAt: Date? = nil)
         -> (approvals: Int, rejected: Bool, attempts: Int) {
         var approvals = 0, attempts = 0, rejected = false
-        for t in tasks where TaskKind.isReview(t.prompt)
-            && t.prompt.contains("合入") && t.prompt.contains(branch) {
+        for t in tasks where isMergeReviewPrompt(t.prompt, of: branch) {
             // 过期的结论连 attempts 都不算 —— 否则分支改好之后，
             // 「派了几次」这个计数从一开始就贴着上限，
             // `exhausted` 会立刻收口，新的一版根本轮不到被审。
