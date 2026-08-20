@@ -220,7 +220,7 @@ public struct QuotaEngine: Sendable {
 
     // MARK: - Status from platform-reported quota
 
-    private func officialStatus(_ q: OfficialQuota, plan: PlatformPlan, now: Date) -> QuotaStatus {
+    func officialStatus(_ q: OfficialQuota, plan: PlatformPlan, now: Date) -> QuotaStatus {
         let windowSeconds = TimeInterval(q.windowMinutes) * 60
         let resets = q.resetsAt
         let start = resets.map { $0.addingTimeInterval(-windowSeconds) }
@@ -262,7 +262,16 @@ public struct QuotaEngine: Sendable {
             resetsAt: resets,
             windowElapsedFraction: elapsed,
             projectedUsedFraction: projected,
-            projectedWaste: projected.map { max(0, 100 - $0 * 100) },
+            // **原始计量单位**（字段文档和本地日志那条生产线都是这个约定）：
+            // metric 是次数时 cap=totalCount（浪费多少「次」），
+            // 百分比口径时 cap=100（浪费多少「百分点」）。
+            // 原来这里不看口径、永远按 100 算 —— 次数口径下发的单位就是错的。
+            // 同一个字段两条生产线两种单位，消费端怎么读都有一半是错的：
+            // 手机看板把百分点当 0–1 小数再乘 100，显示出 9741%。
+            projectedWaste: projected.map { p in
+                let cap = hasCount ? (q.totalCount ?? 100) : 100
+                return max(0, cap - p * cap)
+            },
             health: health,
             isOfficial: true,
             sourceNote: note,
