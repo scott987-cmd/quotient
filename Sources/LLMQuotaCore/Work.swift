@@ -1093,13 +1093,16 @@ public struct MiniMaxMediaRunner: AgentRunner {
               [ -n "$dest" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               [ -s "$dest" ] && { echo "SKIP $dest 已存在"; ok=$((ok+1)); continue }
               /bin/mkdir -p "${dest:h}"
-              # 一律走 MiniMax-H3:--duration/--ratio/--reference-image 只有它认
-              # (实测 2026-08-20:不带 --model 时 1 秒被拒
-              #  「--duration ... require --model MiniMax-H3」),
-              # 且 H3 是 15 秒/2K 的旗舰,参考图用 --reference-image。
-              vextra=(--model MiniMax-H3)
-              [ -n "$vsecs" ] && vextra+=(--duration "$vsecs")
-              [ -n "$subjref" ] && vextra+=(--reference-image "$subjref")
+              # 走 Hailuo 传统线,**不带 --model/--duration**。
+              # 两次实测(2026-08-20/21)夹出来的现实:
+              #  ① 带 --duration 不带 --model → 被拒「require MiniMax-H3」
+              #  ② 带 --model MiniMax-H3 → 被拒「TokenPlan 或 Credit
+              #    暂不支持 MiniMax-H3 系列模型 (2013)」—— 老板的套餐没含 H3。
+              # 所以秒数参数暂时忽略(语法保留,等套餐升级即开),
+              # 时长用 Hailuo 默认;参考图走传统图生视频的 --image。
+              vextra=()
+              [ -n "$vsecs" ] && echo "NOTE $dest 秒数 $vsecs 当前套餐不支持,用默认时长"
+              [ -n "$subjref" ] && vextra+=(--image "$subjref")
               run_mmx video generate --prompt "$desc" --download "$dest" \
                 "${vextra[@]}" --timeout 900 </dev/null >"$tmpout" 2>"$tmperr"
               if [ -s "$dest" ]; then
@@ -1144,7 +1147,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
           echo "提示词里一条媒体规格都没有 —— 这个执行器只认逐行的："
           echo "  REF   <参考图路径>          （之后的 IMG 锁定同一角色，REF - 清除）"
           echo "  IMG   <相对路径> [宽高比] :: <画面描述>"
-          echo "  VIDEO <相对路径> [秒数4-15] :: <画面描述>（额度每天仅 3 条,关键画面才用;有 REF 时=让参考图动起来）"
+          echo "  VIDEO <相对路径> :: <画面描述>（额度每天仅 3 条,关键画面才用;有 REF 时=让参考图动起来;时长走 Hailuo 默认）"
           echo "  MUSIC <相对路径> :: <音乐描述>"
           echo "注意图片关键字是 IMG，不是 IMAGE（写错了就一行都不匹配）。"
           echo "自然语言描述它读不懂。收到的提示词开头是：${LLMQ_MEDIA_SPEC[1,120]}"
