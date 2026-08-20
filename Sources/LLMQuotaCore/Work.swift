@@ -1056,6 +1056,35 @@ public struct MiniMaxMediaRunner: AgentRunner {
                 err="$(<$tmperr) $(<$tmpout)"
                 echo "FAIL $dest :: ${err[1,400]}"; bad=$((bad+1))
               fi;;
+            VIDEO\ *)
+              # 视频:每天只有 3 条额度,关键画面才用(老板 2026-08-20:
+              # 「游戏关键的视频用 minimax 生成,质感更强」)。
+              # 语法: VIDEO <相对路径> [秒数4-15] :: <画面描述>
+              # 之前有 REF 生效时走图生视频(--image),让参考图动起来 ——
+              # 主菜单动态背景就是拿主视觉图转的,品牌一致。
+              rest="${line#VIDEO }"
+              spec="${rest%%::*}"; desc="${rest#*::}"
+              parts=(${=spec})
+              dest="${parts[1]-}"; vsecs="${parts[2]-}"
+              [ -n "$dest" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
+              [ -s "$dest" ] && { echo "SKIP $dest 已存在"; ok=$((ok+1)); continue }
+              /bin/mkdir -p "${dest:h}"
+              vextra=()
+              [ -n "$vsecs" ] && vextra+=(--duration "$vsecs")
+              [ -n "$subjref" ] && vextra+=(--image "$subjref")
+              run_mmx video generate --prompt "$desc" --download "$dest" \
+                "${vextra[@]}" --timeout 900 </dev/null >"$tmpout" 2>"$tmperr"
+              if [ -s "$dest" ]; then
+                case "$(/usr/bin/file -b "$dest" 2>/dev/null)" in
+                  *"ISO Media"*|*MP4*|*mp4*) echo "OK  $dest"; ok=$((ok+1));;
+                  *)
+                    echo "FAIL $dest 下载到了但不是视频文件（$(/usr/bin/file -b "$dest" 2>/dev/null)）"
+                    /bin/rm -f "$dest"; bad=$((bad+1));;
+                esac
+              else
+                err="$(<"$tmperr")"
+                echo "FAIL $dest :: ${err[1,400]}"; bad=$((bad+1))
+              fi;;
             MUSIC\ *)
               rest="${line#MUSIC }"
               spec="${rest%%::*}"; desc="${rest#*::}"
@@ -1087,6 +1116,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
           echo "提示词里一条媒体规格都没有 —— 这个执行器只认逐行的："
           echo "  REF   <参考图路径>          （之后的 IMG 锁定同一角色，REF - 清除）"
           echo "  IMG   <相对路径> [宽高比] :: <画面描述>"
+          echo "  VIDEO <相对路径> [秒数4-15] :: <画面描述>（额度每天仅 3 条,关键画面才用;有 REF 时=让参考图动起来）"
           echo "  MUSIC <相对路径> :: <音乐描述>"
           echo "注意图片关键字是 IMG，不是 IMAGE（写错了就一行都不匹配）。"
           echo "自然语言描述它读不懂。收到的提示词开头是：${LLMQ_MEDIA_SPEC[1,120]}"
