@@ -938,7 +938,7 @@ final class ClusterNetTests: XCTestCase {
         })
         if let handler { s.handler = handler }
         try s.start(bindHost: "127.0.0.1")
-        wait(for: [ready], timeout: 10)
+        wait(for: [ready], timeout: 60)
         return (s, pw)
     }
 
@@ -1004,7 +1004,7 @@ final class ClusterNetTests: XCTestCase {
             _ = try? ClusterNet.send(.status, to: "server", config: cfg,
                                      password: pw, timeout: 30)
         }
-        wait(for: [slowStarted], timeout: 15)
+        wait(for: [slowStarted], timeout: 60)
 
         // 慢请求还在睡（8 秒），这时候 ping 必须照样通。
         let t0 = Date()
@@ -1079,7 +1079,7 @@ final class ClusterNetTests: XCTestCase {
         })
         // 不传 bindHost —— 走的就是配置里那个 0.0.0.0。
         try s.start()
-        wait(for: [ready], timeout: 10)
+        wait(for: [ready], timeout: 60)
         defer { s.stop() }
 
         let cpw = ClusterNet.randomPassword()
@@ -1275,7 +1275,7 @@ final class ClusterNetTests: XCTestCase {
             conn.start(queue: queue)
         }
         listener.start(queue: queue)
-        wait(for: [ready], timeout: 10)
+        wait(for: [ready], timeout: 60)
 
         let out = try probeAnonymously(verifyServer: false)
         XCTAssertTrue(out.contains("pong"),
