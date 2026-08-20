@@ -1069,9 +1069,13 @@ public struct MiniMaxMediaRunner: AgentRunner {
               [ -n "$dest" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               [ -s "$dest" ] && { echo "SKIP $dest 已存在"; ok=$((ok+1)); continue }
               /bin/mkdir -p "${dest:h}"
-              vextra=()
+              # 一律走 MiniMax-H3:--duration/--ratio/--reference-image 只有它认
+              # (实测 2026-08-20:不带 --model 时 1 秒被拒
+              #  「--duration ... require --model MiniMax-H3」),
+              # 且 H3 是 15 秒/2K 的旗舰,参考图用 --reference-image。
+              vextra=(--model MiniMax-H3)
               [ -n "$vsecs" ] && vextra+=(--duration "$vsecs")
-              [ -n "$subjref" ] && vextra+=(--image "$subjref")
+              [ -n "$subjref" ] && vextra+=(--reference-image "$subjref")
               run_mmx video generate --prompt "$desc" --download "$dest" \
                 "${vextra[@]}" --timeout 900 </dev/null >"$tmpout" 2>"$tmperr"
               if [ -s "$dest" ]; then
