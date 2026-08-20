@@ -2262,6 +2262,29 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
 
                 if c.exitCode == 0 {
                     task.state = .done
+                    // **把执行器的 stdout 存进 outputs。**
+                    //
+                    // 审核执行器把结论行回显到 stdout（见 Work.swift 里
+                    // `case "$l" in *结论*) echo "$l"` 那段），而
+                    // `MergeReview.approvalsSoFar` 正是从 outputs + note 里
+                    // 找「结论」两个字。
+                    //
+                    // 在此之前 **outputs 全仓库没有任何地方被赋值** ——
+                    // 于是结论写在文件里、系统去空字段里读，parseVerdict
+                    // 永远返回 nil，票数永远 0/N。
+                    //
+                    // 后果：老板要的「代码合入审核让 agent 判」这套设计
+                    // **从来没生效过**。2026-08-20 实测两份合入审核报告都
+                    // 白纸黑字写着「**结论**：不合入」，其中一份还明确说
+                    // 「不要把它的产物推进 main」—— 系统一个字都没读到，
+                    // 那条分支照旧被文书豁免放行、合进了 main。
+                    //
+                    // 只留尾部若干行：完整 stdout 可能几十 KB，
+                    // 而结论按约定在最后一行。
+                    task.outputs = r.stdout
+                        .split(separator: "\n", omittingEmptySubsequences: true)
+                        .suffix(20)
+                        .map { String($0.prefix(500)) }
                     // **把「这一轮谁干的」和「分支上一共有什么」分开说。**
                     //
                     // 合并成一句「改了 N 个文件」会稳定地把前人的成果记到

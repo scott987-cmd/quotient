@@ -176,4 +176,64 @@ final class MergeReviewTests: XCTestCase {
         t.outputs = ["# 合入审核：\(branch)", verdict]
         return t
     }
+    // MARK: 结论必须真的读得到
+
+    /// **审核 agent 的结论走 outputs 这条路，别让它断掉。**
+    ///
+    /// 实测（2026-08-20）：`WorkTask.outputs` 在整个仓库里**没有任何地方
+    /// 被赋值**，而 `approvalsSoFar` 恰恰从 outputs + note 里找「结论」。
+    /// 于是：
+    ///
+    /// - 审核执行器把报告写进 `reviews/EVAL-合入-*.md`（里面有结论）
+    /// - 又把结论行回显到 stdout
+    /// - **stdout 被丢掉**，note 是「改了 1 个文件，已提交到 …」这种通用文案
+    /// - parseVerdict 拿到的文本里永远不含「结论」，永远返回 nil
+    ///
+    /// 后果是老板要的「代码合入让 agent 判」**从来没生效过**：
+    /// 两份报告白纸黑字写着「结论：不合入」，其中一份还明确说
+    /// 「不要把它的产物推进 main」—— 系统一个字都没读到，
+    /// 那条分支照旧被文书豁免放行、合进了 main。
+    func testVerdictInOutputsIsCounted() {
+        var t = WorkTask(id: "r1",
+                         prompt: "【审查·合入】分支 agent/kimi/x 的改动能不能合进 main。",
+                         repo: "/tmp/x")
+        t.state = .done
+        // 执行器回显的那一行，原样落在 outputs 里
+        t.outputs = ["已写 reviews/EVAL-合入-abc123-r1.md（1442 字）",
+                     "**结论**：合入"]
+        let r = MergeReview.approvalsSoFar(branch: "agent/kimi/x", tasks: [t])
+        XCTAssertEqual(r.approvals, 1,
+                       "结论就在 outputs 里，读不到就等于这套审核不存在")
+        XCTAssertFalse(r.rejected)
+    }
+
+    /// 否决同样要读得到 —— 而且这个方向错了更危险。
+    func testRejectionInOutputsIsCounted() {
+        var t = WorkTask(id: "r2",
+                         prompt: "【审查·合入】分支 agent/kimi/y 的改动能不能合进 main。",
+                         repo: "/tmp/x")
+        t.state = .done
+        t.outputs = ["**结论**：不合入"]
+        let r = MergeReview.approvalsSoFar(branch: "agent/kimi/y", tasks: [t])
+        XCTAssertTrue(r.rejected, "「不合入」读不到 = 机器不敢合的东西被放进主干")
+        XCTAssertEqual(r.approvals, 0)
+    }
+
+    /// **outputs 是空的时候要如实报「读不出结论」**，不能默认放行。
+    ///
+    /// 这正是修复前的状态：任务 done、报告写了、outputs 空 ——
+    /// 那时候正确的行为是「不算票」，而不是「当成同意」。
+    func testEmptyOutputsCountsAsNoVerdict() {
+        var t = WorkTask(id: "r3",
+                         prompt: "【审查·合入】分支 agent/kimi/z 的改动能不能合进 main。",
+                         repo: "/tmp/x")
+        t.state = .done
+        t.outputs = []
+        t.note = "改了 1 个文件，已提交到 agent/minimax/r3（1 个提交是它自己打的）"
+        let r = MergeReview.approvalsSoFar(branch: "agent/kimi/z", tasks: [t])
+        XCTAssertEqual(r.approvals, 0, "没结论不能算同意")
+        XCTAssertFalse(r.rejected, "没结论也不是否决 —— 是「读不出来」")
+        XCTAssertEqual(r.attempts, 1, "但这一次尝试要记账，否则会无限重派")
+    }
+
 }
