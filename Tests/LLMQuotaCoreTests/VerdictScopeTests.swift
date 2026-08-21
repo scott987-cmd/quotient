@@ -214,3 +214,44 @@ final class VoteMatchingPrecisionTests: XCTestCase {
         XCTAssertEqual(r.approvals, 0, "更不能把 xy 的同意票记到 x 头上")
     }
 }
+
+/// **审核派发的判重必须是精确的:同分支同提交在队才算重。**
+///
+/// 2026-08-21 实锤:审核提示词是模板,通用模糊查重(DuplicateGuard)
+/// 拿它和**别的分支**的审核比出「相似」,菜单分支的审核 40+ 轮被静默
+/// 判重、一票派不出,整仓等它落地的任务全部空转。
+final class PendingReviewPrecisionTests: XCTestCase {
+    private func review(_ branch: String, head: String,
+                        state: WorkTask.State) -> WorkTask {
+        var t = WorkTask(id: "pr-\(branch)-\(head)",
+                         prompt: "【审查·合入】分支 \(branch) 的改动能不能合进 main。\n"
+                             + MergeReview.headMarker(head),
+                         repo: "/tmp/x")
+        t.state = state
+        return t
+    }
+
+    func testSameBranchSameHeadQueuedIsPending() {
+        XCTAssertTrue(MergeReview.hasPendingReview(
+            branch: "agent/a/x", head: "abc1234",
+            tasks: [review("agent/a/x", head: "abc1234", state: .queued)]))
+    }
+
+    func testOtherBranchTemplateIsNotPending() {
+        XCTAssertFalse(MergeReview.hasPendingReview(
+            branch: "agent/codex/fce2f57f", head: "3f5ee4a",
+            tasks: [review("agent/codex/a97a9027", head: "aaa0000", state: .queued)]),
+            "别的分支的审核再相似也不是这条的重复 —— 判重按对象,不按文风")
+    }
+
+    func testFinishedOrStaleHeadIsNotPending() {
+        XCTAssertFalse(MergeReview.hasPendingReview(
+            branch: "agent/a/x", head: "abc1234",
+            tasks: [review("agent/a/x", head: "abc1234", state: .done)]),
+            "跑完的走计票,不算在队")
+        XCTAssertFalse(MergeReview.hasPendingReview(
+            branch: "agent/a/x", head: "bbb0000",
+            tasks: [review("agent/a/x", head: "abc1234", state: .queued)]),
+            "旧提交的审核在队,不挡新提交的派发")
+    }
+}

@@ -232,6 +232,24 @@ public enum MergeReview {
         attempts >= needed + 2
     }
 
+    /// 这条分支这一版的审核是不是已经在队里/在跑。
+    ///
+    /// ## 为什么不用通用查重
+    ///
+    /// 审核提示词是模板,模板对模板必然「相似」—— 实锤(2026-08-21):
+    /// 菜单分支的审核连续 40+ 轮被 DuplicateGuard 静默判重,一票都派
+    /// 不出去,整仓等它落地的任务全部空转;而它「撞」的是**别的分支**
+    /// 的审核。第 8 例同概念多处判定:精确计数(approvalsSoFar)早就
+    /// 存在,派发口却又请了一个模糊判官。
+    public static func hasPendingReview(branch: String, head: String,
+                                        tasks: [WorkTask]) -> Bool {
+        tasks.contains { t in
+            (t.state == .queued || t.state == .running)
+                && isMergeReviewPrompt(t.prompt, of: branch)
+                && reviewedHead(in: t.prompt) == head
+        }
+    }
+
     public static func dispatch(repo: String, base: String = "main",
                                tasks: [WorkTask] = TaskStore.all(),
                                maxPerCall: Int = 1) -> [Outcome] {
@@ -258,13 +276,19 @@ public enum MergeReview {
                         + "不再重试，留给人工处置"))
                 continue
             }
+            if hasPendingReview(branch: c.branch, head: c.head, tasks: tasks) {
+                out.append(Outcome(branch: c.branch, action: "已在队",
+                                   note: "同提交的审核还在排/跑,不重复派"))
+                continue
+            }
             do {
                 let r = try TaskIntake.enqueue(
                     prompt: reviewPrompt(c), repo: repo,
                     classify: false, split: false,
-                    // 同一条分支要两票时，第二次的提示词和第一次一样，
-                    // 会被查重挡掉 —— 所以第二票必须显式跳过查重。
-                    force: done.attempts > 0,
+                    // 一律跳过通用查重:上面 hasPendingReview 已做**精确**
+                    // 判重(同分支同提交在队)。模糊查重对模板化的审核提示词
+                    // 必然误判 —— 它把别的分支的审核当成了重复(2026-08-21)。
+                    force: true,
                     origin: "merge-review")
                 switch r {
                 case .duplicate:
