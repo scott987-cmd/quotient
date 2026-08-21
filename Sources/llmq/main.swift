@@ -1609,6 +1609,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     // Qwen/Kimi 双双冷却的晚上，Greed 的媒体批在队里干等了两小时。
     // 现在按队列顺序逐个试，谁先凑齐候选谁上；
     // 「没人能接」的照旧标 blocked（顺手也不再堵队了）。
+    // 家务先行:扫过期的验收残留;磁盘见底就别派了 —— 派了也只会失败。
+    // 2026-08-21 晚磁盘 99% 时整条流水线无声烂掉,没有一层说「磁盘满了」。
+    let hk = Housekeeping.roundCheck()
+    if let n = hk.note, !quiet { print(Ansi.yellow("  家务 ") + n) }
+    if hk.skipDispatch { return .noTask }
+
     let rawQueue = TaskStore.readyQueue()
     guard !rawQueue.isEmpty else {
         if !quiet { print(Ansi.dim("没有排队中的任务。")) }
