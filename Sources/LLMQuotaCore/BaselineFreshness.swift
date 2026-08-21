@@ -61,6 +61,16 @@ public enum BaselineFreshness {
             // **只算能落地的。** 合不进去 / 被否 / 记录已丢的分支可能永远
             // 进不来，拿它们挡新活会把整个仓库冻死。
             guard item.mergesCleanly else { continue }
+            // 「被否」这半句注释写了很久,代码一直没做 —— 实锤(2026-08-21):
+            // 射击分支被评审判不合入后,人物动捕/寻路/经济/菜单四路任务
+            // 全部「等基线」,整仓冻住,老板问「游戏人物为啥停了」。
+            // 否决是绑当前提交的:改好重新提交后 rejected 自动翻回 false,
+            // 那时它重新算「马上要落地的成果」,挡新活就又是对的。
+            if MergeReview.approvalsSoFar(branch: item.branch, tasks: tasks,
+                                          head: item.head,
+                                          headAt: item.committedAt).rejected {
+                continue
+            }
             names.append(item.branch)
             total += item.files.count
         }

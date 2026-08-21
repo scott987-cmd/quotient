@@ -52,3 +52,36 @@ final class BaselineOwnBranchTests: XCTestCase {
         XCTAssertEqual(BaselineFreshness.blocks(.fresh, candidateBranch: "x"), .fresh)
     }
 }
+
+/// **被否决的分支不冻结基线** —— 注释里承诺了很久、代码一直没做的那半句。
+///
+/// 实锤(2026-08-21 早):射击分支被评审判不合入,能干净合入、文件数
+/// 也够,于是照样算「马上要落地的成果」——人物动捕/寻路/经济/菜单
+/// 四路任务全部「等基线」,整仓冻住。老板的原话:「游戏人物为啥停了」。
+///
+/// 被否的分支有自己的处置路径(改好→否决过期→重审,或人工丢弃),
+/// 挡新活等不来任何东西。注意语义要跟否决的绑提交走:测试直接压
+/// check 之上那层没法做(check 要真 git 仓库),所以这条压的是
+/// 「approvalsSoFar 的 rejected 判定 + check 里那个 guard 的组合行为」
+/// 在 verdictIsStale 层面的正确性 —— 新提交出现后 rejected 翻回 false,
+/// 分支重新有资格冻结基线,那是**对的**冻结。
+final class RejectedBranchBaselineTests: XCTestCase {
+    func testRejectionIsHeadBoundSoFreshCommitsFreezeAgain() {
+        var review = WorkTask(
+            id: "r-x",
+            prompt: "【审查·合入】分支 agent/codex/a97a9027 的改动能不能合进 main。\n"
+                + MergeReview.headMarker("aaa1111"),
+            repo: "/tmp/x")
+        review.state = .done
+        review.outputs = ["**结论**：不合入"]
+        let atOldHead = MergeReview.approvalsSoFar(
+            branch: "agent/codex/a97a9027", tasks: [review], head: "aaa1111")
+        XCTAssertTrue(atOldHead.rejected,
+                      "被否那一版:rejected 为真 → 基线闸跳过它,仓库不冻")
+        let afterFix = MergeReview.approvalsSoFar(
+            branch: "agent/codex/a97a9027", tasks: [review], head: "bbb2222")
+        XCTAssertFalse(afterFix.rejected,
+                       "修复提交之后:否决过期 → 分支重新算待落地成果,"
+                       + "重新冻结基线是**对的**行为")
+    }
+}
