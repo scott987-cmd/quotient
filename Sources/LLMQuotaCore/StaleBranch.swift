@@ -172,12 +172,24 @@ public enum StaleBranch {
         var out: [Outcome] = []
         for c in candidates(repo: repo, base: base, tasks: tasks) {
             if out.count >= maxPerCall { break }
+            // **精确判重**：同一条分支的刷新还在排/在跑才算重复。
+            // 通用查重对模板化的提示词必然误判 —— 它拿这条分支的刷新和
+            // 别条分支的刷新比出「相似」，然后 .duplicate 静默跳过，
+            // 一行日志都没有（详见 TaskKind.hasPendingDerived 的故障记录）。
+            if TaskKind.hasPendingDerived(branch: c.branch, tasks: tasks,
+                                          kind: TaskKind.isRefresh) {
+                out.append(Outcome(branch: c.branch, enqueued: false,
+                                   note: "同分支的刷新还在排/跑，不重复派"))
+                continue
+            }
             do {
                 // 不分诊不拆图：这是一件说死了的机械活，
                 // 分诊要花一次推理额度，拆图会把「解冲突」拆成一堆没意义的步。
                 let r = try TaskIntake.enqueue(
                     prompt: refreshPrompt(c), repo: repo,
                     classify: false, split: false,
+                    // 精确判重已在上面做过；通用模糊查重必然误判模板，跳过它。
+                    force: true,
                     origin: "stale-branch",
                     preferredPlatform: c.platform)
                 switch r {

@@ -77,6 +77,29 @@ public enum TaskKind {
         return nil
     }
 
+    /// 这条分支还有没有**同类**的派生任务在排/在跑。
+    ///
+    /// ## 为什么派生任务不能用通用查重
+    ///
+    /// 审查/证据/刷新的提示词都是模板,模板对模板必然「相似」——
+    /// DuplicateGuard 会拿一条分支的刷新任务和**另一条分支**的刷新任务
+    /// 比出重复,然后 `.duplicate` → 静默 continue,一行日志都没有。
+    ///
+    /// 实锤两次:2026-08-21 上午审核派发(菜单分支 40+ 轮派不出,整仓空转);
+    /// 同日深夜刷新派发(音效分支 18 个文件落后 20 个提交,`stale --dispatch`
+    /// 每次都「无输出」)。第 9 例同概念多处判定 —— 精确判据只该有一个:
+    /// **同一条分支 + 同一类派生任务 + 还没跑完**。
+    ///
+    /// - Parameter kind: 用 `isReview` / `isEvidence` / `isRefresh` 传进来。
+    public static func hasPendingDerived(branch: String, tasks: [WorkTask],
+                                         kind: (String) -> Bool) -> Bool {
+        tasks.contains { t in
+            (t.state == .queued || t.state == .running)
+                && kind(t.prompt)
+                && boundBranch(t.prompt) == branch
+        }
+    }
+
     /// 普通编码任务 —— 上面几类都不是。
     ///
     /// 这是**默认**：一个没写前缀的任务就是要改代码的活，
