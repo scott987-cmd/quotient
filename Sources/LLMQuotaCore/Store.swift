@@ -242,7 +242,13 @@ public enum PlansStore {
                 return l
             }
             let templateIDs = Set(t.limits.map(\.id))
-            merged += savedLimits.filter { !templateIDs.contains($0.id) && $0.limit != nil }
+            // 用户自加的窗口：填了数字**或**给了锚点都算「他自己的」，保留。
+            // 原来只认 limit —— 于是一个「官方不公布数字、但到期时间已知」
+            // 的窗口（2026-08-21 老板给的 Kimi 月额度到期日）被当成模板
+            // 遗留洗掉了。只有两样都没有的才像模板残骸。
+            merged += savedLimits.filter {
+                !templateIDs.contains($0.id) && ($0.limit != nil || $0.anchor != nil)
+            }
             out.plans[i].limits = merged
         }
         return out
