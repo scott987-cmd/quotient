@@ -41,10 +41,30 @@ public enum Housekeeping {
         return removed
     }
 
+    /// 菜单栏 App 在不在。**它一死,这台机器的 iCloud 镜像就停** ——
+    /// 本机数据照常更新,手机上却停在几十分钟前,看起来就像「任务停了」。
+    /// 2026-08-22 一天里发生两次,两次都是老板先发现的。
+    public static func menuBarAppAlive() -> Bool {
+        Proc.run("/usr/bin/pgrep", ["-f", "LLMQuotaBar.app/Contents/MacOS"],
+                 cwd: "/", env: [:], timeout: 5).exitCode == 0
+    }
+
+    /// 没在跑就拉起来,拉不起来就在日志里喊。返回给日志的一句话。
+    static func reviveMenuBarApp() -> String? {
+        guard FileManager.default.fileExists(atPath: "/Applications/LLMQuotaBar.app"),
+              !menuBarAppAlive() else { return nil }
+        _ = Proc.run("/usr/bin/open", ["-a", "LLMQuotaBar"], cwd: "/", env: [:], timeout: 20)
+        Thread.sleep(forTimeInterval: 2)
+        return menuBarAppAlive()
+            ? "菜单栏 App 之前不在,已拉起(它停着的时候手机看到的是旧快照)"
+            : "⚠︎ 菜单栏 App 起不来 —— 手机上会一直看到旧数据,手动 open -a LLMQuotaBar"
+    }
+
     /// 一轮开始时做的家务,返回给日志的一句话(没事就 nil)。
     public static func roundCheck() -> (skipDispatch: Bool, note: String?) {
         let swept = sweepVerifyLeftovers()
         var notes: [String] = []
+        if let n = reviveMenuBarApp() { notes.append(n) }
         if swept > 0 { notes.append("清掉 \(swept) 个过期验收目录") }
         if let free = freeDiskBytes(), free < lowDiskBytes {
             notes.append("⚠︎ 磁盘只剩 \(Format.bytes(Int(free))) —— 本轮不派活(派了也只会失败),请清理")

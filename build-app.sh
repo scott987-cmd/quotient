@@ -180,8 +180,16 @@ if [ "$INSTALL" -eq 1 ]; then
     fi
   fi
 
-  open /Applications/"$APP_NAME".app
-  echo "   已重新启动菜单栏 App"
+  # **拉起之后必须核实**（`llmq work restart-app` 里做这件事）。
+  # 原来这里 `open` 完就宣布成功 —— 而 `open` 对着刚 rm -rf + cp -R 的
+  # bundle 会静默失败（LaunchServices 注册过期）。App 一死 iCloud 镜像
+  # 就停，手机上是几十分钟前的快照，老板两次报「任务停了」，
+  # 其实系统一直在跑（2026-08-22 实测两次）。
+  if [ -x "$HOME/.local/bin/llmq" ]; then
+    "$HOME/.local/bin/llmq" work restart-app || true
+  else
+    open /Applications/"$APP_NAME".app
+  fi
 else
   echo
   echo "安装（推荐，App 和 CLI 一起装，避免版本漂移）："

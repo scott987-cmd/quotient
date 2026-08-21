@@ -1145,6 +1145,37 @@ func cmdWork(_ args: [String]) throws {
     //  ① 拿人类可读输出当接口(这个仓库反复栽的那个形状),排版一变就失灵;
     //  ② 判断和 kickstart 分在两个进程、隔着几十秒的编译,中间新任务开跑。
     // 收成一条命令:同一个进程里先看后踢,数据直接读 TaskStore,没有文本契约。
+    // llmq work restart-app —— 拉起菜单栏 App 并**核实它真的起来了**。
+    //
+    // 第三次踩同一个形状了(2026-08-22):`open <刚删又建的 bundle>` 会
+    // 静默失败(LaunchServices 注册过期),而调用方照样宣布「已重新启动」。
+    // App 一死,iCloud 镜像就停 —— 手机上看到的是几十分钟前的快照,
+    // 老板两次报「任务停了」,其实系统一直在跑。
+    // 更新路径(ReleaseChannel.install)已经修过一次,装机脚本是另一份实现:
+    // 收成这一条命令,不再有第二份。
+    case "restart-app":
+        func appAlive() -> Bool {
+            Proc.run("/usr/bin/pgrep", ["-f", "LLMQuotaBar.app/Contents/MacOS"],
+                     cwd: "/", env: [:], timeout: 5).exitCode == 0
+        }
+        _ = Proc.run("/usr/bin/open", ["/Applications/LLMQuotaBar.app"],
+                     cwd: "/", env: [:], timeout: 20)
+        Thread.sleep(forTimeInterval: 2)
+        if !appAlive() {
+            // 按名字开走的是另一条路,不吃刚失效的路径缓存。
+            _ = Proc.run("/usr/bin/open", ["-a", "LLMQuotaBar"],
+                         cwd: "/", env: [:], timeout: 20)
+            Thread.sleep(forTimeInterval: 3)
+        }
+        if appAlive() {
+            print(Ansi.green("   菜单栏 App 已启动"))
+        } else {
+            print(Ansi.red("   ⚠︎ 菜单栏 App 没能启动 —— 这台机器的镜像同步会停,"))
+            print(Ansi.dim("      手机上会看到过时的快照。手动试：open -a LLMQuotaBar"))
+            exit(1)
+        }
+        return
+
     case "restart-worker":
         let inFlight = TaskStore.all().filter {
             $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? false)
