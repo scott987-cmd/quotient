@@ -211,6 +211,29 @@ public enum RepoRegistry {
         return entry
     }
 
+    /// 命令行里「没给 --repo 时该用哪个仓库」的唯一答案。
+    ///
+    /// ## 为什么不能直接用 resolve(nil)
+    ///
+    /// `resolve(nil)` 返回的是**默认别名**(llmq),不是当前目录 —— 于是
+    /// `RepoRegistry.resolve(arg) ?? 当前目录` 这个写法里的兜底永远轮不到:
+    /// 参数为 nil 时前半段就返回了默认仓库。
+    ///
+    /// 实锤(2026-08-22 凌晨):在 ~/dev/Flint 里跑
+    /// `llmq work review --merge agent/claude/e926c20f`,命令跑去
+    /// **LLMQuotaBar** 上合,报「not something we can merge」——
+    /// 分支当然不在那儿。查了半小时才发现命令根本没在我以为的仓库上干活。
+    /// 更危险的是同名分支存在于两个仓库时,它会**默默合错仓库**。
+    ///
+    /// 正确的优先级:显式 --repo > 当前目录(如果是 git 仓库)> 默认别名。
+    public static func resolveForCommand(_ arg: String?, cwd: String) -> String? {
+        if let a = arg, !a.isEmpty {
+            return resolve(a) ?? NSString(string: a).expandingTildeInPath
+        }
+        if GitWorkspace.isRepo(cwd) { return cwd }
+        return resolve(nil)
+    }
+
     public static func resolve(_ nameOrPath: String?) -> String? {
         let list = all()
         guard let n = nameOrPath, !n.isEmpty else {

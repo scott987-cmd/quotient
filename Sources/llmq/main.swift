@@ -1050,8 +1050,9 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.dim("  把该分支里的验收截图抽到临时目录并打印路径"))
             exit(2)
         }
-        let repoE = RepoRegistry.resolve(
-            rest.firstIndex(of: "--repo").flatMap { $0 + 1 < rest.count ? rest[$0 + 1] : nil })
+        let repoE = RepoRegistry.resolveForCommand(
+            rest.firstIndex(of: "--repo").flatMap { $0 + 1 < rest.count ? rest[$0 + 1] : nil },
+            cwd: FileManager.default.currentDirectoryPath)
             ?? FileManager.default.currentDirectoryPath
         let itemsE = Review.list(repo: repoE)
         guard let hit = itemsE.first(where: { $0.branch == branch || $0.branch.hasSuffix(branch) })
@@ -1220,7 +1221,8 @@ func cmdWork(_ args: [String]) throws {
             let j = rest.index(after: i)
             return j < rest.endIndex ? rest[j] : nil
         }
-        let repoPath = RepoRegistry.resolve(repoArg)
+        let repoPath = RepoRegistry.resolveForCommand(
+            repoArg, cwd: FileManager.default.currentDirectoryPath)
             ?? NSString(string: repoArg ?? FileManager.default.currentDirectoryPath)
                 .expandingTildeInPath
         let limit = rest.firstIndex(of: "--limit").flatMap { i -> Int? in
@@ -1339,8 +1341,10 @@ func cmdWork(_ args: [String]) throws {
 
     // llmq work review [--repo <别名>] [--merge <分支>] [--discard <分支>] [--prune]
     case "review":
-        let repoPath = RepoRegistry.resolve(
-            rest.firstIndex(of: "--repo").flatMap { $0 + 1 < rest.count ? rest[$0 + 1] : nil })
+        // 没给 --repo 就用当前目录（详见 RepoRegistry.resolveForCommand）。
+        let repoPath = RepoRegistry.resolveForCommand(
+            rest.firstIndex(of: "--repo").flatMap { $0 + 1 < rest.count ? rest[$0 + 1] : nil },
+            cwd: FileManager.default.currentDirectoryPath)
             ?? FileManager.default.currentDirectoryPath
         guard GitWorkspace.isRepo(repoPath) else {
             print(Ansi.red("\(repoPath) 不是 git 仓库")); exit(1)

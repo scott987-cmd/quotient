@@ -304,7 +304,14 @@ public enum Review {
         let m = GitWorkspace.git(
             ["merge", "--no-ff", "-m", "verify \(branch)", branch], in: tmp)
         guard m.exitCode == 0 else {
-            return "合并结果有冲突：\(m.stdout.prefix(160))"
+            // **把 stderr 也带上。** 原来只贴 stdout，而 git 的失败原因
+            // （身份没配、锁冲突、坏对象…）走的是 stderr —— 于是所有
+            // 非冲突的失败都被显示成「合并结果有冲突：」后面空空如也，
+            // 人和评审 agent 都被误导（2026-08-21 实测：手工同样的命令
+            // 退出码 0，而这里报冲突，查了半天才发现是消息在骗人）。
+            let detail = (m.stderr + " " + m.stdout)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "合并没成（退出码 \(m.exitCode)）：\(detail.prefix(300))"
         }
         let r = Proc.run("/bin/sh", ["-c", command], cwd: tmp, env: [:],
                          timeout: TimeInterval(timeout))
