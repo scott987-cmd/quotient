@@ -3682,6 +3682,47 @@ func cmdPlan(_ args: [String]) throws {
         return
     }
 
+    // llmq plan calibrate <平台> <窗口id> <已用百分比>
+    // 只给比例不给数字的平台(Kimi)用这条:上限 = 本窗口用量 ÷ 比例。
+    if args.first == "calibrate" {
+        let rest = Array(args.dropFirst())
+        guard rest.count >= 3, let platform = Platform(rawValue: rest[0].lowercased()),
+              let pct = Double(rest[2].replacingOccurrences(of: "%", with: "")) else {
+            print("用法：llmq plan calibrate <平台> <窗口id> <已用百分比>")
+            print("  例：llmq plan calibrate kimi weekly 23    （订阅页显示本周已用 23%）")
+            print("  窗口 id 看 llmq plan 的输出（5h / weekly / monthly …）")
+            exit(2)
+        }
+        let limitID = rest[1]
+        var cfg = PlansStore.load()
+        guard let pi = cfg.plans.firstIndex(where: { $0.platform == platform }),
+              let li = cfg.plans[pi].limits.firstIndex(where: { $0.id == limitID }) else {
+            print(Ansi.red("plans.json 里没有 \(platform.rawValue) 的窗口 \(limitID)")); exit(1)
+        }
+        let status = LLMQuota.dashboard().reports
+            .first { $0.platform == platform }?
+            .statuses.first { $0.limitID == limitID }
+        guard let used = status?.used, used > 0 else {
+            print(Ansi.red("这个窗口还没有测到用量，除不出来 —— 用一会儿再校")); exit(1)
+        }
+        let metric = cfg.plans[pi].limits[li].metric
+        do {
+            let value = try QuotaCalibration.limit(used: used, percentUsed: pct)
+            cfg.plans[pi].limits[li].limit = value
+            cfg.plans[pi].limits[li].hint = QuotaCalibration.provenance(
+                percentUsed: pct, used: used, metric: metric)
+            try PlansStore.save(cfg)
+            print(Ansi.green("已校准 ") + "\(platform.displayName) \(cfg.plans[pi].limits[li].label)："
+                + "上限 ≈ " + Format.metricValue(value, metric: metric)
+                + Ansi.dim("（本窗口用量 " + Format.metricValue(used, metric: metric)
+                    + " ÷ \(pct)%）"))
+            print(Ansi.dim("  页面比例是整数，用量越大越准；过几天用量大了再校一次。"))
+        } catch QuotaCalibration.Failure.percentOutOfRange {
+            print(Ansi.red("百分比要在 0–100 之间")); exit(2)
+        }
+        return
+    }
+
     let cfg = PlansStore.load()
     let src = PlansStore.loadedFrom()
     print(Ansi.bold("套餐配置") + Ansi.dim(" · " + (src?.path ?? "两份都读不到，用的是空模板")))
