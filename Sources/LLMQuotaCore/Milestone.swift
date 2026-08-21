@@ -23,7 +23,7 @@ import Foundation
 ///
 /// 这次落地**新增了可看的录屏/截图**——那就是一件做出来了、能看效果的东西。
 /// 纯文档、评审报告、重构不打扰他(和证据闸同一套判据 `isEvidenceFile`)。
-public enum Milestone: Codable, Sendable {
+public enum Milestone {
     /// 一条已落地、带可看证据的成果。
     public struct Item: Codable, Sendable, Identifiable {
         public var id: String { repo + "|" + mergeSHA }
@@ -64,7 +64,7 @@ public enum Milestone: Codable, Sendable {
     /// 判据只有一条:**新增了可看的证据**。用 `EvidenceGate.isEvidenceFile`
     /// 而不是另写一套 —— 同一个概念多处判定这个形状,这个仓库已经踩过九次。
     public static func isWorthShowing(files: [String]) -> Bool {
-        files.contains(EvidenceGate.isEvidenceFile)
+        files.contains(where: EvidenceGate.isEvidenceFile)
     }
 
     /// 落地时记一笔。由 `Review.merge` 成功后调用。

@@ -812,6 +812,24 @@ public enum Review {
         // 合并是串行的，写在合并之后天然不打架。
         if case .success = r {
             ProgressLog.recordLanding(repo: repo, branch: branch)
+            // **带录屏的成果落地了 → 记一笔，等着推给老板看。**
+            //
+            // 老板（2026-08-22）的原话：「这个不应该你驱动，应该是我们的
+            // 数字人程序在关键成果产出需要找我确认」。manualReview 仓库
+            // 由评审 agent 判合入，人从来不在链路上 —— 而他看录屏发现的
+            // 问题（「跑的姿势不像真人」「手歪不拉几」）全是真的。
+            // 落地后推、不卡路：卡住会让基线闸冻整仓，那是他更烦的毛病。
+            let sha = GitWorkspace.git(["rev-parse", "--short", base], in: repo)
+                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sha.isEmpty {
+                let files = GitWorkspace.git(
+                    ["show", "--name-only", "--format=", sha], in: repo)
+                    .stdout.split(separator: "\n").map(String.init)
+                let subject = GitWorkspace.git(["log", "-1", "--format=%s", sha], in: repo)
+                    .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                Milestone.record(repo: repo, branch: branch, mergeSHA: sha,
+                                 files: files, subject: subject)
+            }
             // 落地即排审查：给审查员（opencode/火山）生成一条【审查】任务
             // 复查这次合并 —— 自动落地放宽了「谁按回车」，
             // 这道事后复查把省下的人审那双眼睛补回来。

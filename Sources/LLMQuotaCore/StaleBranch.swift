@@ -172,6 +172,21 @@ public enum StaleBranch {
         var out: [Outcome] = []
         for c in candidates(repo: repo, base: base, tasks: tasks) {
             if out.count >= maxPerCall { break }
+            // **派够次数还刷不动就收口。** 刷新没有上限的代价实测过
+            // （2026-08-22 凌晨）：Maw 的 cdce40f3 落后 102 个提交，
+            // Kimi 跑 10 分钟超时、火山接力跑 20 分钟又超时，而它还会
+            // 一轮一轮接着派。判据复用 MergeReview.exhausted —— 审核和
+            // 证据两条路都用它，刷新没有理由自己另立一套。
+            let tried = tasks.filter {
+                TaskKind.isRefresh($0.prompt) && TaskKind.boundBranch($0.prompt) == c.branch
+            }.count
+            if MergeReview.exhausted(attempts: tried, needed: 1) {
+                out.append(Outcome(
+                    branch: c.branch, enqueued: false,
+                    note: "派了 \(tried) 次都没刷动 —— 不再重试，留给人工"
+                        + "（落后 \(c.commitsBehind) 个提交、\(c.files) 个文件）"))
+                continue
+            }
             // **精确判重**：同一条分支的刷新还在排/在跑才算重复。
             // 通用查重对模板化的提示词必然误判 —— 它拿这条分支的刷新和
             // 别条分支的刷新比出「相似」，然后 .duplicate 静默跳过，

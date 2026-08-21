@@ -99,6 +99,18 @@ public enum Nudge {
     -> [(key: String, kind: Push.Kind, body: String, badge: Int)] {
         var out: [(String, Push.Kind, String, Int)] = []
 
+        // 0. **做出来的东西等你看。** 排在最前面 —— 这是老板最想被打扰的
+        // 那件事(2026-08-22 原话:「关键成果产出需要找我确认」),
+        // 而其余几条都是「出问题了」。带录屏的成果落地即入列,见 Milestone。
+        let fresh = Milestone.unreviewed()
+        if !fresh.isEmpty {
+            let body = fresh.count == 1
+                ? "新成果:\(fresh[0].subject.prefix(28)) —— 录屏拍好了,你看一眼"
+                : "\(fresh.count) 件新成果做好了,录屏都在,等你看"
+            out.append(("milestone-\(fresh.count)-\(fresh.last?.mergeSHA ?? "")",
+                        .needsYou, body, fresh.count))
+        }
+
         // 1. 新项目的方案等过目
         let unapproved = Playbook.all().filter { !$0.isApproved }
         if !unapproved.isEmpty {

@@ -44,3 +44,15 @@ final class DerivedDispatchPrecisionTests: XCTestCase {
                                                  tasks: [ev], kind: TaskKind.isEvidence))
     }
 }
+
+extension DerivedDispatchPrecisionTests {
+    /// **刷新也要收口** —— 和审核/证据共用同一个宽限判据。
+    /// 实锤(2026-08-22):Maw 的 cdce40f3 落后 102 个提交,Kimi 10 分钟超时、
+    /// 火山接力 20 分钟又超时,而它还会一轮一轮接着派。
+    func testRefreshSharesTheSameGiveUpRule() {
+        XCTAssertFalse(MergeReview.exhausted(attempts: 2, needed: 1),
+                       "第 2 次还在宽限内:容得下「第一次挂了、重试一次成功」")
+        XCTAssertTrue(MergeReview.exhausted(attempts: 3, needed: 1),
+                      "第 3 次还刷不动就停,留给人工")
+    }
+}
