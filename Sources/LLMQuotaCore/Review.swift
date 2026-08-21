@@ -1425,19 +1425,25 @@ extension Review {
     ///
     /// 待验收的计数必须扣掉这些 —— 人已经做过决定了，再提醒他一次
     /// 只会让他觉得这个数字是假的。
+    /// 手机上**已经办成**的处置 —— 这些不再出现在待处理列表里。
+    ///
+    /// ## 「表过态」不等于「办成了」
+    ///
+    /// 原来这里读的是**结论文件存不存在**:只要人在手机上点过一下,
+    /// 这条产出就从列表里永久消失。可点击只是意图,执行是另一回事 ——
+    /// 合并可能因为冲突、因为评审判不合入而失败。
+    ///
+    /// 实锤(2026-08-22 早):老板点进推送,页面空的。查下来 Flint 的两条
+    /// 分支(Bot AI、枪声)都在「已表态」名单里,可它们既没合进去、
+    /// 也不在他眼前 —— 决定记下了、活没干成、条目消失了。**黑洞。**
+    /// 而推送还在数它们,于是「弹了消息点进去没有」。
+    ///
+    /// 现在只认 `.done` 台账:执行成功、或者重试到上限彻底放弃,才算办完。
+    /// 正在重试的留在列表里 —— 人有权看见「我点了合入但一直没合上」。
     public static func decidedBranches() -> Set<String> {
-        let fm = FileManager.default
-        guard let names = try? fm.contentsOfDirectory(atPath: verdictsDir.path)
-        else { return [] }
-        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        var out: Set<String> = []
-        for n in names where n.hasSuffix(".json") {
-            guard let v = SafeDecode.json(
-                at: verdictsDir.appendingPathComponent(n), as: Verdict.self)
-            else { continue }
-            out.insert(v.repo + "|" + v.branch)
-        }
-        return out
+        let doneFile = verdictsDir.appendingPathComponent(".done")
+        return Set((try? String(contentsOf: doneFile, encoding: .utf8))?
+            .split(separator: "\n").map(String.init) ?? [])
     }
 
     /// 收手机上的验收结论并执行。

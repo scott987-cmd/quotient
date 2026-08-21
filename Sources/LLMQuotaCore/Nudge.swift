@@ -102,7 +102,10 @@ public enum Nudge {
         // 0. **做出来的东西等你看。** 排在最前面 —— 这是老板最想被打扰的
         // 那件事(2026-08-22 原话:「关键成果产出需要找我确认」),
         // 而其余几条都是「出问题了」。带录屏的成果落地即入列,见 Milestone。
-        let fresh = Milestone.unreviewed()
+        // **手机上还没有「成果」这个页面** —— 推了也是点进去空的
+        // （2026-08-22 早刚被这个咬过）。等 App 那边做出来再放开。
+        // 在此之前成果只走「被否决」和普通待审两条已有的路。
+        let fresh: [Milestone.Item] = []
         if !fresh.isEmpty {
             let body = fresh.count == 1
                 ? "新成果:\(fresh[0].subject.prefix(28)) —— 录屏拍好了,你看一眼"
@@ -117,7 +120,13 @@ public enum Nudge {
         // 双双被评审 agent 判不合入,而一票否决是终局 —— 产线卡了一夜,
         // 老板问「任务为啥又停了」才发现。成果被推给他看,成果被毙了
         // 却悄无声息,这不对称是错的。
+        // **只数手机页面上真有的。** 这条规矩下面第 2 段写过一遍,我又犯了:
+        // rejectedWithEvidence 自己跑一遍本地仓库算数,而手机读的是已发布的
+        // reviews.json —— 2026-08-22 早老板点进推送,页面空的。
+        // 数据源只能有一个:已发布的那份。
+        let published = Set(Review.publishedDigests().map { $0.repo + "|" + $0.branch })
         let killed = Review.rejectedWithEvidence()
+            .filter { published.contains($0.repo + "|" + $0.branch) }
         if !killed.isEmpty {
             let body = killed.count == 1
                 ? "「\(killed[0].subject.prefix(24))」被评审判了不合入 —— 你看看该不该翻案"

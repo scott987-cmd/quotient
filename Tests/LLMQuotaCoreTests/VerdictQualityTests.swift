@@ -50,3 +50,35 @@ final class VerdictQualityTests: XCTestCase {
         XCTAssertFalse(VerdictQuality.isInconclusive("**结论**：合入。测试全绿，证据齐全。"))
     }
 }
+
+/// **「表过态」不等于「办成了」。**
+///
+/// 2026-08-22 早:老板点进推送,页面空的。Flint 的两条分支都在「已表态」
+/// 名单里 —— 他点过合入,评审判不合入合不进去,于是决定记下了、活没干成、
+/// 条目从他眼前永久消失。而推送还在数它们。
+final class DecidedMeansExecutedTests: XCTestCase {
+    override func setUp() { super.setUp(); Paths.appSupportOverride = tmp() }
+    override func tearDown() { Paths.appSupportOverride = nil; super.tearDown() }
+    private func tmp() -> URL {
+        let d = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dec-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    func testOnlyExecutedDecisionsHideTheItem() throws {
+        let dir = Review.verdictsDir
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // 一条「点过但没办成」的结论：文件在，.done 台账里没有。
+        let v = Review.Verdict(repo: "/r", branch: "agent/a/stuck",
+                               action: "merge", reason: nil, decidedAt: Date())
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        try enc.encode(v).write(to: dir.appendingPathComponent("r-stuck.json"))
+        XCTAssertFalse(Review.decidedBranches().contains("/r|agent/a/stuck"),
+                       "点了但没合上的,必须留在他眼前 —— 否则就是黑洞")
+        // 办成之后才隐藏。
+        try "/r|agent/a/stuck".write(to: dir.appendingPathComponent(".done"),
+                                    atomically: true, encoding: .utf8)
+        XCTAssertTrue(Review.decidedBranches().contains("/r|agent/a/stuck"))
+    }
+}
