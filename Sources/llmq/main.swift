@@ -1161,7 +1161,9 @@ func cmdWork(_ args: [String]) throws {
         if kick.exitCode == 0 {
             print(Ansi.green("已重启工作循环（换了二进制）"))
         } else {
-            print(Ansi.red("踢 worker 失败：") + kick.stderr.prefix(160))
+            print(Ansi.red("踢 worker 失败（退出码 \(kick.exitCode)）：")
+                + (kick.stderr + " " + kick.stdout)
+                    .trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
             exit(1)
         }
         return
