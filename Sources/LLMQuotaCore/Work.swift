@@ -387,6 +387,7 @@ public struct WorkScheduler: Sendable {
 
         let isMediaTask = TaskKind.isMedia(task?.prompt ?? "")
         let isReviewTask = TaskKind.isReview(task?.prompt ?? "")
+        let needsEyes = TaskKind.needsEyes(task?.prompt ?? "")
         for runner in runners {
             let p = runner.platform
 
@@ -395,7 +396,9 @@ public struct WorkScheduler: Sendable {
             // 编码任务派给媒体执行器必然产出垃圾（它只会调 mmx 生成资产）；
             // 媒体任务派给编码执行器则白跑一轮 —— agent 会试图「写代码生成图片」。
             // 以【媒体】开头的任务只给 mediaOnly 执行器，反之亦然。
-            if runner.mediaOnly != isMediaTask {
+            // 【看效果】也归媒体执行器 —— 它要的是「看图/看录屏」这个本事,
+            // 和生成媒体是同一个多模态模型,只是方向反过来。
+            if runner.mediaOnly != (isMediaTask || needsEyes) {
                 rejected.append(Rejection(
                     platform: p,
                     reason: runner.mediaOnly ? "只接【媒体】任务" : "媒体任务要媒体执行器",
@@ -407,9 +410,19 @@ public struct WorkScheduler: Sendable {
             // 审查执行器只接【审查】，而【审查】任务本身也能被普通编码
             // 执行器干（它们能读 diff 也能写报告），所以这里只挡
             // 「审查执行器接非审查任务」这一半。
-            if runner.reviewOnly, !isReviewTask {
+            if runner.reviewOnly, !isReviewTask || needsEyes {
                 rejected.append(Rejection(
                     platform: p, reason: "只接【评审】任务", kind: .permanent))
+                continue
+            }
+
+            // **看不见图就别评判图。** 任务点名要看录屏/截图（【看效果】前缀）
+            // 时，只有多模态平台能接。opencode 那条线是 GLM，纯文本 ——
+            // 它对着文件名硬编一份「看起来没问题」的报告，比不派更糟。
+            if needsEyes, !runner.canSeeMedia {
+                rejected.append(Rejection(
+                    platform: p, reason: "看不了图片/录屏（纯文本模型）",
+                    kind: .permanent))
                 continue
             }
 
@@ -747,6 +760,16 @@ public protocol AgentRunner: Sendable {
     /// 那批一直合不进去的 EVAL-*.md 分支，大半就是这么来的。
     var reviewOnly: Bool { get }
 
+    /// **看得见图片和录屏吗。**
+    ///
+    /// 老板 2026-08-22 指出：审查员岗位上的 opencode 走的是 GLM，
+    /// **纯文本模型**——让它评审录屏/截图等于让瞎子看画，
+    /// 而它给出的结论会被当成正式否决记进名单。
+    /// MiniMax（mmx）的本事里就有图片/视频理解，这类活该走它。
+    ///
+    /// 默认 false：宁可漏派，也不要让看不见的平台去评判看得见的东西。
+    var canSeeMedia: Bool { get }
+
     /// 无头执行。cwd 是独立 worktree，不是用户的工作区。
     func command(prompt: String, cwd: String) -> (launchPath: String, args: [String], env: [String: String])
 
@@ -771,6 +794,7 @@ public extension AgentRunner {
     /// 两个方向都要闸。
     var mediaOnly: Bool { false }
     var reviewOnly: Bool { false }
+    var canSeeMedia: Bool { false }
     var binaryPath: String? { Proc.which(binaryName) }
     var isAvailable: Bool { binaryPath != nil }
 }
@@ -961,6 +985,8 @@ public struct MiniMaxMediaRunner: AgentRunner {
     public let binaryName = "mmx"
     public var canEdit: Bool { true }     // 它写文件（资产），这是真的编辑
     public var mediaOnly: Bool { true }
+    /// mmx 的本事里就有图片/视频理解 —— 全系统唯一看得见的一个。
+    public var canSeeMedia: Bool { true }
     public init() {}
 
     public func command(

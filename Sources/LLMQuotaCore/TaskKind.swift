@@ -38,8 +38,19 @@ public enum TaskKind {
     /// 一直混着用：人写的是 `【评审·项目】`，机器发的是 `【审查·合入】`、
     /// `【审查】复查刚合入 main 的合并 …`。
     /// 只认一种的代价见类型注释。
+    /// 这个任务要**亲眼看**图片或录屏吗。
+    ///
+    /// 老板 2026-08-22：「MiniMax 支持视频输入,视频图片评审走它,
+    /// 不要走 opencode —— opencode 配的 GLM 仅支持文本」。
+    /// 纯文本模型对着文件名编一份「看起来没问题」,比不派更糟:
+    /// 它的结论会被当成正式票记下来。
+    public static func needsEyes(_ prompt: String) -> Bool {
+        prompt.hasPrefix("【看效果】")
+    }
+
     public static func isReview(_ prompt: String) -> Bool {
         prompt.hasPrefix("【评审") || prompt.hasPrefix("【审查")
+            || prompt.hasPrefix("【看效果】")
     }
 
     /// 要 agent 跑起来截图取证那一类。

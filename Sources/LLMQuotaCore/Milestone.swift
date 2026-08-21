@@ -91,6 +91,52 @@ public enum Milestone {
         return item
     }
 
+    /// 派一份「先替老板看一眼」的任务给多模态平台。
+    ///
+    /// 老板 2026-08-22 指出:MiniMax 支持视频/图片输入,而审查员那条线
+    /// (opencode → GLM)是纯文本。在这之前**全系统没有任何一个环节真的
+    /// 看过录屏** —— 只有老板本人看,他一个人当所有验收的眼睛。
+    /// 他看录屏发现的问题(「跑的姿势不像真人」「手歪不拉几」)全是真的,
+    /// 但那本该在到他手上之前就被拦下一部分。
+    ///
+    /// 这一道不是替代他,是先过一遍明显的:人物姿势怪、UI 错位、画面全黑。
+    @discardableResult
+    public static func dispatchVisualCheck(_ item: Item, repoPath: String) -> String? {
+        let visual = item.evidenceFiles.filter {
+            let l = $0.lowercased()
+            return l.hasSuffix(".mov") || l.hasSuffix(".mp4") || l.hasSuffix(".png")
+                || l.hasSuffix(".jpg")
+        }
+        guard !visual.isEmpty else { return nil }
+        let dir = Review.evidenceDir.path
+        let prompt = """
+        【看效果】看一遍这次产出的录屏/截图,替老板先过一道眼。
+
+        成果：\(item.subject)
+        文件（都在 \(dir) 下）：
+        \(visual.map { "  - " + $0 }.joined(separator: "\n"))
+
+        用你的图片/视频理解能力**真的看**,不要凭文件名猜。要回答的就三件事：
+
+        1. 画面正常吗 —— 有没有全黑、纯色、卡住不动、明显穿模。
+        2. 人物/动作自然吗 —— 姿势别扭、手脚朝向不对、滑步、T-pose 这类。
+           （这条最要紧：老板上一轮就是靠肉眼发现「跑的姿势不像真人、
+           手歪不拉几」,那两条后来都证实是真问题。）
+        3. 和成果标题对得上吗 —— 说是打枪的录屏里真有开枪吗。
+
+        输出格式（就这几行,别写长报告）：
+        **看到了**：一句话描述画面里实际发生的事
+        **问题**：逐条列,没有就写「没看出问题」
+        **结论**：可以给老板看 / 建议先修（附一句为什么）
+        """
+        let r = try? TaskIntake.enqueue(
+            prompt: prompt, repo: repoPath, classify: false, split: false,
+            force: true, origin: "milestone-eyes",
+            preferredPlatform: .minimax)
+        if case .single(let t)? = r { return t.id }
+        return nil
+    }
+
     /// 还没被看过的成果(推送和手机列表都用它)。
     public static func unreviewed() -> [Item] {
         all().filter { $0.verdict == nil }

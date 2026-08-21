@@ -829,8 +829,11 @@ public enum Review {
                     .stdout.split(separator: "\n").map(String.init)
                 let subject = GitWorkspace.git(["log", "-1", "--format=%s", sha], in: repo)
                     .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                Milestone.record(repo: repo, branch: branch, mergeSHA: sha,
-                                 files: files, subject: subject)
+                if let m = Milestone.record(repo: repo, branch: branch, mergeSHA: sha,
+                                            files: files, subject: subject) {
+                    // 先让看得见的那个平台过一眼，别让老板当唯一的眼睛。
+                    Milestone.dispatchVisualCheck(m, repoPath: repo)
+                }
             }
             // 落地即排审查：给审查员（opencode/火山）生成一条【审查】任务
             // 复查这次合并 —— 自动落地放宽了「谁按回车」，
