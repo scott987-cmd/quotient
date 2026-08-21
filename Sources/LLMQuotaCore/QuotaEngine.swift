@@ -4,7 +4,13 @@ import Foundation
 public struct QuotaEngine: Sendable {
     public var config: PlansConfig
     /// 机器快照超过这个时长没更新，就认为那台机器没在跑采集。
-    public var machineStaleAfter: TimeInterval = 6 * 3600
+    /// 对端快照多久没更新算「陈旧」。
+    ///
+    /// 原来是 6 小时 —— 太松:采集每 15 分钟一次、镜像每 30 秒一推,健康的
+    /// 机器 20 分钟内必有新快照;而手机看板早就按「>1 小时=红」在标。
+    /// 实锤(2026-08-21):MacBook 的菜单栏 App 被自动更新杀掉后三小时没镜像,
+    /// 手机上红点,Mac 报表却还写「● 活跃」—— 老板先发现的。两边对齐到 1 小时。
+    public var machineStaleAfter: TimeInterval = 3600
 
     public init(config: PlansConfig) {
         self.config = config

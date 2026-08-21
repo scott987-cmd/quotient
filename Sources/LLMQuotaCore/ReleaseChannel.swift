@@ -409,7 +409,25 @@ public enum ReleaseChannel {
             _ = Proc.run("/usr/bin/codesign",
                          ["--force", "--deep", "--sign", "-", dst.path],
                          cwd: "/", env: [:], timeout: 60)
+            // **拉起之后要核实。** 实锤(2026-08-21):MacBook 上 09:16 自动
+            // 更新后 App 三小时没在跑——`open <刚重建的包路径>` 在 launchd
+            // 上下文里悄悄失败了(疑似 LaunchServices 对刚删又建的 bundle
+            // 注册过期),而这一句的返回值被 `_ =` 吞掉。App 不在 = 镜像
+            // 不推不拉 = 这台机器在集群看板上「3 小时没更新」,老板先发现的。
             _ = Proc.run("/usr/bin/open", [dst.path], cwd: "/", env: [:], timeout: 20)
+            Thread.sleep(forTimeInterval: 2)
+            func appAlive() -> Bool {
+                Proc.run("/usr/bin/pgrep", ["-f", "LLMQuotaBar.app/Contents/MacOS"],
+                         cwd: "/", env: [:], timeout: 5).exitCode == 0
+            }
+            if !appAlive() {
+                // 按名字开不走路径缓存 —— 手工 `open -a LLMQuotaBar` 一下就起来了。
+                _ = Proc.run("/usr/bin/open", ["-a", "LLMQuotaBar"], cwd: "/", env: [:], timeout: 20)
+                Thread.sleep(forTimeInterval: 2)
+            }
+            FileHandle.standardOutput.write(Data(
+                (appAlive() ? "  菜单栏 App 已重新拉起\n"
+                            : "  ⚠︎ 菜单栏 App 没拉起来 —— 这台机器的镜像同步会停,请手动 open -a LLMQuotaBar\n").utf8))
         }
 
         markInstalled(manifest.sha256)
