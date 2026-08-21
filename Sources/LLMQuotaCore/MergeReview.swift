@@ -163,6 +163,12 @@ public enum MergeReview {
         这条分支：\(c.subject)
         机器不敢自己拿主意的原因：\(c.whyNotMechanical)
 
+        **先把全量改动自己拉出来看**：`git diff main...\(c.branch)`（或逐文件
+        `git show`）。任务附带的摘要和内联 diff 可能被截断——「截断看不到」
+        **不是**否决理由；看不到就自己去看，仓库就在手边。结论只能建立在
+        你真正核过的内容上：确认过没问题就合，确认有问题就说清是哪一行；
+        不许因为「没看全」就保守地判不合入，那会把好产出堵在门外一整夜。
+
         """
         if c.needed > 1 {
             // **点名是哪个文件触发的，别替评审下结论。**
@@ -207,6 +213,9 @@ public enum MergeReview {
         public var branch: String
         public var action: String
         public var note: String
+        /// 这条是不是真的派出了一个审核任务。`maxPerCall` 只数它 ——
+        /// 「已否决 / 已够票 / 已在队」这种不动手的结果不占名额。
+        public var enqueued: Bool = false
     }
 
     /// 派审核任务。一轮最多一个 —— 评审也烧额度。
@@ -255,7 +264,11 @@ public enum MergeReview {
                                maxPerCall: Int = 1) -> [Outcome] {
         var out: [Outcome] = []
         for c in candidates(repo: repo, base: base, tasks: tasks) {
-            if out.count >= maxPerCall { break }
+            // **只数真派出去的。** 原来数 out.count —— 「已否决」也算一条,
+            // 于是被否决的分支排在第一个就把唯一名额占了,后面的分支永远
+            // 轮不到审核。实锤(2026-08-22 05:00):Bot AI 被否 → 音效分支
+            // 「0/2 票,还没派过审核」一整夜。队头阻塞的第三个变种。
+            if out.filter(\.enqueued).count >= maxPerCall { break }
             let done = approvalsSoFar(branch: c.branch, tasks: tasks,
                                       head: c.head, headAt: c.headAt)
             if done.approvals >= c.needed {
@@ -296,7 +309,7 @@ public enum MergeReview {
                 default:
                     out.append(Outcome(
                         branch: c.branch, action: "已派审核",
-                        note: c.whyNotMechanical + "，需要 \(c.needed) 票"))
+                        note: c.whyNotMechanical + "，需要 \(c.needed) 票", enqueued: true))
                 }
             } catch {
                 out.append(Outcome(branch: c.branch, action: "派失败",

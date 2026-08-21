@@ -171,7 +171,9 @@ public enum StaleBranch {
                                        maxPerCall: Int = 1) -> [Outcome] {
         var out: [Outcome] = []
         for c in candidates(repo: repo, base: base, tasks: tasks) {
-            if out.count >= maxPerCall { break }
+            // 只数真派出去的 —— 「不重复派 / 收口」这种不动手的结果不占名额,
+            // 否则排在前面的一条永久挡住后面所有(队头阻塞,2026-08-22)。
+            if out.filter(\.enqueued).count >= maxPerCall { break }
             // **派够次数还刷不动就收口。** 刷新没有上限的代价实测过
             // （2026-08-22 凌晨）：Maw 的 cdce40f3 落后 102 个提交，
             // Kimi 跑 10 分钟超时、火山接力跑 20 分钟又超时，而它还会

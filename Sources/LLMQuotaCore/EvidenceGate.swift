@@ -242,7 +242,9 @@ public enum EvidenceGate {
                                         maxPerCall: Int = 1) -> [Outcome] {
         var out: [Outcome] = []
         for c in candidates(repo: repo, base: base, tasks: tasks) {
-            if out.count >= maxPerCall { break }
+            // 只数真派出去的 —— 「不重复派 / 收口」这种不动手的结果不占名额,
+            // 否则排在前面的一条永久挡住后面所有(队头阻塞,2026-08-22)。
+            if out.filter(\.enqueued).count >= maxPerCall { break }
             // **派够次数还交不出证据 —— 收口，别再派。**
             //
             // 去重只挡得住「已经派过、还没跑完」。任务一旦失败或超时，

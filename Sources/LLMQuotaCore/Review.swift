@@ -649,7 +649,9 @@ public enum Review {
         for item in pending {
             // 按「尝试次数」限流而不是「成功次数」：贵的是验收那一步，
             // 失败的尝试一样烧了一次全量构建。
-            if outcomes.count >= maxPerCall { break }
+            // 只数真落地的 —— 「没落」不占名额,否则排在前面的一条没落的
+            // 分支会挡住后面所有能落的(队头阻塞第三变种,2026-08-22)。
+            if outcomes.filter(\.landed).count >= maxPerCall { break }
             // 任务 done 是常规路径。**搁浅图是例外，而且必须是例外。**
             //
             // 搁浅图的任务状态是 blocked / failed（挂了一步，下游冻住），
