@@ -1138,6 +1138,34 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.dim("加 --dispatch 派刷新任务回给原平台（它还留着当时的会话）"))
         }
 
+    // llmq work restart-worker —— **原子地**「没人在跑才踢 worker」。
+    //
+    // 装机脚本原来自己判:`llmq brief | grep -oE '在跑 [0-9]+'` —— 两个毛病,
+    // 2026-08-22 凌晨同时发作,把一个刚跑 32 秒的任务连人带活杀了:
+    //  ① 拿人类可读输出当接口(这个仓库反复栽的那个形状),排版一变就失灵;
+    //  ② 判断和 kickstart 分在两个进程、隔着几十秒的编译,中间新任务开跑。
+    // 收成一条命令:同一个进程里先看后踢,数据直接读 TaskStore,没有文本契约。
+    case "restart-worker":
+        let inFlight = TaskStore.all().filter {
+            $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? false)
+        }
+        if let busy = inFlight.first {
+            let ran = busy.startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
+            print(Ansi.yellow("没重启 worker：") + Ansi.dim(
+                "\(busy.id) 正在跑（已 \(ran) 秒）。新二进制等它干完自然生效。"))
+            exit(3)   // 3 = 有活在跑,调用方据此决定要不要等
+        }
+        let kick = Proc.run("/bin/launchctl",
+                            ["kickstart", "-k", "gui/\(getuid())/com.llmquotabar.worker"],
+                            cwd: "/tmp", env: [:], timeout: 30)
+        if kick.exitCode == 0 {
+            print(Ansi.green("已重启工作循环（换了二进制）"))
+        } else {
+            print(Ansi.red("踢 worker 失败：") + kick.stderr.prefix(160))
+            exit(1)
+        }
+        return
+
     case "land":
         // llmq work land —— **手动跑一轮落地。**
         //
@@ -4963,8 +4991,13 @@ func restartResidentServices() -> [String] {
     // 换二进制本来就不急：worker 每 30 秒取一次任务，
     // 手上这件干完、下一次自然重启时就换过来了。
     // 为了早几分钟用上新版本而弄死一个正在跑的任务，是亏的。
+    // **没记 PID 的 running 也算在飞。** 原来 `?? false` —— 任务刚起、
+    // PID 还没落盘的那一小段窗口里，它被当成「没人在跑」，于是这道闸
+    // 形同虚设（2026-08-22 凌晨实测踢死一个刚跑 32 秒的任务）。
+    // 宁可多等一轮：踢晚一点只是新版本晚几分钟生效，踢错一次是烧掉
+    // 一整个任务的额度，还要人来问「任务怎么停了」。
     let inFlight = TaskStore.all().filter {
-        $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? false)
+        $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? true)
     }
 
     for label in ["com.llmquotabar.cluster", "com.llmquotabar.worker"] {

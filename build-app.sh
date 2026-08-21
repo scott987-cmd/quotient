@@ -162,25 +162,21 @@ if [ "$INSTALL" -eq 1 ]; then
   # 跑了十几次 --install。
   #
   # 环境变量 LLMQ_FORCE_RESTART=1 强踢（比如修的正是让任务卡死的 bug）。
-  if [ "${LLMQ_FORCE_RESTART:-0}" != "1" ] && [ -x "$HOME/.local/bin/llmq" ]; then
-    running=$("$HOME/.local/bin/llmq" brief 2>/dev/null \
-      | grep -oE '在跑 [0-9]+' | grep -oE '[0-9]+' || true)
-    if [ "${running:-0}" -gt 0 ]; then
-      echo "   ⚠︎ 有 ${running} 个任务正在跑，**没有重启工作循环** ——"
-      echo "      踢它会把正在执行的 agent 一起杀掉（实测白烧过 16 分钟）。"
-      echo "      等它跑完（llmq brief 看进度）再装，或者："
-      echo "        LLMQ_FORCE_RESTART=1 ./build-app.sh --install"
-      worker_loaded=0
-    fi
-  fi
-
-  worker_loaded=${worker_loaded:-$(launchctl list 2>/dev/null | grep -c com.llmquotabar.worker || true)}
-  if [ "${worker_loaded:-0}" -gt 0 ]; then
-    if launchctl kickstart -k "gui/$(id -u)/com.llmquotabar.worker"; then
-      echo "   已重启工作循环（换了二进制）"
-    else
-      echo "   ⚠︎ 工作循环重启失败 —— 它还在跑旧二进制，手动："
-      echo "     launchctl kickstart -k gui/$(id -u)/com.llmquotabar.worker"
+  #
+  # **判断和踢必须在同一个进程里**（`llmq work restart-worker`）。
+  # 原来这里自己判：`llmq brief | grep -oE '在跑 [0-9]+'`，两个毛病在
+  # 2026-08-22 凌晨同时发作，把一个刚跑 32 秒的任务连人带活杀了：
+  #  ① 拿人类可读输出当接口 —— 这个仓库反复栽的那个形状；
+  #  ② 判断在编译**之前**、kickstart 在编译**之后**，隔着几十秒，
+  #     中间 worker 已经派了新活。等空闲再装这件事，只有原子操作能做对。
+  if [ "${LLMQ_FORCE_RESTART:-0}" = "1" ]; then
+    launchctl kickstart -k "gui/$(id -u)/com.llmquotabar.worker" >/dev/null 2>&1 \
+      && echo "   已强制重启工作循环（LLMQ_FORCE_RESTART=1）"
+  elif [ -x "$HOME/.local/bin/llmq" ]; then
+    "$HOME/.local/bin/llmq" work restart-worker
+    rc=$?
+    if [ "$rc" = "3" ]; then
+      echo "      等它跑完再装，或者：LLMQ_FORCE_RESTART=1 ./build-app.sh --install"
     fi
   fi
 
