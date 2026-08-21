@@ -1667,6 +1667,27 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             }
             continue
         }
+        // **自己的分支已经合进 main 的任务 = 活已经干完了。** 实锤(2026-08-21):
+        // 经济任务中途提问、老板答复后被重排回队头,可它的分支早就落地了 ——
+        // 一个不可派的僵尸占着仓库坑。分支合入是 git 事实,派活前核一次。
+        if let own = cand.branch, !own.isEmpty {
+            let repoPath = NSString(string: cand.repo).expandingTildeInPath
+            let exists = GitWorkspace.git(["rev-parse", "--verify", "--quiet",
+                                           "refs/heads/" + own], in: repoPath).exitCode == 0
+            let merged = GitWorkspace.git(["merge-base", "--is-ancestor", own, "main"],
+                                          in: repoPath).exitCode == 0
+            if merged || (!exists && GitWorkspace.git(
+                ["log", "--oneline", "-1", "--grep", "merge " + own, "main"],
+                in: repoPath).stdout.isEmpty == false) {
+                if !quiet { print(Ansi.yellow("  已完成 " + cand.id + "：") + Ansi.dim("它的分支 \(own) 已合进 main")) }
+                var x = cand
+                x.state = .done
+                x.endedAt = Date()
+                x.note = "派活前核实：分支 \(own) 已合入 main，产出早已落地"
+                try? TaskStore.append(x)
+                continue
+            }
+        }
         // **派生任务的目标分支还在吗。** 审查/证据/刷新入队时分支活着,
         // 执行时可能早合入或没了 —— 实锤一晚五例对着已合入的分支白跑,
         // 产出还把正主挤成冲突(详见 TaskKind.boundBranch)。
@@ -1739,26 +1760,32 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         if !quiet { print(Ansi.dim("排队的任务前提都还没就绪。")) }
         return .noTask
     }
-    // 仓库级独占放在**前提核完之后**：只有真正够格开工的候选才占坑。
-    // 反过来（旧顺序）的代价见上面调序注释。
-    let (vettedQueue, leaseDeferred) = RepoLease.filter(vetted, tasks: history)
-    if !quiet {
-        for (t, why) in leaseDeferred.prefix(3) {
-            print(Ansi.dim("  让开 " + t.id + "：" + why))
-        }
-    }
-    guard !vettedQueue.isEmpty else {
-        if !quiet {
-            print(Ansi.dim("排队的任务所在仓库都有人在改，等它们落地。"))
-        }
-        return .noTask
-    }
+    // 仓库级独占：**只有真在跑的任务才占坑**，而且在候选循环里逐个判。
+    //
+    // 原来这里用 RepoLease.filter 预过滤，它会把「本轮放行的第一个」也记成
+    // 占坑 —— 可那一个接下来可能根本派不出去（没平台能接）。实锤
+    // （2026-08-21 14:05）：经济任务排在队头，Kimi 失败过/Codex 触留白/
+    // 火山档位不够，它派不出去却替 Flint 占了坑，后面同仓库的动捕 s3
+    // 每轮「让开」—— 队头阻塞修复被租约从背后捅了一刀。
+    // runOneTask 一次只派一个，同轮互斥本来就不需要预占。
+    let vettedQueue = vetted
     let dash = LLMQuota.dashboard()
 
     var task: WorkTask! = nil
     var decision: WorkScheduler.Decision! = nil
+    var leaseNoted = 0
     for (idx, candidateTask) in vettedQueue.enumerated() {
         var cand = candidateTask
+        if let h = RepoLease.holder(repo: cand.repo, tasks: history) {
+            if !quiet, leaseNoted < 3 {
+                leaseNoted += 1
+                print(Ansi.dim("  让开 " + cand.id + "：仓库 "
+                    + URL(fileURLWithPath: RepoLease.normalize(cand.repo)).lastPathComponent
+                    + " 正被 " + (h.platform?.displayName ?? "另一个 agent")
+                    + " 改（任务 \(h.id)）—— 等它落地再开工"))
+            }
+            continue
+        }
         let d = WorkScheduler().decide(
             dashboard: dash, runners: RunnerRegistry.all,
             task: cand, history: history)
