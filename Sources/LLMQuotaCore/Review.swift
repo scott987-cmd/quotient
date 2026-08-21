@@ -1276,6 +1276,33 @@ extension Review {
     /// 存在的理由：推送和手机页面必须读同一份数据。各算各的话，
     /// 在多机环境下必然对不上 —— 每台机器看得见的仓库不一样。
     /// 实测就是这么产生「弹了消息、点进去是空的」。
+    /// 带证据(录屏/截图)却被评审判「不合入」的分支 —— 这些要让人知道。
+    ///
+    /// 只挑带证据的:那是「做出来了、能看效果」的产出,被毙掉是大事。
+    /// 纯文书被否不打扰人(见 Milestone 的同款判据)。
+    public static func rejectedWithEvidence(
+        repos: [RepoAlias] = RepoRegistry.all(),
+        tasks: [WorkTask] = TaskStore.all()) -> [Digest] {
+        var out: [Digest] = []
+        for repo in repos {
+            let path = NSString(string: repo.localPath).expandingTildeInPath
+            for item in list(repo: path) {
+                guard item.evidence.contains(where: EvidenceGate.isEvidenceFile) else { continue }
+                let done = MergeReview.approvalsSoFar(
+                    branch: item.branch, tasks: tasks,
+                    head: item.head, headAt: item.committedAt)
+                guard done.rejected else { continue }
+                out.append(Digest(
+                    repo: path, repoName: repo.alias, branch: item.branch,
+                    platform: item.platform ?? "", subject: item.subject,
+                    prompt: nil, files: item.files, insertions: 0, deletions: 0,
+                    mergesCleanly: true, overlapsWith: [], committedAt: item.committedAt,
+                    evidence: item.evidence))
+            }
+        }
+        return out
+    }
+
     public static func publishedDigests() -> [Digest] {
         let f = Paths.sharedRoot.appendingPathComponent("reviews.json")
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601

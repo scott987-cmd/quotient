@@ -295,8 +295,12 @@ public enum MergeReview {
                 continue
             }
             do {
+                // 上一轮判「看不清」的,重派时把话挑明:自己去 git diff。
+                let prompt = done.inconclusive > 0
+                    ? reviewPrompt(c) + VerdictQuality.lookHarderClause
+                    : reviewPrompt(c)
                 let r = try TaskIntake.enqueue(
-                    prompt: reviewPrompt(c), repo: repo,
+                    prompt: prompt, repo: repo,
                     classify: false, split: false,
                     // 一律跳过通用查重:上面 hasPendingReview 已做**精确**
                     // 判重(同分支同提交在队)。模糊查重对模板化的审核提示词
@@ -381,8 +385,9 @@ public enum MergeReview {
     public static func approvalsSoFar(branch: String, tasks: [WorkTask],
                                       head: String? = nil,
                                       headAt: Date? = nil)
-        -> (approvals: Int, rejected: Bool, attempts: Int) {
+        -> (approvals: Int, rejected: Bool, attempts: Int, inconclusive: Int) {
         var approvals = 0, attempts = 0, rejected = false
+        var inconclusive = 0
         for t in tasks where isMergeReviewPrompt(t.prompt, of: branch) {
             // 过期的结论连 attempts 都不算 —— 否则分支改好之后，
             // 「派了几次」这个计数从一开始就贴着上限，
@@ -393,11 +398,19 @@ public enum MergeReview {
             let text = t.outputs.joined(separator: "\n") + "\n" + (t.note ?? "")
             switch parseVerdict(text) {
             case .land: approvals += 1
-            case .reject: rejected = true
+            case .reject:
+                // **「我没看清」不算否决。** 详见 VerdictQuality:
+                // 评审只有「合入 / 不合入」两个格子，不确定就被塞进后者，
+                // 而一票否决是终局。通篇讲「截断 / 看不到」的，退回重审。
+                if VerdictQuality.isInconclusive(text) {
+                    inconclusive += 1
+                } else {
+                    rejected = true
+                }
             case nil: break   // 结论读不出来 —— 不算票，也不算否
             }
         }
-        return (approvals, rejected, attempts)
+        return (approvals, rejected, attempts, inconclusive)
     }
 
     /// 这条分支的 agent 审核过了没有 —— 给 autoland 用。

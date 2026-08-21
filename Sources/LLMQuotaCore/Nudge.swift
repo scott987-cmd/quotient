@@ -111,6 +111,21 @@ public enum Nudge {
                         .needsYou, body, fresh.count))
         }
 
+        // 0.5 **做出来的东西被机器毙了 —— 这个必须让人知道。**
+        //
+        // 2026-08-22 凌晨:Bot AI(90 条测试全绿 + 交战录屏)和枪声混音
+        // 双双被评审 agent 判不合入,而一票否决是终局 —— 产线卡了一夜,
+        // 老板问「任务为啥又停了」才发现。成果被推给他看,成果被毙了
+        // 却悄无声息,这不对称是错的。
+        let killed = Review.rejectedWithEvidence()
+        if !killed.isEmpty {
+            let body = killed.count == 1
+                ? "「\(killed[0].subject.prefix(24))」被评审判了不合入 —— 你看看该不该翻案"
+                : "\(killed.count) 件带录屏的产出被评审判了不合入,等你定夺"
+            out.append(("rejected-\(killed.count)-\(killed.first?.branch ?? "")",
+                        .needsYou, body, killed.count))
+        }
+
         // 1. 新项目的方案等过目
         let unapproved = Playbook.all().filter { !$0.isApproved }
         if !unapproved.isEmpty {
