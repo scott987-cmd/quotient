@@ -4913,9 +4913,44 @@ func cmdRelease(_ rest: [String]) throws {
         print(Ansi.green("本机已装上 ") + m.sha256.prefix(12))
         let restarted = restartResidentServices()
         if !restarted.isEmpty { print(Ansi.dim("  重启：" + restarted.joined(separator: " "))) }
-        print(Ansi.dim("从机会在下次检查时自动更新，或者立刻跑：llmq update"))
-        print(Ansi.dim("从机上的 llmq 太老、连 update 命令都没有时："
-                       + "llmq release bootstrap 打印一段可粘贴的引导脚本"))
+        // **发布不等于全网到齐 —— 把每台机器的状态摆出来。**
+        //
+        // 老板 2026-08-23:「发包真的基础的事情,每次都忘记两台全发」。
+        // 根子不是我忘,是发布**只把包放进共享目录就宣布完成**,从不回头看
+        // 从机跟上没有。MacBook 停在旧版好几个钟头,我每次都是等它出问题
+        // 才发现。这种「靠记性做的基础操作」就该让命令自己保证。
+        //
+        // 这里按 presence 报告的 installedRelease 逐台核对:已跟上的打勾,
+        // 没跟上的红着列出来,一眼就知道还差谁 —— 不用记、不用猜。
+        let target = m.sha256
+        let peers = ClusterPresenceStore.all().filter {
+            $0.machineID != Paths.machineID()
+        }
+        if peers.isEmpty {
+            print(Ansi.dim("集群里暂时只有本机。"))
+        } else {
+            print(Ansi.bold("各机器更新状态："))
+            print("  " + Ansi.green("✓ ") + Paths.machineName() + Ansi.dim("（本机，刚装）"))
+            var behind = 0
+            for p in peers.sorted(by: { $0.machineName < $1.machineName }) {
+                let cur = p.installedRelease ?? ""
+                if cur.hasPrefix(target.prefix(12)) {
+                    print("  " + Ansi.green("✓ ") + p.machineName + Ansi.dim("  已跟上"))
+                } else {
+                    behind += 1
+                    let was = cur.isEmpty ? "未知" : String(cur.prefix(12))
+                    print("  " + Ansi.red("✗ ") + p.machineName
+                        + Ansi.dim("  还在 \(was) —— 它会自动更新，一般 30 分钟内"))
+                }
+            }
+            if behind > 0 {
+                print(Ansi.yellow("  \(behind) 台还没跟上。") + Ansi.dim(
+                    "它们各自的 updater 每半小时拉一次；等急了可在那台上跑 llmq update。"))
+                print(Ansi.dim("  从机太老连 update 都没有时：llmq release bootstrap 打印引导脚本。"))
+            } else {
+                print(Ansi.green("  全部机器已是最新。"))
+            }
+        }
 
     // llmq release install-updater [秒]
     case "install-updater":
