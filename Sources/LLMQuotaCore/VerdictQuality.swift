@@ -23,9 +23,44 @@ public enum VerdictQuality {
     /// 「我没看清」类措辞。
     static let blindMarkers = ["截断", "看不到", "看不出", "没看到", "看不见",
                                "无法确认", "不确定是否", "需要看到", "diff 里没有"]
+
+    /// 阈值用真实报告标定过(2026-08-22,六份历史评审):
+    ///   盲 8/实 1、盲 9/实 3、盲 22/实 7  → 这三份确实是「没看就否」
+    ///   盲 4/实 5、盲 2/实 2、盲 3/实 3  → 这三份有实据,必须照旧生效
+    /// `盲 >= 5 且 盲 > 实 * 2` 把两组干净分开。
     /// 「我看到问题了」类措辞 —— 具体、可核对。
-    static let concreteMarkers = ["第 ", "行", "违反", "缺少登记", "没有登记",
-                                  "硬编码", "泄漏", "崩溃", "删除了", "绕过"]
+    /// 「我看到问题了」类措辞 —— 具体、可核对。
+    ///
+    /// **不能放「第 」「行」这种词**:任何讨论代码的报告都会命中,
+    /// 于是「具体证据」被虚高,判据永远不成立(2026-08-22 实测:
+    /// 一份 19 处盲目措辞的报告,因为「行」出现了 15 次而被判成有实据)。
+    static let concreteMarkers = ["违反", "缺少登记", "没有登记", "未登记",
+                                  "硬编码", "泄漏", "崩溃", "删除了", "绕过",
+                                  "会失败", "入库", "未同步", "冲突"]
+
+    /// 把评审真正的理由取出来。
+    ///
+    /// **任务输出里只有两行**:「已写 reviews/EVAL-xxx.md(6773 字)」和
+    /// 「**结论**:不合入」—— 理由全在那个文件里。只看输出的话,
+    /// 判据永远看不到「截断/看不到」那些话,这个检测等于没做
+    /// (2026-08-22 实测:三条被否分支 inconclusive 全是 0,而报告里
+    /// 那些话有 19 次和 10 次)。这就是**同一份信息两个地方**的老毛病:
+    /// 结论在输出、依据在文件,谁读一半都会判错。
+    public static func fullReport(taskOutputs: String, repoPath: String) -> String {
+        // 输出里点名的报告文件,拼上仓库路径读回来。
+        var text = taskOutputs
+        let pattern = #"reviews/EVAL-[^\s（(]+\.md"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return text }
+        let ns = taskOutputs as NSString
+        for m in re.matches(in: taskOutputs, range: NSRange(location: 0, length: ns.length)) {
+            let rel = ns.substring(with: m.range)
+            let full = (repoPath as NSString).appendingPathComponent(rel)
+            if let body = try? String(contentsOfFile: full, encoding: .utf8) {
+                text += "\n" + body
+            }
+        }
+        return text
+    }
 
     /// 这份否决是不是「看不清」而不是「有问题」。
     ///
@@ -36,8 +71,7 @@ public enum VerdictQuality {
         guard !report.isEmpty else { return false }
         let blind = blindMarkers.reduce(0) { $0 + report.components(separatedBy: $1).count - 1 }
         let concrete = concreteMarkers.reduce(0) { $0 + report.components(separatedBy: $1).count - 1 }
-        // 至少 3 次盲目措辞,且盲目是具体证据的两倍以上。
-        return blind >= 3 && blind > concrete * 2
+        return blind >= 5 && blind > concrete * 2
     }
 
     /// 重审时追加的话:把「你没看」这件事直说。

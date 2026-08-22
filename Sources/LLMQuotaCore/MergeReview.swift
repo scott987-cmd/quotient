@@ -402,7 +402,9 @@ public enum MergeReview {
                 // **「我没看清」不算否决。** 详见 VerdictQuality:
                 // 评审只有「合入 / 不合入」两个格子，不确定就被塞进后者，
                 // 而一票否决是终局。通篇讲「截断 / 看不到」的，退回重审。
-                if VerdictQuality.isInconclusive(text) {
+                // 理由在 EVAL 文件里,不在任务输出里 —— 必须读回来再判。
+                let full = VerdictQuality.fullReport(taskOutputs: text, repoPath: t.repo)
+                if VerdictQuality.isInconclusive(full) {
                     inconclusive += 1
                 } else {
                     rejected = true
