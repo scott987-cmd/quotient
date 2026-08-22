@@ -1855,6 +1855,23 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                                                     onBranches: branches))))
             }
         case .gone(let missing):
+            // **同一张图里的下游步骤永远不作废,只等。**
+            //
+            // 前提核验会在上游步骤**提交之前**跑:那一刻分支上还没有那些文件,
+            // 于是判成「彻底没有」→ 作废。实锤(2026-08-22):头发产线 s2–s6
+            // 五步被系统自己杀光,理由是「前提不在了:Tools/README-hair.md」,
+            // 而那个文件当时正躺在 s1 的分支上。老板看到的是「产线塌了」,
+            // 我一度以为是 agent 没干活。
+            //
+            // 图里的依赖本来就由 TaskGraph 管:上游没完成,下游根本不该被派。
+            // 前提核验对图内节点只有一个正确答案 —— **等**。
+            if cand.graphID != nil {
+                if !quiet {
+                    print(Ansi.dim("  等前提 " + cand.id + "：图里的上一步还没交出 "
+                        + missing.prefix(2).joined(separator: "、")))
+                }
+                break
+            }
             // 前提真的没了。作废并写清原因 —— 这个判断是机械的、可复查的，
             // 不该占用人的注意力。
             let why = PremiseCheck.describe(.gone(missing: missing))
