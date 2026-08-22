@@ -1,0 +1,26 @@
+【改动后】agent/kimi/707405e5 @ b76a754 构建的 llmq，扫描含新注释行的 Sources/ 拷贝
+
+$ grep -n '待办标记' /tmp/llmq-repo-copy/Sources/LLMQuotaCore/ReservePool.swift
+54:            /// 代码里的待办标记是作者自己留的账，这两类有明确的需求方；
+178:            // 待办标记：写代码的人当场留下的欠账
+
+阳性对照：往拷贝里放了一个含真 TODO 的文件，验证扫描规则没有被改坏 ——
+
+$ cat /tmp/llmq-repo-copy/Sources/PositiveControl.swift
+public struct PositiveControl {
+    // TODO: 缓存失效后没有重新拉取远端配置
+    public func run() {}
+}
+
+$ LLMQ_HOME=/tmp/llmq-evidence-home /tmp/llmq-after work reserve --repo /tmp/llmq-repo-copy --limit 20
+仓库 /tmp/llmq-repo-copy
+扫出 1 条事实，其中 1 条还没人做
+  清 TODO 1
+
+清 TODO  /privateSources/PositiveControl.swift:2  缓存失效后没有重新拉取远端配置
+   /privateSources/PositiveControl.swift 第 2 行留着一条待办：「缓存失效后没有重新拉取远端配置」。读懂上下文后把它做掉，然后删掉那条 TODO 注释。…
+
+这是预演。真要生成加 --commit
+
+↑ ReservePool.swift 的自身分节注释不再出现（对比 reserve-before.txt）；
+  唯一扫出的是阳性对照的真 TODO，证明扫描功能本身完好。

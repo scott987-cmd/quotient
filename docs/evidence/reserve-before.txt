@@ -1,0 +1,18 @@
+【改动前】main @ 3bea34c 构建的 llmq，扫描含旧注释行的 Sources/ 拷贝
+
+$ grep -n 'TODO / FIXME' /tmp/llmq-repo-copy/Sources/LLMQuotaCore/ReservePool.swift
+30:            /// 代码里自己写的 TODO / FIXME。
+178:            // TODO / FIXME：写代码的人当场留下的欠账
+
+$ LLMQ_HOME=/tmp/llmq-evidence-home /tmp/llmq-before work reserve --repo /tmp/llmq-repo-copy --limit 20
+仓库 /tmp/llmq-repo-copy
+扫出 1 条事实，其中 1 条还没人做
+  清 TODO 1
+
+清 TODO  /privateSources/LLMQuotaCore/ReservePool.swift:178  / FIXME：写代码的人当场留下的欠账
+   /privateSources/LLMQuotaCore/ReservePool.swift 第 178 行留着一条待办：「/ FIXME：写代码的人当场留下的欠账」。读懂上下文后把它做掉，然后删掉那条 TODO 注释。如果读完发现它已经不成立（需求变了/早就做过了），就只删注释并在提交信息里说明为什么它不再适用。…
+
+这是预演。真要生成加 --commit
+
+↑ 误报：扫描器把 ReservePool.swift:178 自己的分节注释当成一条「清 TODO」需求。
+（路径前缀 /privateSources 是 /tmp 在 macOS 上是 /private/tmp 符号链接所致，不影响结论。）
