@@ -26,8 +26,13 @@ public enum StaleIdentitySweep {
         guard let d = try? Data(contentsOf: url),
               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               let name = obj["machineName"] as? String else { return nil }
+        // 时间字段各目录叫法不一样:快照/任务板是 generatedAt,
+        // 在线状态(presence)是 updatedAt。都认,认不到才退回 distantPast。
+        // (2026-08-23:presence 只有 updatedAt,漏了它 → 12 个旧身份没被扫,
+        // 老板手机上「还有脏数据」。)
         let iso = ISO8601DateFormatter()
-        let at = (obj["generatedAt"] as? String).flatMap { iso.date(from: $0) } ?? .distantPast
+        let stamp = (obj["generatedAt"] as? String) ?? (obj["updatedAt"] as? String)
+        let at = stamp.flatMap { iso.date(from: $0) } ?? .distantPast
         return (name, at)
     }
 

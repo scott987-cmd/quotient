@@ -34,6 +34,21 @@ final class StaleIdentitySweepTests: XCTestCase {
                        "每台机器留最新的那份;别的机器不受影响")
     }
 
+    /// presence 文件用的是 updatedAt 不是 generatedAt —— 也得能按它去重。
+    /// 漏了这个字段,老板手机上 presence 的 12 个旧身份一个没扫掉(2026-08-23)。
+    func testHandlesUpdatedAtField() {
+        let d = dir(); defer { try? FileManager.default.removeItem(at: d) }
+        func writeP(_ id: String, _ name: String, _ at: String) {
+            let j = #"{"machineID":"\#(id)","machineName":"\#(name)","updatedAt":"\#(at)"}"#
+            try? j.write(to: d.appendingPathComponent(id + ".json"),
+                         atomically: true, encoding: .utf8)
+        }
+        writeP("OLD", "Mac mini", "2026-08-22T10:00:00Z")
+        writeP("NEW", "Mac mini", "2026-08-23T06:00:00Z")
+        XCTAssertEqual(StaleIdentitySweep.sweepDir(d), 1, "按 updatedAt 也要能分出新旧")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: d.appendingPathComponent("NEW.json").path))
+    }
+
     /// 只有一份的机器不能被误删 —— 正常情况绝大多数机器就一份。
     func testSingleFilePerMachineUntouched() {
         let d = dir(); defer { try? FileManager.default.removeItem(at: d) }
