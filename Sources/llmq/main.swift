@@ -1717,6 +1717,24 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             rateLimited: false, lowDisk: true, pendingLanding: 0), quiet: quiet)
     }
 
+    // **队列空了就按目标自己补活。**
+    //
+    // 老板 2026-08-22:「总不能跑一步卡一步就需要你介入」。在这之前,
+    // 队列空了得由我来派下一批 —— 他要的「不用介入」,卡的一直是这一环。
+    // 只在仓库**真闲**(没在排/在跑/等落地/等拍板)时补,两小时最多一次。
+    if TaskStore.readyQueue().isEmpty {
+        let all = TaskStore.all()
+        for repo in RepoRegistry.all() {
+            let path = NSString(string: repo.localPath).expandingTildeInPath
+            guard GitWorkspace.isRepo(path) else { continue }
+            if let o = AutoRefill.refill(repo: path, alias: repo.alias, tasks: all) {
+                let mark = o.enqueued ? Ansi.green("  ↺ 续活 ") : Ansi.dim("  · 没补 ")
+                print(mark + repo.alias + Ansi.dim("  " + o.note))
+                if o.enqueued { break }   // 一轮只补一个仓库,别一次铺开
+            }
+        }
+    }
+
     let rawQueue = TaskStore.readyQueue()
     guard !rawQueue.isEmpty else {
         let all = TaskStore.all()
