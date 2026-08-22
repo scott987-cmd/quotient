@@ -27,6 +27,14 @@ public struct OfficeEvent: Codable, Sendable, Identifiable {
         case finished
         /// 累趴下了：额度用尽或者进了冷却。
         case exhausted
+        /// **一个人都没在干活，原因是这个。**
+        ///
+        /// 老板 2026-08-22 一天里问了八次「任务停了」，八次原因都不同：
+        /// 磁盘满、评审判不合入、每小时限流、菜单栏 App 挂了、
+        /// 队里的活全被依赖或落地闸挡着……而他在手机上看到的永远
+        /// 只是一片安静。**看不见原因本身，就是那个要修的问题。**
+        /// 静默超过一定时间就记一条，说清是哪一种。
+        case idle
     }
 
     public var id: String

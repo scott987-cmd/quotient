@@ -1678,12 +1678,23 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     // 2026-08-21 晚磁盘 99% 时整条流水线无声烂掉,没有一层说「磁盘满了」。
     let hk = Housekeeping.roundCheck()
     if let n = hk.note, !quiet { print(Ansi.yellow("  家务 ") + n) }
-    if hk.skipDispatch { return .noTask }
+    if hk.skipDispatch {
+        return noteIdle(IdleReason.explain(
+            queued: 0, blockedByDeps: 0, deferredByLease: 0, platformRejections: [],
+            rateLimited: false, lowDisk: true, pendingLanding: 0), quiet: quiet)
+    }
 
     let rawQueue = TaskStore.readyQueue()
     guard !rawQueue.isEmpty else {
-        if !quiet { print(Ansi.dim("没有排队中的任务。")) }
-        return .noTask
+        let all = TaskStore.all()
+        let queuedTotal = all.filter { $0.state == .queued }.count
+        let stuck = RepoRegistry.all().reduce(0) {
+            $0 + Review.list(repo: NSString(string: $1.localPath).expandingTildeInPath).count
+        }
+        return noteIdle(IdleReason.explain(
+            queued: queuedTotal, blockedByDeps: queuedTotal, deferredByLease: 0,
+            platformRejections: [], rateLimited: false, lowDisk: false,
+            pendingLanding: stuck), quiet: quiet)
     }
 
     let history = TaskStore.all()
@@ -1828,8 +1839,13 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         }
     }
     guard !vetted.isEmpty else {
-        if !quiet { print(Ansi.dim("排队的任务前提都还没就绪。")) }
-        return .noTask
+        let stuck = RepoRegistry.all().reduce(0) {
+            $0 + Review.list(repo: NSString(string: $1.localPath).expandingTildeInPath).count
+        }
+        return noteIdle(IdleReason.explain(
+            queued: rawQueue.count, blockedByDeps: rawQueue.count, deferredByLease: 0,
+            platformRejections: [], rateLimited: false, lowDisk: false,
+            pendingLanding: stuck), quiet: quiet)
     }
     // 仓库级独占：**只有真在跑的任务才占坑**，而且在候选循环里逐个判。
     //
@@ -5010,6 +5026,28 @@ func cmdUpdate(_ rest: [String]) throws {
 /// 而 worker 还是老的，于是一个改了 build-app.sh 的任务照样直接提交，
 /// 闸门形同虚设。而这时候「代码写了、测试过了、也部署了」三件事都成立。
 @discardableResult
+
+/// 一轮什么都没派出去时,把**原因**记进办公室动态。
+///
+/// 老板 2026-08-22 一天里问了八次「任务停了」,八次原因都不同,
+/// 每次都要人上机器查日志。这些原因系统自己全知道 ——
+/// worker.log 里写着「但没有现成的活」,而手机上只是一片安静。
+/// 静默超过 10 分钟就记一条,手机的动态流里直接看得到。
+func noteIdle(_ verdict: IdleReason.Verdict, quiet: Bool) -> RunOutcome {
+    let last = OfficeLog.all().last
+    let sinceLast = last.map { Date().timeIntervalSince($0.at) } ?? .greatestFiniteMagnitude
+    // 上一条动态就是静默、且刚记过 —— 不重复刷屏。
+    let justNoted = last?.kind == .idle && sinceLast < IdleReason.quietAfter
+    if sinceLast >= IdleReason.quietAfter, !justNoted {
+        OfficeLog.record(OfficeEvent(
+            kind: .idle, taskID: "", platform: nil, toPlatform: nil,
+            detail: verdict.line, taskTitle: "没人在干活", excluded: []))
+        OfficeLog.publish()
+    }
+    if !quiet { print(Ansi.dim("  静默:" + verdict.line)) }
+    return .noTask
+}
+
 func restartResidentServices() -> [String] {
     let listed = Proc.run("/bin/launchctl", ["list"], cwd: "/tmp", env: [:], timeout: 15)
     var done: [String] = []
@@ -5166,6 +5204,7 @@ func cmdOffice(_ rest: [String]) throws {
         case .answered:   icon = "答复"
         case .finished:   icon = "收工"
         case .exhausted:  icon = "耗尽"
+        case .idle:       icon = "静默"
         }
         var who = e.platform?.displayName ?? "—"
         if let to = e.toPlatform { who += " → " + to.displayName }
