@@ -1153,6 +1153,39 @@ func cmdWork(_ args: [String]) throws {
     // 老板两次报「任务停了」,其实系统一直在跑。
     // 更新路径(ReleaseChannel.install)已经修过一次,装机脚本是另一份实现:
     // 收成这一条命令,不再有第二份。
+    // llmq work blocked —— **归 Claude 处置的拦截**,一眼看完。
+    //
+    // 老板 2026-08-22 常设指示:技术性拦截我处置,只有风险类和验收类
+    // 才推给他。那就得有个地方让我看见它们 —— 否则「归我」等于「没人管」。
+    case "blocked":
+        var latest: [String: WorkTask] = [:]
+        for t in TaskStore.all() { latest[t.id] = t }
+        let all = latest.values.filter { $0.state == .blocked }
+        let mine = all.filter { ($0.note ?? "").contains("等 Claude 处置") }
+        let boss = all.filter { ($0.note ?? "").contains("等你确认") }
+        let frozen = all.count - mine.count - boss.count
+        if mine.isEmpty && boss.isEmpty {
+            print(Ansi.green("没有等人处置的拦截。")
+                + (frozen > 0 ? Ansi.dim("（另有 \(frozen) 条在等上游，会自动解冻）") : ""))
+            return
+        }
+        if !mine.isEmpty {
+            print(Ansi.bold("该我处置（\(mine.count)）"))
+            for t in mine.sorted(by: { ($0.endedAt ?? .distantPast) > ($1.endedAt ?? .distantPast) }) {
+                print("  " + Ansi.yellow(t.id) + "  "
+                    + URL(fileURLWithPath: t.repo).lastPathComponent
+                    + Ansi.dim("  " + (t.note ?? "")))
+                print(Ansi.dim("    " + t.prompt.prefix(72).replacingOccurrences(of: "\n", with: " ")))
+            }
+            print(Ansi.dim("  看改动：llmq work log <id>；放行：llmq work approve <id>"))
+        }
+        if !boss.isEmpty {
+            print(Ansi.bold("\n要老板拍板（\(boss.count)）") + Ansi.dim("  已推到他手机"))
+            for t in boss { print("  " + t.id + Ansi.dim("  " + (t.note ?? ""))) }
+        }
+        if frozen > 0 { print(Ansi.dim("\n另有 \(frozen) 条在等上游，会自动解冻。")) }
+        return
+
     case "restart-app":
         func appAlive() -> Bool {
             Proc.run("/usr/bin/pgrep", ["-f", "LLMQuotaBar.app/Contents/MacOS"],
@@ -2332,8 +2365,16 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 // 不提交、**保留工作区** —— 改动可能完全正确，只是需要你看一眼。
                 // 直接丢掉的话，一个正确的改动就白跑了。
                 task.state = .blocked
+                // **谁该管:后果是钱/账号/对外影响吗。**
+                // 老板 2026-08-22 常设指示:「阻塞任务,你来看处理,
+                // 这种问题都你来处理,给我应该就是风险类或者验收类」。
+                // 高危路径闸的判据很粗(任何 .sh / Tools/ / .github/ 都算),
+                // 拦下的绝大多数是纯技术活 —— 推给他只会淹掉真正要他
+                // 拍板的那两类。详见 BossGate。
+                let bossCall = BossGate.needsBoss(files: risky)
                 task.note = "碰到高危路径（\(risky.prefix(3).joined(separator: "、"))"
-                    + (risky.count > 3 ? " 等 \(risky.count) 个" : "") + "），等你确认"
+                    + (risky.count > 3 ? " 等 \(risky.count) 个" : "") + "），"
+                    + (bossCall ? "等你确认" : "等 Claude 处置")
                 print(Ansi.yellow("  ⚠︎ 碰到高危路径，没提交，等人确认：")
                     + risky.prefix(5).joined(separator: "、"))
                 print(Ansi.dim("  改动留在 " + ws.path))
