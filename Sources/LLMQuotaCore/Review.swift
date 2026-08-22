@@ -748,6 +748,22 @@ public enum Review {
                     branch: item.branch, landed: true,
                     note: "任务 done、无冲突、不碰敏感路径、验收通过 —— 自动合入"))
             case .failure(let e):
+                // **验证没过先派人修,别急着判死。**
+                //
+                // 原来这里直接记否决 +「留给人工审」——而那个「人」就是老板,
+                // 他要的恰恰是不用管(2026-08-22:「总不能跑一步卡一步就需要
+                // 你介入」)。一条挂着的分支会把同仓库后面的活用基线闸挡住,
+                // 产线看起来就停了。
+                //
+                // 分工按他定的:机器跑测试(退出码为准),agent 负责修到过。
+                // 修不动(到次数上限)才记否决,那时候是真该人看了。
+                if let fix = VerifyRepair.dispatch(
+                    repo: repo, branch: item.branch,
+                    failure: e.localizedDescription, tasks: tasks), fix.enqueued {
+                    outcomes.append(AutoLandOutcome(
+                        branch: item.branch, landed: false, note: fix.note))
+                    continue
+                }
                 setAutoLandVeto(branch: item.branch, note: e.localizedDescription,
                                 head: item.head)
                 outcomes.append(AutoLandOutcome(
