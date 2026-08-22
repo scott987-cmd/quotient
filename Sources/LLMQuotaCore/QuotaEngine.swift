@@ -29,7 +29,22 @@ public struct QuotaEngine: Sendable {
         machineName: String = Paths.machineName(),
         repoAliases: [RepoAlias]? = nil
     ) -> Dashboard {
-        let machines = snapshots.map {
+        // **同一台机器只留最新的那一份。**
+        //
+        // 机器身份曾经是随机 UUID + 文件缓存 —— 文件一丢就换个身份
+        // (已改成硬件派生,见 Paths.machineID)。但历史上漂移出来的那些
+        // 旧快照还散在各处目录里,而且会被镜像来回同步回来:
+        // 老板 2026-08-23 早看到手机上「好几个 mac mini,有的离线有的正常」,
+        // 我逐个删了三轮,每轮都被同步回来。
+        //
+        // 与其追着删文件,不如在算看板这一步认账:**按机器名去重,
+        // 只留 generatedAt 最新的那份**。旧身份自然消失,不需要谁去清理,
+        // 也不怕哪个角落又冒出来一份。
+        let deduped = Dictionary(grouping: snapshots, by: \.machineName)
+            .values
+            .compactMap { $0.max(by: { $0.generatedAt < $1.generatedAt }) }
+            .sorted { $0.machineName < $1.machineName }
+        let machines = deduped.map {
             MachineInfo(
                 machineID: $0.machineID,
                 machineName: $0.machineName,
@@ -41,7 +56,8 @@ public struct QuotaEngine: Sendable {
         var reports: [PlatformReport] = []
         for platform in Platform.allCases {
             guard let plan = config.plan(for: platform), plan.enabled else { continue }
-            reports.append(buildReport(plan: plan, snapshots: snapshots, now: now))
+            // 用去重后的 —— 否则旧身份的用量被重复计算,额度百分比虚高。
+            reports.append(buildReport(plan: plan, snapshots: deduped, now: now))
         }
 
         // **从 429 学来的「已打空」盖过本地估算。**

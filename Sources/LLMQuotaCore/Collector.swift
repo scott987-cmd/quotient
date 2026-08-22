@@ -401,7 +401,34 @@ public enum Paths {
         SharedLayout.ensure(at: sharedRoot)
     }
 
+    /// 这台机器的身份。**优先从硬件派生,文件只是缓存。**
+    ///
+    /// ## 为什么不能只靠文件
+    ///
+    /// 原来是「读文件,没有就随机生成一个再写进去」—— 那么**文件一丢就换个
+    /// 身份**,而快照是按机器 ID 存的,于是同一台机器在看板上变成好几台。
+    ///
+    /// 实锤(2026-08-23 早):老板「手机展示了好几个 mac mini」——
+    /// 共享目录里躺着**同一台机器的 9 个 ID**,每份快照的桶数完全相同(187),
+    /// 说明是同一份数据被反复写入,每次带一个新身份。
+    ///
+    /// 硬件 UUID(IOPlatformUUID)在同一台机器上永远一样,重装系统也不变。
+    /// 从它派生就不再有「身份漂移」这回事:文件丢了、目录被清了、
+    /// 哪个进程先跑,算出来都是同一个 ID。
+    ///
+    /// 文件保留作缓存(省一次 ioreg),但**以硬件为准** —— 缓存和硬件对不上
+    /// 时以硬件为准并改写缓存,这样历史上那些漂移过的 ID 会自动收敛回来。
     public static func machineID() -> String {
+        if let hw = hardwareUUID() {
+            // 硬件 ID 直接用,顺手把缓存对齐(下次别人读缓存也是对的)。
+            if (try? String(contentsOf: machineIDFile, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) != hw {
+                try? Paths.ensureDirectories()
+                try? hw.write(to: machineIDFile, atomically: true, encoding: .utf8)
+            }
+            return hw
+        }
+        // 拿不到硬件 ID(非 macOS / ioreg 不可用)才退回老办法。
         if let s = try? String(contentsOf: machineIDFile, encoding: .utf8) {
             let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return trimmed }
@@ -410,6 +437,23 @@ public enum Paths {
         try? Paths.ensureDirectories()
         try? new.write(to: machineIDFile, atomically: true, encoding: .utf8)
         return new
+    }
+
+    /// 硬件 UUID。取不到就返回 nil,调用方自己兜底。
+    static func hardwareUUID() -> String? {
+        let r = Proc.run("/usr/sbin/ioreg",
+                         ["-rd1", "-c", "IOPlatformExpertDevice"],
+                         cwd: "/", env: [:], timeout: 10)
+        guard r.exitCode == 0 else { return nil }
+        guard let line = r.stdout.split(separator: "\n")
+            .first(where: { $0.contains("IOPlatformUUID") }) else { return nil }
+        // **Swift 的 split 默认丢掉空片段** —— 按引号切
+        // `"IOPlatformUUID" = "0A9B…"` 得到的是 3 段不是 5 段,
+        // 按下标取会取错(2026-08-23 被测试当场抓到)。
+        // 直接挑「长得像 UUID」的那一段,不依赖段数。
+        return line.split(separator: "\"")
+            .map(String.init)
+            .first { $0.count == 36 && $0.filter { $0 == "-" }.count == 4 }
     }
 
     public static func machineName() -> String {
