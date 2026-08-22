@@ -10,7 +10,10 @@ import Foundation
 /// 完全磁盘访问权限，但双击启动的 App 默认没有，写入会直接被拒
 /// （NSPOSIXErrorDomain Code=1 Operation not permitted）。
 /// 这种失败绝不能让整次采集报废 —— 本机数据照样有用，只是多机汇总用不了。
-public enum ICloudSyncStatus: Sendable, Equatable {
+/// **要能编解码。** 菜单栏 App 不再自己采集(老板 2026-08-22 拍板),
+/// 它读采集写下的状态文件 —— 如果这里只能 `String(describing:)`,
+/// App 就得去解析那个字符串,又是「文本当接口」那个栽了十次的坑。
+public enum ICloudSyncStatus: Sendable, Equatable, Codable {
     case synced
     case unavailable
     case permissionDenied(String)
@@ -32,8 +35,78 @@ public enum SnapshotStore {
 
     /// 先保本地，再尽力同步 iCloud。
     @discardableResult
+    /// **数据塌方要当场喊出来。**
+    ///
+    /// 2026-08-22 晚:菜单栏 App 跑着旧二进制,采出 0 条 kimi/codex 用量,
+    /// 把 CLI 刚写好的 482 桶盖成 0。手机看板上两个平台整个消失,
+    /// 而系统一声不吭 —— 老板发现的,还得反复说「下午还正常」我才当真。
+    ///
+    /// 判据是**这个平台上一轮有、这一轮没了**,不是「装了却是 0」——
+    /// 后者天天误报:Gemini 装了没用过,MiniMax 根本不写本地日志
+    /// (它靠官方额度接口报)。老板 2026-08-22 提醒过这一点。
+    ///
+    /// 不阻止写入:真的清空日志也是合法的。只是**必须留下痕迹**。
+    static func collapsedPlatforms(incoming: MachineSnapshot) -> [String] {
+        let url = Paths.localSnapshotsDir
+            .appendingPathComponent(fileName(machineID: incoming.machineID))
+        guard let d = try? Data(contentsOf: url),
+              let old = try? SnapshotCoding.decoder().decode(MachineSnapshot.self, from: d)
+        else { return [] }
+        var had: [String: Int] = [:]
+        for p in old.platforms { had[p.platform.rawValue] = p.buckets.count }
+        var out: [String] = []
+        for p in incoming.platforms where p.buckets.isEmpty {
+            if let n = had[p.platform.rawValue], n > 0 { out.append(p.platform.rawValue) }
+        }
+        return out.sorted()
+    }
+
+    /// 采集完留下的一行状态,给**别的进程**读(菜单栏 App 就靠它)。
+    ///
+    /// 老板 2026-08-22 拍板:App 不再自己链接一份采集代码,改成调用
+    /// `llmq collect`。那 App 就需要知道「这次采得怎么样」——
+    /// **不能去解析命令行的中文输出**(这个仓库栽在「文本当接口」上十次了),
+    /// 所以采集自己写一份 JSON,谁都能读。
+    public struct CollectStatus: Codable, Sendable {
+        public var at: Date
+        public var iCloudSync: ICloudSyncStatus
+        public var mirroredMachines: Int
+        public var collapsed: [String]
+        public var error: String?
+    }
+
+    static var collectStatusFile: URL {
+        Paths.sharedRoot.appendingPathComponent("collect-status.json")
+    }
+
+    public static func writeCollectStatus(_ st: CollectStatus) {
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        guard let d = try? enc.encode(st) else { return }
+        try? FileManager.default.createDirectory(
+            at: Paths.sharedRoot, withIntermediateDirectories: true)
+        try? d.write(to: collectStatusFile)
+    }
+
+    public static func readCollectStatus() -> CollectStatus? {
+        guard let d = try? Data(contentsOf: collectStatusFile) else { return nil }
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return try? dec.decode(CollectStatus.self, from: d)
+    }
+
     public static func write(_ snapshot: MachineSnapshot) throws -> ICloudSyncStatus {
         try Paths.ensureDirectories()
+        let collapsed = collapsedPlatforms(incoming: snapshot)
+        if !collapsed.isEmpty {
+            FileHandle.standardError.write(Data(
+                ("⚠︎ 采集塌方：" + collapsed.joined(separator: "、")
+                 + " 这一轮一条用量都没采到，而上一轮是有的。"
+                 + "常见原因：写快照的程序版本过旧、或那个 CLI 换了日志目录结构。\n").utf8))
+            OfficeLog.record(OfficeEvent(
+                kind: .idle, taskID: "", platform: nil, toPlatform: nil,
+                detail: "采集塌方：" + collapsed.joined(separator: "、")
+                    + " 的用量突然变成 0（上一轮还有）—— 多半是有个旧版程序在覆盖快照",
+                taskTitle: "用量采集异常", excluded: []))
+        }
         let data = try SnapshotCoding.encoder().encode(snapshot)
         let name = fileName(machineID: snapshot.machineID)
 
@@ -397,6 +470,13 @@ public enum LLMQuota {
         Watchdog.run("taskboard.prune", timeout: 12) { TaskBoardStore.prune(now: now) }
         Watchdog.run("publish.repos", timeout: 8) { Inbox.publishRepos() }
         Watchdog.run("presence.publish", timeout: 8) { ClusterPresenceStore.publish() }
+        // 留一份机器可读的状态,给菜单栏 App 读(它不再自己采集)。
+        SnapshotStore.writeCollectStatus(SnapshotStore.CollectStatus(
+            at: Date(),
+            iCloudSync: result.iCloudSync,
+            mirroredMachines: result.mirroredMachines,
+            collapsed: SnapshotStore.collapsedPlatforms(incoming: result.snapshot),
+            error: nil))
         return result
     }
 

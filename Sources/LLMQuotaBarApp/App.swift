@@ -86,26 +86,47 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    /// 扫本机日志并写快照。放后台线程 —— 首次要解析 1GB 出头。
+    /// 扫本机日志并写快照 —— **调 `llmq collect`,不在 App 里自己采**。
+    ///
+    /// ## 为什么改成调命令
+    ///
+    /// 原来 App 里链接了一份采集代码,launchd 的采集代理跑的是 CLI 里
+    /// 的另一份 —— **同一件事两份实现,写同一个文件**。
+    ///
+    /// 2026-08-22 晚这件事真的咬了:装机换了 CLI,而 App 因为装机脚本的
+    /// `set -e` bug 一直没被重启,跑着旧二进制。旧版认不出 Kimi 新的日志
+    /// 目录(多了 `agents/<名字>/` 一层),采出 0 条,把 CLI 刚写好的
+    /// 482 桶盖成 0 —— 手机看板上 Kimi 和 Codex 整个消失。
+    /// 老板发现的,而且反复说了「下午还正常」我才当真。
+    ///
+    /// 老板拍板选了这个方案:**采集只留一份实现**。App 用的永远是当前
+    /// 装着的那个 CLI,版本不一致在结构上就不可能发生 —— 不用版本戳、
+    /// 不用锁。「靠纪律避免」换成「结构上做不到」。
+    ///
+    /// 采集结果不解析命令行输出(那是这个仓库栽过十次的「文本当接口」),
+    /// 而是读采集自己写的 `collect-status.json`。
     func collect() {
         guard !isCollecting else { return }
         isCollecting = true
         Task.detached(priority: .utility) {
-            do {
-                let r = try LLMQuota.collect()
-                await MainActor.run {
-                    self.lastError = nil
-                    self.iCloudSync = r.iCloudSync
-                    self.isCollecting = false
-                    self.reload()
-                    // 刚采完就镜像一轮 —— 新快照不该等 30 秒才上云。
-                    self.onCollected?()
+            let cli = NSString(string: "~/.local/bin/llmq").expandingTildeInPath
+            let failure: String? = {
+                guard FileManager.default.isExecutableFile(atPath: cli) else {
+                    return "找不到 ~/.local/bin/llmq —— App 和 CLI 必须一起装"
                 }
-            } catch {
-                await MainActor.run {
-                    self.lastError = String(describing: error)
-                    self.isCollecting = false
-                }
+                let r = Proc.run(cli, ["collect"], cwd: NSHomeDirectory(),
+                                 env: [:], timeout: 900)
+                guard r.exitCode != 0 else { return nil }
+                return "llmq collect 退出码 \(r.exitCode)：" + r.stderr.prefix(200)
+            }()
+            let st = SnapshotStore.readCollectStatus()
+            await MainActor.run {
+                self.lastError = failure
+                if let st { self.iCloudSync = st.iCloudSync }
+                self.isCollecting = false
+                self.reload()
+                // 刚采完就镜像一轮 —— 新快照不该等 30 秒才上云。
+                self.onCollected?()
             }
         }
     }
