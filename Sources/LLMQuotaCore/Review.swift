@@ -1272,6 +1272,16 @@ extension Review {
         let d = decided ?? decidedBranches()
         return list(repo: repo, base: base, tasks: tasks)
             .filter { !d.contains(repo + "|" + $0.branch) }
+            // **人的队列里只放「有东西可看」的。**
+            //
+            // 老板 2026-08-22:「minimax 咋都让人审批,不是说没有图片或者
+            // 视频的申请不要找我批」。他在这条链上的角色是**看效果**——
+            // 没有图、没有录屏,就没有他能判的东西,那是 agent 审核的活。
+            //
+            // 实测:四条只含 `reviews/EVAL-*.md`(评审自己写的报告)的分支
+            // 排在他的待批队列里,还各自被另一个评审 agent 判了不合入。
+            // 纯文书/纯代码的产出照旧走 agent 审核那条路,只是不打扰人。
+            .filter { $0.evidence.contains(where: EvidenceGate.isEvidenceFile) }
     }
 
     /// 读回**已经发布给手机的**那份待审清单。

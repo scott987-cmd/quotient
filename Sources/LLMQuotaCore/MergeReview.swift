@@ -109,12 +109,24 @@ public enum MergeReview {
             // 通过了证据闸，`work why` 说「要 agent 审核，还没派过」，
             // 而 `MergeReview.candidates` 返回 **0 条**。两处判据分叉，
             // 这一天里第八次。
+            // **判据只有一处:`Review.requiresAgentReview`。**
+            //
+            // 上面那段注释记着「两处判据分叉,这一天里第八次」,可修法是
+            // 在这里又抄了一遍条件 —— 于是第九次:抄的这份漏了
+            // `requiresAgentReview` 里的「**且真碰了人看得见的东西**」,
+            // 结果**评审 agent 自己写的 EVAL 报告**被拖去过审核,
+            // 被另一个评审 agent 判不合入,还排进了老板的待批队列。
+            // 老板 2026-08-22 原话:「minimax 咋都让人审批,不是说没有
+            // 图片或者视频的申请不要找我批」。抄条件就会漏条件,调它。
             let needsByRepo = RepoRegistry.all().contains {
                 URL(fileURLWithPath: $0.localPath).standardizedFileURL.path
                     == URL(fileURLWithPath: repo).standardizedFileURL.path
                     && $0.manualReview
             }
-            guard risky || sensitive || isStranded || needsByRepo else { return nil }
+            guard Review.requiresAgentReview(
+                files: item.files, isStranded: isStranded,
+                repoNeedsManualReview: needsByRepo,
+                risk: sensitive ? .sensitive : t.profile?.risk) else { return nil }
 
             var why: [String] = []
             if risky { why.append("碰了构建/CI/签名这类路径") }

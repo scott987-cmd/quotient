@@ -60,12 +60,37 @@ public enum Housekeeping {
             : "⚠︎ 菜单栏 App 起不来 —— 手机上会一直看到旧数据,手动 open -a LLMQuotaBar"
     }
 
+    /// 清掉没人再引用的证据文件。
+    ///
+    /// 共享证据目录只增不减:分支落地之后,它那几张图/几段录屏还留着。
+    /// 实测 2026-08-22:64 个文件 46MB,而当前待审只引用 11 个 ——
+    /// 53 个是垃圾,却每天在 iCloud 上来回同步,手机端也要为它们排队。
+    /// 判据:不在任何一条待审记录里的,删。
+    @discardableResult
+    static func sweepOrphanEvidence() -> Int {
+        let dir = Review.evidenceDir
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return 0 }
+        let live = Set(Review.publishedDigests().flatMap(\.evidenceFiles))
+        var removed = 0
+        for n in names where !live.contains(n) {
+            // 刚抽出来还没发布的别删 —— 半小时宽限。
+            let p = (dir.path as NSString).appendingPathComponent(n)
+            let m = (try? fm.attributesOfItem(atPath: p))?[.modificationDate] as? Date
+            guard Date().timeIntervalSince(m ?? .distantPast) > 1800 else { continue }
+            if (try? fm.removeItem(atPath: p)) != nil { removed += 1 }
+        }
+        return removed
+    }
+
     /// 一轮开始时做的家务,返回给日志的一句话(没事就 nil)。
     public static func roundCheck() -> (skipDispatch: Bool, note: String?) {
         let swept = sweepVerifyLeftovers()
         var notes: [String] = []
         if let n = reviveMenuBarApp() { notes.append(n) }
         if swept > 0 { notes.append("清掉 \(swept) 个过期验收目录") }
+        let orphans = sweepOrphanEvidence()
+        if orphans > 0 { notes.append("清掉 \(orphans) 个没人引用的证据文件") }
         if let free = freeDiskBytes(), free < lowDiskBytes {
             notes.append("⚠︎ 磁盘只剩 \(Format.bytes(Int(free))) —— 本轮不派活(派了也只会失败),请清理")
             return (true, notes.joined(separator: "；"))
