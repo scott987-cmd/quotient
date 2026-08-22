@@ -221,14 +221,15 @@ public enum Nudge {
         // 是人手工翻 git branch 才发现的。
         //
         // 搁浅和「等上游自愈」是两回事：后者该闭嘴，前者必须喊。
-        let strands = TaskGraph.stranded(tasks)
-        if !strands.isEmpty {
-            let salvageable = strands.filter { $0.doneCount > 0 }
-            let body = salvageable.count == 1
-                ? "一条任务链卡住了，已完成 \(salvageable[0].doneCount) 步的产出还没落地"
-                : "\(strands.count) 条任务链卡住了，跑挂一步就再也不会自己恢复"
-            out.append(("stranded-graph", .needsYou, body, strands.count))
-        }
+        // **搁浅归 Claude,不推老板。**
+        //
+        // 上面那段理由(搁浅的活会整条躺一天没人知道)照旧成立,但**喊给谁**
+        // 变了:老板 2026-08-22 的常设指示是「阻塞任务你来看处理,
+        // 给我应该就是风险类或者验收类」。任务链搁浅是纯技术问题。
+        //
+        // 而且它一直没有对应的页面 —— 推送说「一条任务链卡住了」,
+        // 他点进去是空的(2026-08-22 晚他第二次报这个)。
+        // 现在它出现在 `llmq work blocked` 里,归我处置。
 
         return out
     }
@@ -280,6 +281,19 @@ public enum Nudge {
     ///
     /// - Returns: 实际发出去的条数。
     @discardableResult
+    /// 这条推送指向的页面上有东西可点吗。
+    ///
+    /// key 的前缀就是页面名(`review-3` → review 页),和菜单里的
+    /// `badge(prefix)` 是同一套约定。认不出页面的(比如额度类提醒,
+    /// 它落在原生看板上)一律放行 —— 这道闸只拦「明确指向某一页、
+    /// 而那一页是空的」这种。
+    static func hasSomethingToShow(key: String) -> Bool {
+        let page = key.split(separator: "-").first.map(String.init) ?? key
+        guard ["review", "blocked", "playbook"].contains(page) else { return true }
+        guard let p = ViewFeed.published(page: page) else { return false }
+        return p.sections.contains { !($0.cards ?? []).isEmpty }
+    }
+
     public static func run(now: Date = Date()) -> Int {
         let items = pending(now: now)
         // **角标要跟真实待办数同步，哪怕这一轮什么都不推。**
@@ -292,6 +306,17 @@ public enum Nudge {
         var sent = 0
         for item in items {
             guard !recentlySent(item.key, body: item.body, now: now) else { continue }
+            // **指向的页面是空的就别推。**
+            //
+            // 老板 2026-08-22 两次报同一件事:「收到消息说让我评审,进去就没有了」
+            // 「老是有一个消息让我审批,手机点进去就没有了」。
+            // 每次的具体原因都不同(成果页没做、拦截没按钮、搁浅没页面),
+            // 但形状是一个:**推了一件他点进去做不了的事**。
+            //
+            // 逐个修是打地鼠。这里做结构性的闸:推送的 key 前缀就是页面名,
+            // 发之前看那一页有没有卡片,没有就咽回去 —— 宁可漏一条,
+            // 也不要让通知变成「点开是空的」的代名词。那会毁掉所有通知的可信度。
+            guard hasSomethingToShow(key: item.key) else { continue }
 
             // **先记账，再发送。**
             //

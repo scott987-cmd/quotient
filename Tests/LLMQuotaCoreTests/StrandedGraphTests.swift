@@ -105,15 +105,24 @@ final class StrandedGraphTests: XCTestCase {
         XCTAssertEqual(strands.first?.graphID, "big", "完成得多的该排前面")
     }
 
-    /// 搁浅了就必须喊人 —— 这是整条链最后一道，也是原来完全缺席的一道。
-    func testStrandedProducesANudge() {
+    /// **搁浅了必须有人知道 —— 但那个人是 Claude,不是老板。**
+    ///
+    /// 原来这条断言的是「要推给老板」。理由(搁浅的活会整条躺一天没人发现)
+    /// 照旧成立,变的是**喊给谁**:老板 2026-08-22 的常设指示是
+    /// 「阻塞任务你来看处理,给我应该就是风险类或者验收类」。
+    /// 而且这条推送一直没有对应页面,他点进去是空的 —— 报过两次。
+    ///
+    /// 所以现在:不进他的推送,进 `llmq work blocked`(Claude 的队列)。
+    /// 这条测试守的是**不能悄无声息**,不是「必须推给老板」。
+    func testStrandedIsVisibleToClaudeNotPushedToBoss() {
         let tasks = [
             step("s1", "g1", .done),
             step("s2", "g1", .failed),
             step("s3", "g1", .blocked, frozenBy: "s2"),
         ]
-        let items = Nudge.pending(tasks: tasks)
-        XCTAssertTrue(items.contains { $0.key == "stranded-graph" },
-                      "搁浅的图一个字都不喊，人就永远不知道它躺着")
+        XCTAssertFalse(Nudge.pending(tasks: tasks).contains { $0.key == "stranded-graph" },
+                       "纯技术问题不该占用老板的注意力")
+        XCTAssertFalse(TaskGraph.stranded(tasks).isEmpty,
+                       "但它必须仍然被识别出来 —— `llmq work blocked` 靠这个列出来")
     }
 }

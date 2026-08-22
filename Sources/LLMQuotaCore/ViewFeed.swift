@@ -212,6 +212,14 @@ public enum ViewFeed {
         return contentCount(previous) > 0           // 自己清空了自己 —— 该发
     }
 
+    /// 读回已经发出去的那一页 —— 推送前要拿它核对「点进去有没有东西」。
+    public static func published(page: String) -> Page? {
+        let url = dir.appendingPathComponent(page + ".json")
+        guard let d = try? Data(contentsOf: url) else { return nil }
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return try? dec.decode(Page.self, from: d)
+    }
+
     public static func publish(_ page: Page) -> Bool {
         try? FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true)

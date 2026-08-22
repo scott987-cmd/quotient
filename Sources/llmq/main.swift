@@ -1184,6 +1184,18 @@ func cmdWork(_ args: [String]) throws {
             for t in boss { print("  " + t.id + Ansi.dim("  " + (t.note ?? ""))) }
         }
         if frozen > 0 { print(Ansi.dim("\n另有 \(frozen) 条在等上游，会自动解冻。")) }
+        // 搁浅的任务图也归我 —— 它不再推给老板(纯技术问题,见 Nudge 里那段),
+        // 那就必须在这里看得见,否则「归我」等于「没人管」。
+        let strands = TaskGraph.stranded(TaskStore.all())
+        if !strands.isEmpty {
+            print(Ansi.bold("\n搁浅的任务链（\(strands.count)）")
+                + Ansi.dim("  跑挂一步就不会自己恢复"))
+            for st in strands.prefix(6) {
+                print("  " + Ansi.yellow(st.graphID)
+                    + Ansi.dim("  已完成 \(st.doneCount) 步的产出还没落地"))
+            }
+            print(Ansi.dim("  处置：llmq work retry <挂掉的那步>，或让它走搁浅捞回的审核"))
+        }
         return
 
     case "restart-app":
