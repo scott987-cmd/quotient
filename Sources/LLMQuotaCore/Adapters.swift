@@ -655,6 +655,9 @@ public enum AdapterRegistry {
             id: "glm-cc", displayName: "GLM (Claude Code 兼容目录)",
             homePlatform: .glm, roots: ["~/.glm", "~/.claude-glm", "~/.zai"], verified: false
         ),
+        // 智谱官方的 GLM Coding CLI。日志布局和格式都和 Claude Code 不一样,
+        // 所以是独立适配器而不是多加一条 roots(详见 ZcodeAdapter 的说明)。
+        ZcodeAdapter(),
         ClaudeCodeAdapter(
             id: "minimax-cc", displayName: "MiniMax (Claude Code 兼容目录)",
             homePlatform: .minimax, roots: ["~/.minimax", "~/.claude-minimax"], verified: false
