@@ -91,6 +91,11 @@ public enum Housekeeping {
         if swept > 0 { notes.append("清掉 \(swept) 个过期验收目录") }
         let orphans = sweepOrphanEvidence()
         if orphans > 0 { notes.append("清掉 \(orphans) 个没人引用的证据文件") }
+        // 过时机器身份留下的孤儿快照/任务板/在线状态 —— 同名机器只留最新的。
+        // 详见 StaleIdentitySweep:machineID 漂移期留下的一堆旧身份文件,
+        // 手机上一台机器裂成十几个(2026-08-23)。
+        let staleIds = StaleIdentitySweep.run()
+        if staleIds > 0 { notes.append("清掉 \(staleIds) 个过时机器身份的残留文件") }
         if let free = freeDiskBytes(), free < lowDiskBytes {
             notes.append("⚠︎ 磁盘只剩 \(Format.bytes(Int(free))) —— 本轮不派活(派了也只会失败),请清理")
             return (true, notes.joined(separator: "；"))
