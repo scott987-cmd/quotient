@@ -173,8 +173,16 @@ if [ "$INSTALL" -eq 1 ]; then
     launchctl kickstart -k "gui/$(id -u)/com.llmquotabar.worker" >/dev/null 2>&1 \
       && echo "   已强制重启工作循环（LLMQ_FORCE_RESTART=1）"
   elif [ -x "$HOME/.local/bin/llmq" ]; then
-    "$HOME/.local/bin/llmq" work restart-worker
-    rc=$?
+    # **`|| rc=$?` 那半句不能省。** 脚本开头是 `set -euo pipefail`，
+    # 而 `restart-worker` 在「有活正在跑」时按设计返回 3 —— 裸调用会让
+    # set -e 当场终止整个脚本，**后面拉起菜单栏 App 那句永远执行不到**。
+    #
+    # 实测代价（2026-08-22，一天三次）：只要在有任务跑的时候装机，
+    # App 就被 pkill 掉再也没起来。App 一死 iCloud 镜像就停，
+    # 老板在手机上看到的是十几分钟前的快照，三次都是他先发现的，
+    # 而我三次都以为是「App 自己挂了」，在错误的方向上修了两轮。
+    rc=0
+    "$HOME/.local/bin/llmq" work restart-worker || rc=$?
     if [ "$rc" = "3" ]; then
       echo "      等它跑完再装，或者：LLMQ_FORCE_RESTART=1 ./build-app.sh --install"
     fi

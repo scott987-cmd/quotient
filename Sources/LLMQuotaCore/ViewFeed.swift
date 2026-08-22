@@ -565,6 +565,14 @@ extension ViewFeed {
         return Menu(entries: [
             MenuEntry(page: "review", title: "等你验收",
                       icon: "checkmark.seal", badge: badge("review"), group: "要你拍板"),
+            // 高危改动等人放行。**必须有这个入口** —— 在它之前,通知说
+            // 「1 个任务被拦下等你放行」,而手机上只有一个「卡住 N 件」的
+            // 计数,点了也没用(老板 2026-08-22:「我确认了,但是手机端一直
+            // 在重复弹出来让我确认」)。下面那段注释说「能点但什么都没有的
+            // 入口比没有更糟」—— 而「有提醒却没有入口」比这还糟。
+            MenuEntry(page: "blocked", title: "等你放行",
+                      icon: "exclamationmark.shield", badge: badge("blocked"),
+                      group: "要你拍板"),
             MenuEntry(page: "playbook", title: "项目清单",
                       icon: "list.bullet.rectangle.portrait",
                       badge: badge("playbook"), group: "要你拍板"),
@@ -575,6 +583,53 @@ extension ViewFeed {
     }
 
     /// 验收页（走通用渲染，不再需要客户端专门实现）。
+    /// **被拦下等人放行的高危任务。**
+    ///
+    /// 老板 2026-08-22:「刚刚高危拦截,我确认了,但是手机端一直在重复
+    /// 弹出来让我确认」。查下来是**推送要求了一个手机做不到的动作**:
+    /// 通知说「1 个任务被拦下等你放行」,而 App 那边只把 blocked 当成
+    /// 一个计数显示(「卡住 N 件」),没有任何按钮会写出放行指令 ——
+    /// 于是他点了也没用,任务永远卡着,提醒永远在。
+    ///
+    /// 和成果推送那次一模一样的形状:**别推人做不到的事**。
+    /// 修法也一样 —— 把动作补上,而不是把提醒关掉。
+    /// 客户端不用改:它把服务端发来的 action id 原样回写。
+    ///
+    /// 只列「等人确认」这一种被拦(碰高危路径)。上游没完成而冻住的那些
+    /// 不该出现在这里 —— 人对它们无事可做,上游一好就自动解冻。
+    public static func blockedPage(now: Date = Date(),
+                                   tasks: [WorkTask] = TaskStore.all()) -> Page {
+        var latest: [String: WorkTask] = [:]
+        for t in tasks { latest[t.id] = t }
+        let waiting = latest.values
+            .filter { $0.state == .blocked && ($0.note ?? "").contains("等你确认") }
+            .sorted { ($0.endedAt ?? .distantPast) > ($1.endedAt ?? .distantPast) }
+        guard !waiting.isEmpty else {
+            return Page(page: "blocked", sections: [
+                Section(kind: "text", title: "没有等你放行的", tone: .good,
+                        text: "碰高危路径的改动都已经处理过了。")
+            ], now: now)
+        }
+        return Page(page: "blocked", sections: [
+            Section(kind: "cards", title: "等你放行（\(waiting.count)）",
+                    cards: waiting.map { t in
+                        Card(id: t.id,
+                             title: String(t.prompt.prefix(60)),
+                             body: (t.note ?? "碰到高危路径,等你确认"),
+                             detail: t.prompt,
+                             tone: .warn, icon: "exclamationmark.shield",
+                             trailing: URL(fileURLWithPath: t.repo).lastPathComponent,
+                             images: [],
+                             actions: [
+                                Action(id: "task:approve:" + t.id,
+                                       label: "放行", style: "primary"),
+                                Action(id: "task:discard:" + t.id,
+                                       label: "不做了", style: "destructive",
+                                       needsNote: true)])
+                    })
+        ], now: now)
+    }
+
     public static func reviewPage(now: Date = Date()) -> Page {
         let items = Review.publishDigests()
         guard !items.isEmpty else {

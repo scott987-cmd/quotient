@@ -2908,6 +2908,7 @@ func cmdWorkLoop(_ args: [String]) throws {
             // 少发一个文件，客户端就退回原生画法 —— 这条兜底路本来就是
             // 为这种时刻留的，用它，别等发新包。
             ViewFeed.publish(ViewFeed.reviewPage())
+            ViewFeed.publish(ViewFeed.blockedPage())
             ViewFeed.publish(ViewFeed.playbookPage())
             ViewFeed.publishMenu(ViewFeed.menu())
             for inv in ViewFeed.pendingInvocations() {
@@ -5702,6 +5703,36 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
         }
         Review.discard(repo: bits[0], branch: bits[1],
                        reason: inv.note ?? "手机上丢弃")
+        return true
+
+    // 手机上放行一个被拦下的高危任务。
+    //
+    // 老板 2026-08-22:「刚刚高危拦截,我确认了,但是手机端一直在重复
+    // 弹出来让我确认」。查下来是**推送要求了一个手机做不到的动作**:
+    // 通知说「1 个任务被拦下等你放行」,而 App 那边只把 blocked 当成
+    // 一个计数显示(「卡住 N 件」),没有任何按钮会写出放行指令 ——
+    // 于是他点了也没用,任务永远卡着,提醒永远在。
+    // 和成果推送那次一模一样的形状:**别推人做不到的事**。
+    case ("task", "approve"):
+        guard parts.count == 3 else { return false }
+        let id = parts[2]
+        guard let t = TaskStore.all().last(where: { $0.id == id }),
+              t.state == .blocked else { return false }
+        var x = t
+        x.state = .queued
+        x.note = "手机上放行(高危改动经人确认)"
+        x.endedAt = nil
+        try? TaskStore.append(x)
+        return true
+
+    case ("task", "discard"):
+        guard parts.count == 3,
+              let t = TaskStore.all().last(where: { $0.id == parts[2] }) else { return false }
+        var x = t
+        x.state = .done
+        x.endedAt = Date()
+        x.note = "手机上决定不做:" + (inv.note ?? "老板放弃了这一步")
+        try? TaskStore.append(x)
         return true
 
     case ("playbook", "approve"):

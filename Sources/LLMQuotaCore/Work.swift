@@ -917,6 +917,55 @@ public struct GeminiRunner: AgentRunner {
 /// `-p` 模式下不能带审批开关：`--auto` 和 `-y` 都会被拒
 ///（`Cannot combine --prompt with --auto/--yolo`）——
 /// 说明它在无头模式下本来就自动批准，那两个开关只对交互式有意义。
+/// **ZCode(智谱官方 GLM 客户端)的执行器。**
+///
+/// 老板 2026-08-22:「macbook 装了 zcode,以后 GLM 我主要用官方的 zcode 了」。
+///
+/// ## 为什么值得接
+///
+/// 执行器名单里**从来没有 GLM** —— 它只作为「有额度的平台」被统计,
+/// 却没有任何办法派活给它。日志里那句「空窗 GLM(5 小时窗口一轮都没开,
+/// 已经闲了 1 天 23 小时)」天天在喊,而额度最富余的恰恰是它。
+/// 接上这个执行器是纯增产能,不占别人的份额。
+///
+/// ## 它不是命令行工具
+///
+/// ZCode 是 Electron 桌面 App(`/Applications/ZCode.app`),但包里带了一个
+/// 完整的无界面 CLI:`Contents/Resources/glm/zcode.cjs`,用 node 跑。
+/// 所以 `binaryName` 那套 `which` 查找对它无效 —— 覆盖 `binaryPath`,
+/// 直接看那个文件在不在。**没装的机器上自然返回 nil,调度会正确地跳过**
+/// (Mac mini 上就没有,MacBook 上有)。
+///
+/// `--prompt` 无界面执行、`--cwd` 指定工作目录、`--mode yolo` 自主干活、
+/// `--resume <sess_...>` 续接会话 —— 和我们这套的需求一一对上。
+public struct ZcodeRunner: AgentRunner {
+    public let platform: Platform = .glm
+    public let binaryName = "zcode"
+    public init() {}
+
+    /// App 包里那个 CLI 脚本。装了才有,没装返回 nil。
+    static let scriptPath = "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs"
+
+    public var binaryPath: String? {
+        FileManager.default.isReadableFile(atPath: Self.scriptPath) ? Self.scriptPath : nil
+    }
+
+    public func command(
+        prompt: String, cwd: String
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd, session: .fresh)
+    }
+
+    public func command(prompt: String, cwd: String, session: GraphSession.Mode)
+        -> (launchPath: String, args: [String], env: [String: String]) {
+        var args = [Self.scriptPath, "--prompt", prompt, "--cwd", cwd,
+                    "--mode", "yolo", "--no-color"]
+        if case .resume(let id) = session { args += ["--resume", id] }
+        // 用 env 找 node:ZCode 自己不带 node,机器上装的是哪个版本都行。
+        return ("/usr/bin/env", ["node"] + args, [:])
+    }
+}
+
 public struct KimiRunner: AgentRunner {
     public let platform: Platform = .kimi
     public let binaryName = "kimi"
@@ -1224,7 +1273,9 @@ public enum RunnerRegistry {
     /// GeminiRunner 的代码保留，哪天换成 Antigravity 或企业版把它加回来即可。
     public static let all: [AgentRunner] = [
         ClaudeRunner(), QwenRunner(), KimiRunner(), CodexRunner(),
-        OpenCodeRunner(), MiniMaxMediaRunner(), MiniMaxReviewRunner()
+        OpenCodeRunner(), MiniMaxMediaRunner(), MiniMaxReviewRunner(),
+        // 装了 ZCode 的机器才接得到 GLM 的活（binaryPath 会自己判）。
+        ZcodeRunner()
     ]
 
     /// 能做纯推理（分类、总结）的执行器，包含改不了文件的那些。

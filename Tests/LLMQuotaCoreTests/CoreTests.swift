@@ -4088,7 +4088,11 @@ final class GraphSessionTests: XCTestCase {
     /// 给一个不认识 --resume 的 CLI 塞这个参数，它会报参数错误 ——
     /// 而那看起来像任务失败。
     func testRunnersWithoutSupportIgnoreSession() {
-        for r in RunnerRegistry.all where !(r is ClaudeRunner) && !(r is QwenRunner) {
+        // ZcodeRunner 也在支持之列:`zcode --help` 里明写
+        // `--resume <sessionId>  Resume a persisted session by sessionId (sess_...)`
+        // ——实际读过它的帮助才加进来的,不是想当然(2026-08-22)。
+        for r in RunnerRegistry.all
+        where !(r is ClaudeRunner) && !(r is QwenRunner) && !(r is ZcodeRunner) {
             let a = r.command(prompt: "p", cwd: "/tmp", session: .resume("U1")).args
             XCTAssertFalse(a.contains("U1"), "\(r.binaryName) 不该收到会话 id")
             XCTAssertFalse(a.contains("--resume"), "\(r.binaryName) 不该收到 --resume")
