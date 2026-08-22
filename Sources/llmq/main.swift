@@ -2815,48 +2815,22 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 落地环节（详见 Review.autoLand 的条件说明）。
         // 显式开关，默认关：`llmq work autoland on` 之后才生效，
         // 关着的时候产出照旧全部留在 `work review` 名单里等人工处置。
-        if Review.autoLandEnabled() {
-            phase("落地", 1500) {
-                for repo in RepoRegistry.all() {
-                    let path = NSString(string: repo.localPath).expandingTildeInPath
-                    // 标了「要人看」的仓库现在也走全套自动环节 ——
-                    // 只是门槛更高（见 Review.autoLand 里 manualReview 那段）。
-                    // 上一版我在这里 `continue`，把补证据、agent 审核、
-                    // 分支刷新**一起**挡掉了，结果是既要人审又没图可看。
-                    if repo.manualReview {
-                        let n = Review.list(repo: path).filter { $0.evidence.isEmpty }.count
-                        if n > 0 {
-                            print(Ansi.dim("  要看效果 " + repo.alias
-                                + "：\(n) 条还没交证据，先派它们去跑一遍截图"))
-                        }
-                    }
-                    for o in Review.autoLand(repo: path) {
-                        let mark = o.landed ? Ansi.green("  ✓ 落地 ")
-                                            : Ansi.yellow("  ⚠︎ 没落 ")
-                        print(mark + o.branch + Ansi.dim("  " + o.note))
-                    }
-                    // 落不下去的里面，分「过期了」和「真撞了设计」两种。
-                    // 过期的派回原平台去刷新 —— 它还留着当时的会话。
-                    // 详见 StaleBranch 的说明。
-                    for o in StaleBranch.dispatchRefresh(repo: path) {
-                        let mark = o.enqueued ? Ansi.green("  ↻ 刷新 ")
-                                              : Ansi.yellow("  ⚠︎ 没派 ")
-                        print(mark + o.branch + Ansi.dim("  " + o.note))
-                    }
-                    // 改了看得见的东西却没交证据 → 派回原平台跑一遍截图。
-                    // 人只看「跑起来什么样」，不该替 agent 补跑（见 EvidenceGate）。
-                    // 机械条件判不了的（高危 / 碰构建 CI 签名）→ 派专用评审
-                    // agent 出结论，人不参与「这段 diff 要不要合」。
-                    for o in MergeReview.dispatch(repo: path) {
-                        print(Ansi.green("  ⚖︎ " + o.action + " ") + o.branch
-                            + Ansi.dim("  " + o.note))
-                    }
-                    for o in EvidenceGate.dispatchEvidence(repo: path) {
-                        let mark = o.enqueued ? Ansi.green("  📷 补证据 ")
-                                              : Ansi.yellow("  ⚠︎ 没派 ")
-                        print(mark + o.branch + Ansi.dim("  " + o.note))
-                    }
-                }
+        // **落地不能挡住派活。**
+        //
+        // 落地里的 verifyMerge 会**同步跑整个测试套件**（LLMQuotaBar 一次
+        // `swift test` 320 秒），几个仓库排下来就是十几分钟。而这一段跑在
+        // 派活**之前**、同一轮里 —— 这期间一个新任务都派不出去，
+        // 从外面看就是「又停了」。老板 2026-08-22 一天里问了九次。
+        //
+        // 落地和派活本来就没有先后依赖：落地慢一轮无所谓，派活停一分钟是
+        // 实打实的产能损失。所以把它挪到后台，一次只允许一个在跑。
+        // （更彻底的做法是把「跑测试」变成派给测试角色的一个任务，
+        // 按 AgentRoles 调度 —— 老板 2026-08-22 定的分工。那是下一步。）
+        if Review.autoLandEnabled(), !landingInFlight {
+            landingInFlight = true
+            DispatchQueue.global(qos: .utility).async {
+                defer { landingInFlight = false }
+                landingRound()
             }
         }
 
@@ -5784,3 +5758,55 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
         return nil
     }
 }
+
+
+/// 一轮落地：验收 → 合并 → 刷新 → 派审核 → 补证据。
+///
+/// **在后台跑,不占派活的时间。** 它里面的 verifyMerge 会同步跑整个
+/// 测试套件(几分钟起),挂在派活前面会让产线看起来「停了」——
+/// 老板 2026-08-22 一天问了九次,根子就在这里。
+nonisolated(unsafe) var landingInFlight = false
+
+func landingRound() {
+                for repo in RepoRegistry.all() {
+                    let path = NSString(string: repo.localPath).expandingTildeInPath
+                    // 标了「要人看」的仓库现在也走全套自动环节 ——
+                    // 只是门槛更高（见 Review.autoLand 里 manualReview 那段）。
+                    // 上一版我在这里 `continue`，把补证据、agent 审核、
+                    // 分支刷新**一起**挡掉了，结果是既要人审又没图可看。
+                    if repo.manualReview {
+                        let n = Review.list(repo: path).filter { $0.evidence.isEmpty }.count
+                        if n > 0 {
+                            print(Ansi.dim("  要看效果 " + repo.alias
+                                + "：\(n) 条还没交证据，先派它们去跑一遍截图"))
+                        }
+                    }
+                    for o in Review.autoLand(repo: path) {
+                        let mark = o.landed ? Ansi.green("  ✓ 落地 ")
+                                            : Ansi.yellow("  ⚠︎ 没落 ")
+                        print(mark + o.branch + Ansi.dim("  " + o.note))
+                    }
+                    // 落不下去的里面，分「过期了」和「真撞了设计」两种。
+                    // 过期的派回原平台去刷新 —— 它还留着当时的会话。
+                    // 详见 StaleBranch 的说明。
+                    for o in StaleBranch.dispatchRefresh(repo: path) {
+                        let mark = o.enqueued ? Ansi.green("  ↻ 刷新 ")
+                                              : Ansi.yellow("  ⚠︎ 没派 ")
+                        print(mark + o.branch + Ansi.dim("  " + o.note))
+                    }
+                    // 改了看得见的东西却没交证据 → 派回原平台跑一遍截图。
+                    // 人只看「跑起来什么样」，不该替 agent 补跑（见 EvidenceGate）。
+                    // 机械条件判不了的（高危 / 碰构建 CI 签名）→ 派专用评审
+                    // agent 出结论，人不参与「这段 diff 要不要合」。
+                    for o in MergeReview.dispatch(repo: path) {
+                        print(Ansi.green("  ⚖︎ " + o.action + " ") + o.branch
+                            + Ansi.dim("  " + o.note))
+                    }
+                    for o in EvidenceGate.dispatchEvidence(repo: path) {
+                        let mark = o.enqueued ? Ansi.green("  📷 补证据 ")
+                                              : Ansi.yellow("  ⚠︎ 没派 ")
+                        print(mark + o.branch + Ansi.dim("  " + o.note))
+                    }
+                }
+}
+
