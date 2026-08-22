@@ -4824,19 +4824,23 @@ func cmdRelease(_ rest: [String]) throws {
         // 靠「发布前记得检查」是防不住的：我自己写完这条纪律，
         // 十分钟后就又发了一次。所以改成程序拦 —— 纪律要变成机制才算数。
         // 真急着发（比如修的正是让任务卡死的那个 bug）加 --force。
-        if !rest.contains("--force") {
-            let running = TaskStore.all().filter { $0.state == .running }
-            if !running.isEmpty {
-                print(Ansi.red("有 \(running.count) 个任务正在跑，发布会把它们杀掉："))
-                for t in running.prefix(5) {
-                    let mins = t.startedAt.map { Int(Date().timeIntervalSince($0) / 60) } ?? 0
-                    let who = t.platform?.displayName ?? "?"
-                    print(Ansi.dim("  " + t.id + " · \(mins) 分钟 · " + who
-                                   + " · " + String(t.prompt.prefix(40))))
-                }
-                print(Ansi.dim("等它们跑完（llmq brief 看进度），或者 --force 强发。"))
-                exit(1)
-            }
+        // **这道闸已经不需要拦住发布本身了。**
+        //
+        // 它写在「发布 = 无条件重启常驻服务」的年代。后来
+        // `restartResidentServices()` 自己长出了在飞守卫(有活在跑就不踢
+        // worker,新二进制等它干完自然生效),所以发布**不会**再杀掉正在跑的
+        // agent —— 而这道外层闸却仍然让整个发布 exit(1)。
+        //
+        // 代价是实打实的(2026-08-22 晚):zcode 适配器修好后,因为产线一直
+        // 有任务在跑,连续几小时发不出去,MacBook 一直停在旧版本,
+        // 老板看到的是「下午适配的 zcode 手机端看不到」。
+        // **产线越忙,越发不了版** —— 这个方向完全反了。
+        //
+        // 现在只提示,不拦:发布照做,重启那步自己会等。
+        let running = TaskStore.all().filter { $0.state == .running }
+        if !running.isEmpty {
+            print(Ansi.dim("有 \(running.count) 个任务正在跑 —— 照常发布，"))
+            print(Ansi.dim("常驻服务会等它们干完再换二进制（restartResidentServices 里的在飞守卫）。"))
         }
 
         print(Ansi.dim("编译通用二进制（Intel + Apple Silicon）…"))
