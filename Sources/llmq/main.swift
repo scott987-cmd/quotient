@@ -1164,7 +1164,12 @@ func cmdWork(_ args: [String]) throws {
         let mine = all.filter { ($0.note ?? "").contains("等 Claude 处置") }
         let boss = all.filter { ($0.note ?? "").contains("等你确认") }
         let frozen = all.count - mine.count - boss.count
-        if mine.isEmpty && boss.isEmpty {
+        // **搁浅链也要算进「有没有东西」。** 原来这里 mine/boss 都空就提前
+        // return —— 而纯搁浅场景(某步 failed + 下游冻住)恰恰 mine/boss 都空,
+        // 于是 :1189 的搁浅段永远到不了,还打印「没有等人处置的拦截」。
+        // 这正好架空了本轮「搁浅归 Claude 看」的迁移(2026-08-23 复审逮到)。
+        let strandsNow = TaskGraph.stranded(TaskStore.all())
+        if mine.isEmpty && boss.isEmpty && strandsNow.isEmpty {
             print(Ansi.green("没有等人处置的拦截。")
                 + (frozen > 0 ? Ansi.dim("（另有 \(frozen) 条在等上游，会自动解冻）") : ""))
             return
@@ -1186,7 +1191,7 @@ func cmdWork(_ args: [String]) throws {
         if frozen > 0 { print(Ansi.dim("\n另有 \(frozen) 条在等上游，会自动解冻。")) }
         // 搁浅的任务图也归我 —— 它不再推给老板(纯技术问题,见 Nudge 里那段),
         // 那就必须在这里看得见,否则「归我」等于「没人管」。
-        let strands = TaskGraph.stranded(TaskStore.all())
+        let strands = strandsNow
         if !strands.isEmpty {
             print(Ansi.bold("\n搁浅的任务链（\(strands.count)）")
                 + Ansi.dim("  跑挂一步就不会自己恢复"))
@@ -5815,25 +5820,25 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
     // 一个计数显示(「卡住 N 件」),没有任何按钮会写出放行指令 ——
     // 于是他点了也没用,任务永远卡着,提醒永远在。
     // 和成果推送那次一模一样的形状:**别推人做不到的事**。
-    case ("task", "approve"):
-        guard parts.count == 3 else { return false }
-        let id = parts[2]
-        guard let t = TaskStore.all().last(where: { $0.id == id }),
-              t.state == .blocked else { return false }
-        var x = t
-        x.state = .queued
-        x.note = "手机上放行(高危改动经人确认)"
-        x.endedAt = nil
-        try? TaskStore.append(x)
-        return true
-
-    case ("task", "discard"):
+    case ("task", "approve"), ("task", "discard"):
         guard parts.count == 3,
-              let t = TaskStore.all().last(where: { $0.id == parts[2] }) else { return false }
-        var x = t
-        x.state = .done
-        x.endedAt = Date()
-        x.note = "手机上决定不做:" + (inv.note ?? "老板放弃了这一步")
+              let t = TaskStore.all().last(where: { $0.id == parts[2] }),
+              t.state == .blocked else { return false }
+        // **放行 = 提交已审改动,不是重排。**
+        //
+        // 2026-08-23 复审(第一轮 H3)逮到:原来这里只把 state 改回 .queued,
+        // 而高危拦截时改动是**留在工作区、没提交**的。重排会走 GitWorkspace
+        // .prepare → worktree remove --force 铲掉那个工作区 → agent 从头再跑
+        // → 又撞同一条高危路径 → 再次 blocked、再弹一张卡。这恰好复现老板
+        // 原来报的「确认了但手机端一直重复弹出」,还白烧一份额度、丢掉他看过的 diff。
+        //
+        // 正确做法和 Ask 卡的「放行并提交」同一条路:Approval.settle 直接把
+        // 工作区的改动提交(approve)或丢弃(discard),不重跑。
+        let r = Approval.settle(task: t, approve: parts[1] == "approve")
+        var x = r.task
+        x.pendingAsk = nil
+        x.note = (parts[1] == "approve" ? "手机上放行并提交:" : "手机上丢弃:")
+            + (inv.note ?? r.note)
         try? TaskStore.append(x)
         return true
 

@@ -203,6 +203,16 @@ public struct WorkTask: Codable, Sendable {
 /// 没用 Hermes 的 kanban：它自带调度器会去抢着执行，而我需要的是「由额度决定派给谁」。
 /// 两个调度器同时管同一批任务只会打架。Hermes 在这里只负责飞书通道。
 public enum TaskStore {
+    /// **写 tasks.jsonl 的进程内锁。**
+    ///
+    /// 2026-08-23 复审(第三轮)逮到:landingRound 挪到后台线程之后,
+    /// 它(经 Review.autoLand)和主派活线程**同进程并发写 tasks.jsonl**,
+    /// 而 append 是 seekToEnd + write 无锁 —— 两个线程各自 seek 到同一
+    /// 偏移,第二个覆盖第一个,丢一条任务状态。丢的可能正是某个图节点的
+    /// done,于是下游永远等一个不再到来的上游(「图卡住」查无原因)。
+    /// verifyMerge 要同步跑整套测试,这个重叠窗口有好几分钟,不是理论风险。
+    private static let writeLock = NSLock()
+
     public static var file: URL { Paths.appSupport.appendingPathComponent("tasks.jsonl") }
 
     /// 上一次 all() 里有几行没解出来。非 0 说明任务记录有损坏。
@@ -246,11 +256,20 @@ public enum TaskStore {
         try Paths.ensureDirectories()
         var data = try SnapshotCoding.encoder().encode(task)
         data.append(UInt8(ascii: "\n"))
+        writeLock.lock()
+        defer { writeLock.unlock() }
         if FileManager.default.fileExists(atPath: file.path) {
-            let fh = try FileHandle(forWritingTo: file)
-            try fh.seekToEnd()
-            try fh.write(contentsOf: data)
-            try fh.close()
+            // O_APPEND:内核保证每次 write 原子追加到末尾,即便另一个
+            // **进程**(worker 和菜单栏 App 都可能跑到 collect/落地)也在写。
+            // 进程内的 writeLock 挡同进程多线程,O_APPEND 挡跨进程 —— 两层都要。
+            let fd = open(file.path, O_WRONLY | O_APPEND)
+            if fd >= 0 {
+                defer { close(fd) }
+                _ = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+            } else {
+                let fh = try FileHandle(forWritingTo: file)
+                try fh.seekToEnd(); try fh.write(contentsOf: data); try fh.close()
+            }
         } else {
             try data.write(to: file)
         }
@@ -1899,6 +1918,18 @@ public enum GitWorkspace {
         }
         // 项目文件是目录形式（Xcode），单独判一次。
         if path.contains(".xcodeproj/") { return true }
+        // **钱 / 账号 / 签名类也必须拦下。**
+        //
+        // 实锤(2026-08-23 复审):admob-units.json、entitlements.plist、
+        // 独立的 .p8/.p12/.mobileprovision、非 .github/ 下的 release.yml ——
+        // 这些「改错了动老板收入或账号、且不可逆」的文件,以前 isRiskyPath
+        // 一概返回 false → 既不拦、也不提交前停,agent 一路提交进分支,
+        // BossGate 永远没机会看到它们。而 BossGate 的测试还断言它们归老板 ——
+        // 保护看着做了、单测全绿,实际到不了生产。
+        //
+        // 修法:isRiskyPath 必须是 BossGate.needsBoss 的**超集** ——
+        // 凡是要老板拍板的,先得被这道闸拦住。测试钉死这个包含关系。
+        if BossGate.needsBoss(files: [path]) { return true }
         return false
     }
 

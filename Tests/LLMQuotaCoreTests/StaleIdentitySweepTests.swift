@@ -34,6 +34,24 @@ final class StaleIdentitySweepTests: XCTestCase {
                        "每台机器留最新的那份;别的机器不受影响")
     }
 
+    /// **同名不同机绝不互删本机文件。** 三轮 review 都点名缺这条边界。
+    /// 两台真机都叫「Mac mini」时,不能把当前机器(selfID)的活文件删掉 ——
+    /// 否则镜像把对方文件拉来、sweep 每轮删本机的,两台在世机器互删。
+    func testNeverDeletesCurrentMachineFile() {
+        let d = dir(); defer { try? FileManager.default.removeItem(at: d) }
+        // 本机较旧,对方较新,但同名。本机文件必须保住。
+        func w(_ id: String, _ at: String) {
+            let j = #"{"machineID":"\#(id)","machineName":"Mac mini","generatedAt":"\#(at)"}"#
+            try? j.write(to: d.appendingPathComponent(id + ".json"),
+                         atomically: true, encoding: .utf8)
+        }
+        w("ME", "2026-08-22T10:00:00Z")     // 本机,较旧
+        w("OTHER", "2026-08-23T06:00:00Z")   // 另一台同名机,较新
+        _ = StaleIdentitySweep.sweepDir(d, selfID: "ME")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: d.appendingPathComponent("ME.json").path),
+                      "本机文件哪怕较旧也绝不能删")
+    }
+
     /// presence 文件用的是 updatedAt 不是 generatedAt —— 也得能按它去重。
     /// 漏了这个字段,老板手机上 presence 的 12 个旧身份一个没扫掉(2026-08-23)。
     func testHandlesUpdatedAtField() {

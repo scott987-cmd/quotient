@@ -418,7 +418,11 @@ public enum Paths {
     ///
     /// 文件保留作缓存(省一次 ioreg),但**以硬件为准** —— 缓存和硬件对不上
     /// 时以硬件为准并改写缓存,这样历史上那些漂移过的 ID 会自动收敛回来。
+    /// 测试用:模拟「另一台机器」。生产永远是 nil。
+    public static var machineIDOverride: String?
+
     public static func machineID() -> String {
+        if let o = machineIDOverride { return o }
         if let hw = hardwareUUID() {
             // 硬件 ID 直接用,顺手把缓存对齐(下次别人读缓存也是对的)。
             if (try? String(contentsOf: machineIDFile, encoding: .utf8))?

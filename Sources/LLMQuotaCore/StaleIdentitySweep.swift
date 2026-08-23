@@ -22,10 +22,11 @@ public enum StaleIdentitySweep {
     static let perMachineDirs = ["snapshots", "taskboards", "presence"]
 
     /// 从一个 JSON 文件里读出 (机器名, 生成时间)。读不出就返回 nil。
-    static func identity(of url: URL) -> (name: String, at: Date)? {
+    static func identity(of url: URL) -> (name: String, id: String, at: Date)? {
         guard let d = try? Data(contentsOf: url),
               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               let name = obj["machineName"] as? String else { return nil }
+        let mid = (obj["machineID"] as? String) ?? ""
         // 时间字段各目录叫法不一样:快照/任务板是 generatedAt,
         // 在线状态(presence)是 updatedAt。都认,认不到才退回 distantPast。
         // (2026-08-23:presence 只有 updatedAt,漏了它 → 12 个旧身份没被扫,
@@ -33,12 +34,12 @@ public enum StaleIdentitySweep {
         let iso = ISO8601DateFormatter()
         let stamp = (obj["generatedAt"] as? String) ?? (obj["updatedAt"] as? String)
         let at = stamp.flatMap { iso.date(from: $0) } ?? .distantPast
-        return (name, at)
+        return (name, mid, at)
     }
 
     /// 扫一个目录,同名机器只留最新。返回删掉的文件数。
     @discardableResult
-    public static func sweepDir(_ dir: URL) -> Int {
+    public static func sweepDir(_ dir: URL, selfID: String = Paths.machineID()) -> Int {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir,
                 includingPropertiesForKeys: nil) else { return 0 }
@@ -55,6 +56,11 @@ public enum StaleIdentitySweep {
         for (name, urls) in byName {
             guard let keep = newest[name]?.1 else { continue }
             for u in urls where u != keep {
+                // **当前机器的文件永不删。** 2026-08-23 复审(H2):去重按
+                // machineName,两台真机重名(macOS 默认名不去重)时,镜像把对方
+                // 文件拉到本地,sweep 每轮删掉「较旧」那台的活文件 —— 互删的删除战。
+                // machineID 已是硬件派生、稳定,拿它自保:本机 ID 的文件绝不删。
+                if identity(of: u)?.id == selfID { continue }
                 if (try? fm.removeItem(at: u)) != nil { removed += 1 }
             }
         }
