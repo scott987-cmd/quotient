@@ -881,10 +881,10 @@ public enum AgentIdentity {
     /// 平台 → 干活的 agent 名。
     static let map: [Platform: String] = [
         .claude:   "Claude Code",
-        // 老板 2026-08-22 起主要用 GLM 官方客户端 ZCode(/Applications/ZCode.app),
-        // 不再靠改 Claude Code 的 BASE_URL。名字必须跟着变 —— 他在手机上找「ZCode」,
-        // 而这里一直写着旧跑法,于是「ZCode 没在移动端展示」(2026-08-23 他的原话)。
-        .glm:      "ZCode · GLM",
+        // 兜底名。**本机到底是谁在跑 GLM,由 name(for:) 现场判**(见下面) ——
+        // 老板的 MacBook 上「Claude Code 配 GLM 模型」和「官方 ZCode」是并存的两个东西,
+        // 2026-08-23 我一刀切改成 ZCode 是错的,他当场指出来了。
+        .glm:      "Claude Code · GLM",
         .deepseek: "Claude Code · DeepSeek",
         .volcark:  "opencode · 火山",
         .codex:    "Codex CLI",
@@ -896,10 +896,7 @@ public enum AgentIdentity {
 
     /// 它跑的是哪个可执行文件。用来在详情里说清「到底是谁」。
     static let binary: [Platform: String] = [
-        .claude: "claude", .deepseek: "claude",
-        // GLM 有官方 CLI 了,不再是「借用 Claude Code」那一类 ——
-        // 它的用量就是 GLM 自己的套餐,归属不用再打折扣(见 isBorrowedClient)。
-        .glm: "zcode",
+        .claude: "claude", .glm: "claude", .deepseek: "claude",
         .codex: "codex", .qwen: "qwen", .kimi: "kimi",
         .minimax: "mmx", .gemini: "gemini",
         // 火山方舟现在有专属客户端了：opencode 经本地 LiteLLM 网关转过去。
@@ -907,11 +904,45 @@ public enum AgentIdentity {
         .volcark: "opencode",
     ]
 
+    /// 干活的 agent 名。**GLM 要看本机实际能用的是哪个客户端。**
+    ///
+    /// 老板的 MacBook 上两样并存:Claude Code 配了 GLM 模型,另外还装了官方 ZCode。
+    /// mini 上只有前者。写死任何一个都会在另一台上撒谎 —— 2026-08-23 我写死成
+    /// 「ZCode · GLM」,他的回话是「不是说改个名就可以了,要确保真实可调度」。
+    /// 名字跟着**这台机器真正调得起来的那个**走(ZcodeRunner.binaryPath 已经把
+    /// 「装了 ≠ 调得起来」判全了:脚本/node/CLI 配置/凭据四样齐才算)。
     public static func name(for p: Platform) -> String {
-        map[p] ?? p.displayName
+        if p == .glm, glmRunsOnZcode() { return "ZCode · GLM" }
+        return map[p] ?? p.displayName
     }
     public static func binaryName(for p: Platform) -> String {
-        binary[p] ?? p.rawValue
+        if p == .glm, glmRunsOnZcode() { return "zcode" }
+        return binary[p] ?? p.rawValue
+    }
+
+    /// 这个**集群里**跑 GLM 的是官方 ZCode 吗。
+    ///
+    /// **不能只看本机。** dashboard.json 是单文件、后写覆盖,而两台机器装的东西不一样:
+    /// mini 没装 ZCode、MacBook 装了。只看本机的话,mini 每写一次就把名字盖回
+    /// 「Claude Code · GLM」—— 老板在手机上又看不到 ZCode 了(2026-08-23 他连问两次)。
+    ///
+    /// 判据用已经在同步的事实:任何一台机器的快照里,GLM 的来源目录含 `.zcode`
+    /// 就说明这个集群的 GLM 是 ZCode 在跑。本机装了也直接算。
+    static func glmRunsOnZcode(now: Date = Date()) -> Bool {
+        if ZcodeRunner().binaryPath != nil { return true }
+        let dir = Paths.sharedRoot.appendingPathComponent("snapshots", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
+        else { return false }
+        for f in files where f.hasSuffix(".json") && !f.hasPrefix(".") {
+            guard let d = FileManager.default.contents(atPath: dir.appendingPathComponent(f).path),
+                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  let plats = obj["platforms"] as? [[String: Any]] else { continue }
+            for pl in plats where (pl["platform"] as? String) == "glm" {
+                let srcs = (pl["sources"] as? [String]) ?? []
+                if srcs.contains(where: { $0.contains(".zcode") }) { return true }
+            }
+        }
+        return false
     }
 
     /// 是不是「借用别人客户端」的那种。

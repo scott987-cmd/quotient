@@ -963,10 +963,89 @@ public struct ZcodeRunner: AgentRunner {
     public init() {}
 
     /// App 包里那个 CLI 脚本。装了才有,没装返回 nil。
-    static let scriptPath = "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs"
+    ///
+    /// 这几个路径做成可注入,是因为「四样齐才算可用」这条规则**只能在两台机器上
+    /// 各自成立一半**(mini 没装 ZCode,MacBook 装了)—— 不注入就写不出一条在两台机器上
+    /// 都会红的测试,而写不出会红的测试等于没测(docs/no-faking.md 第 4 条)。
+    nonisolated(unsafe) public static var pathsOverride: (script: String, cliConfig: String,
+                                                          guiConfig: String, node: String?)?
+    static var scriptPath: String {
+        pathsOverride?.script ?? "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs"
+    }
 
+    /// CLI 自己的配置。**GUI 那份(`~/.zcode/v2/config.json`)它不读** ——
+    /// 缺了就报 `Model config is missing`,而且**光给环境变量补不上**(实测)。
+    static var cliConfigPath: String {
+        pathsOverride?.cliConfig ?? (NSHomeDirectory() + "/.zcode/cli/config.json")
+    }
+
+    /// GUI 登录后写下的配置,凭据在这儿。只读、只往子进程环境里传,不落盘不打印。
+    static var guiConfigPath: String {
+        pathsOverride?.guiConfig ?? (NSHomeDirectory() + "/.zcode/v2/config.json")
+    }
+
+    /// 从 GUI 配置里取一个**能用**的 provider(有 baseURL 且有 apiKey)。
+    /// 返回 (baseURL, apiKey)。**调用方不许把返回值写进日志或任务记录。**
+    static func credentials() -> (baseURL: String, apiKey: String)? {
+        guard let d = FileManager.default.contents(atPath: guiConfigPath),
+              let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let provs = obj["provider"] as? [String: Any] else { return nil }
+        // 订阅套餐那几个优先(它们才带 key);顺序固定,避免每次挑到不同的 provider。
+        let preferred = ["builtin:bigmodel-coding-plan", "builtin:zai-coding-plan",
+                         "builtin:bigmodel-start-plan", "builtin:zai-start-plan",
+                         "builtin:bigmodel", "builtin:zai"]
+        let names = preferred.filter { provs[$0] != nil } + provs.keys.sorted().filter { !preferred.contains($0) }
+        for name in names {
+            guard let p = provs[name] as? [String: Any],
+                  let o = p["options"] as? [String: Any],
+                  let base = o["baseURL"] as? String, !base.isEmpty,
+                  let key = o["apiKey"] as? String, !key.isEmpty else { continue }
+            return (base, key)
+        }
+        return nil
+    }
+
+    /// node 的绝对路径。**不能靠 `/usr/bin/env node`。**
+    ///
+    /// 实锤(2026-08-23,老板的 MacBook):launchd/ssh 起的进程 PATH 里没有 node,
+    /// `/usr/bin/env node` 直接报 `env: node: No such file or directory` ——
+    /// 于是「ZCode 装了」和「ZCode 能跑」是两回事,而调度只看前者,
+    /// 每次派给 GLM 的活都在这里无声地死掉。mmx 早就踩过同一个坑并改成了绝对路径,
+    /// 这里当时没跟上。
+    static var nodePath: String? {
+        if let o = pathsOverride { return o.node }
+        if let p = Proc.which("node") { return p }
+        for p in ["/usr/local/bin/node", "/opt/homebrew/bin/node",
+                  NSHomeDirectory() + "/.hermes/node/bin/node"]
+        where FileManager.default.isExecutableFile(atPath: p) { return p }
+        return nil
+    }
+
+    /// **「装了」不等于「调得起来」。** 四样齐了才算可用:
+    /// 脚本在、node 找得到、CLI 配置在、凭据读得到。少一样都返回 nil ——
+    /// 假装可用的代价是每条派过来的活都白烧一次调度名额。
     public var binaryPath: String? {
-        FileManager.default.isReadableFile(atPath: Self.scriptPath) ? Self.scriptPath : nil
+        guard FileManager.default.isReadableFile(atPath: Self.scriptPath),
+              Self.nodePath != nil,
+              FileManager.default.isReadableFile(atPath: Self.cliConfigPath),
+              Self.credentials() != nil
+        else { return nil }
+        return Self.scriptPath
+    }
+
+    /// 缺哪一样。给 doctor 用,让人知道该补什么(不含任何凭据内容)。
+    public static func missingPieces() -> [String] {
+        var out: [String] = []
+        if !FileManager.default.isReadableFile(atPath: scriptPath) {
+            out.append("没装 ZCode.app(\(scriptPath) 不在)")
+        }
+        if nodePath == nil { out.append("找不到 node(装一个,或放到 /usr/local/bin/node)") }
+        if !FileManager.default.isReadableFile(atPath: cliConfigPath) {
+            out.append("缺 \(cliConfigPath) —— CLI 不读 GUI 那份配置,"
+                       + "里面要有 model 和 provider 的 baseURL")
+        }
+        if credentials() == nil { out.append("GUI 配置里没有可用凭据 —— 在 ZCode 里登录一次") }
+        return out
     }
 
     public func command(
@@ -980,8 +1059,14 @@ public struct ZcodeRunner: AgentRunner {
         var args = [Self.scriptPath, "--prompt", prompt, "--cwd", cwd,
                     "--mode", "yolo", "--no-color"]
         if case .resume(let id) = session { args += ["--resume", id] }
-        // 用 env 找 node:ZCode 自己不带 node,机器上装的是哪个版本都行。
-        return ("/usr/bin/env", ["node"] + args, [:])
+        // 凭据走环境变量递给子进程 —— GUI 启动 CLI 时也是这么干的。
+        // **只在进程内传递**:不打印、不写任务记录、不落到别的文件。
+        var env: [String: String] = [:]
+        if let c = Self.credentials() {
+            env["ZCODE_API_KEY"] = c.apiKey
+            env["ZCODE_BASE_URL"] = c.baseURL
+        }
+        return (Self.nodePath ?? "/usr/bin/env", args, env)
     }
 }
 
