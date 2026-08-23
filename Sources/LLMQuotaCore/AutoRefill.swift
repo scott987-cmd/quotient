@@ -48,8 +48,19 @@ public enum AutoRefill {
         }
         var latest: [String: WorkTask] = [:]
         for t in mine { latest[t.id] = t }
-        let busy = latest.values.contains {
-            $0.state == .queued || $0.state == .running || $0.state == .blocked
+        // **被「已死上游」冻住的 blocked 不算忙。**
+        //
+        // 实锤(2026-08-23):人物形象第一版图的 s6/s7 被上游 s4(failed)冻住,
+        // 永远不会解冻 —— 它们不是在干活,是僵尸。可原来这里把一切 blocked
+        // 都算忙,于是 Flint 永远 isIdle=false,续活专注了半天一次没触发,
+        // 老板反复看到「进行中的任务没有了」。
+        // 只有还能恢复的 blocked 才算忙:等人拍板的(frozenBy==nil),
+        // 或上游还活着(非 failed/discarded)的。
+        let busy = latest.values.contains { t in
+            if t.state == .queued || t.state == .running { return true }
+            guard t.state == .blocked else { return false }
+            guard let up = t.frozenBy.flatMap({ latest[$0] }) else { return true } // 等人,算忙
+            return !(up.state == .failed || up.discardedAt != nil)               // 上游活着才算忙
         }
         if busy { return false }
         return Review.list(repo: repo).isEmpty

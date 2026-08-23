@@ -1715,6 +1715,32 @@ enum RunOutcome {
 }
 
 @discardableResult
+/// **队列空了就按专注仓库的主线补活。**
+///
+/// 老板 2026-08-22:「总不能跑一步卡一步就需要你介入」;2026-08-23:
+/// 「不要瞎续活」「专注于项目去派活」「确保活的连续性」。
+///
+/// **必须从主循环直接调,不能只藏在 runOneTask 里。** 实锤(2026-08-23):
+/// 原来续活写在 runOneTask 开头,而主循环只在 `nextQueued() != nil` 时才调
+/// runOneTask —— 队列一空,续活永远执行不到。手动 `llmq work run` 会触发
+/// (所以我手跑时续过 assetpacks),worker 自己跑时**从不**续活。Flint 专注了
+/// 半天、续活任务数 0,老板反复看到「进行中的任务没有了」,根子在这。
+/// 只对显式 focus 的仓库续;真闲才补;两小时最多一次;一轮只补一个仓库。
+func refillIfIdle(quiet: Bool = false) {
+    guard TaskStore.readyQueue().isEmpty else { return }
+    let all = TaskStore.all()
+    for repo in RepoRegistry.all() {
+        guard repo.autoRefill else { continue }
+        let path = NSString(string: repo.localPath).expandingTildeInPath
+        guard GitWorkspace.isRepo(path) else { continue }
+        if let o = AutoRefill.refill(repo: path, alias: repo.alias, tasks: all) {
+            let mark = o.enqueued ? Ansi.green("  ↺ 续活 ") : Ansi.dim("  · 没补 ")
+            if !quiet || o.enqueued { print(mark + repo.alias + Ansi.dim("  " + o.note)) }
+            if o.enqueued { break }
+        }
+    }
+}
+
 func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     // **修队头阻塞：不再只看队头。**
     //
@@ -1734,26 +1760,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             rateLimited: false, lowDisk: true, pendingLanding: 0), quiet: quiet)
     }
 
-    // **队列空了就按目标自己补活。**
-    //
-    // 老板 2026-08-22:「总不能跑一步卡一步就需要你介入」。在这之前,
-    // 队列空了得由我来派下一批 —— 他要的「不用介入」,卡的一直是这一环。
-    // 只在仓库**真闲**(没在排/在跑/等落地/等拍板)时补,两小时最多一次。
-    if TaskStore.readyQueue().isEmpty {
-        let all = TaskStore.all()
-        for repo in RepoRegistry.all() {
-            // **只对显式开了续活的仓库续。** 默认关(老板 2026-08-23:
-            // 「不要瞎续活」)—— 空闲不是问题,给他不关注的仓库乱派活才是。
-            guard repo.autoRefill else { continue }
-            let path = NSString(string: repo.localPath).expandingTildeInPath
-            guard GitWorkspace.isRepo(path) else { continue }
-            if let o = AutoRefill.refill(repo: path, alias: repo.alias, tasks: all) {
-                let mark = o.enqueued ? Ansi.green("  ↺ 续活 ") : Ansi.dim("  · 没补 ")
-                print(mark + repo.alias + Ansi.dim("  " + o.note))
-                if o.enqueued { break }   // 一轮只补一个仓库,别一次铺开
-            }
-        }
-    }
+    refillIfIdle()
 
     let rawQueue = TaskStore.readyQueue()
     guard !rawQueue.isEmpty else {
@@ -3030,6 +3037,10 @@ func cmdWorkLoop(_ args: [String]) throws {
             print("[\(Format.dateTime(Date()))] " + Ansi.green("收到远程任务 ")
                 + got.taskID + Ansi.dim("  来自 " + got.source))
         }
+
+        // 队列空了先看要不要按主线续活 —— runOneTask 只在有活时才被调,
+        // 续活不能藏在它里面(见 refillIfIdle 的说明)。
+        if TaskStore.nextQueued() == nil { refillIfIdle(quiet: true) }
 
         if TaskStore.nextQueued() != nil {
             if gate.allow() {

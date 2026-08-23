@@ -42,3 +42,19 @@ final class AutoRefillTests: XCTestCase {
         XCTAssertTrue(p.contains("什么都别改"), "没值得做的就该空跑,不能乱开坑")
     }
 }
+
+extension AutoRefillTests {
+    /// **被已死上游冻住的 blocked 不算忙。** 实锤 2026-08-23:人物形象图 s6/s7
+    /// 被 failed 的 s4 冻住永不解冻,却让 Flint 永远 isIdle=false,续活一次没触发。
+    func testDeadFrozenBlockedDoesNotCountAsBusy() {
+        var up = WorkTask(id: "s4", prompt: "x", repo: "/f"); up.state = .failed
+        var down = WorkTask(id: "s6", prompt: "x", repo: "/f"); down.state = .blocked; down.frozenBy = "s4"
+        XCTAssertTrue(AutoRefill.isIdle(repo: "/f", tasks: [up, down]),
+                      "僵尸冻结不是在干活,不该挡续活")
+    }
+    /// 但等人拍板的 blocked(frozenBy==nil)仍算忙 —— 别在人没答复时硬塞新活。
+    func testWaitingOnHumanStillCountsAsBusy() {
+        var t = WorkTask(id: "b", prompt: "x", repo: "/f"); t.state = .blocked; t.frozenBy = nil
+        XCTAssertFalse(AutoRefill.isIdle(repo: "/f", tasks: [t]))
+    }
+}
