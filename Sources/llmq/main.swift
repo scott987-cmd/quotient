@@ -1742,6 +1742,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     if TaskStore.readyQueue().isEmpty {
         let all = TaskStore.all()
         for repo in RepoRegistry.all() {
+            // **只对显式开了续活的仓库续。** 默认关(老板 2026-08-23:
+            // 「不要瞎续活」)—— 空闲不是问题,给他不关注的仓库乱派活才是。
+            guard repo.autoRefill else { continue }
             let path = NSString(string: repo.localPath).expandingTildeInPath
             guard GitWorkspace.isRepo(path) else { continue }
             if let o = AutoRefill.refill(repo: path, alias: repo.alias, tasks: all) {
@@ -3300,6 +3303,34 @@ func cmdRepo(_ args: [String]) throws {
         print(Ansi.green("已登记 ") + e.alias + Ansi.dim("  " + e.path)
             + (e.isDefault ? Ansi.cyan("  [默认]") : ""))
     // llmq repo verify <别名> "<命令>" [--timeout 秒]
+    // llmq repo focus <别名> [off] —— 标「持续推进」的仓库,队列空了才续活。
+    // 老板 2026-08-23:「我们应该专注于项目去派活」「不要瞎续活」。
+    // 同时只有一个仓库被 focus:开一个就把别的关掉,不会几个项目一起乱续。
+    case "focus":
+        var all = RepoRegistry.all()
+        let pos = args.dropFirst().filter { !$0.hasPrefix("--") }
+        guard let alias = pos.first else {
+            let on = all.filter(\.autoRefill).map(\.alias)
+            print(on.isEmpty ? "当前没有专注的项目（队列空了不会自动续活）"
+                  : "当前专注：" + on.joined(separator: "、"))
+            print(Ansi.dim("  开：llmq repo focus <别名>    关：llmq repo focus <别名> off"))
+            return
+        }
+        guard let i = all.firstIndex(where: { $0.alias == alias }) else {
+            print(Ansi.red("没有登记过别名 \(alias)")); exit(1)
+        }
+        let turnOff = pos.contains("off")
+        if turnOff {
+            all[i].autoRefill = false
+            print(Ansi.green("已取消专注 ") + alias + Ansi.dim("  队列空了不再自动续活"))
+        } else {
+            for j in all.indices { all[j].autoRefill = (j == i) }  // 只留这一个
+            print(Ansi.green("已专注 ") + alias
+                + Ansi.dim("  队列空了会按它的 PLAN.md 续活；其它项目空着不动"))
+        }
+        try RepoRegistry.save(all)
+        return
+
     case "verify":
         let pos = args.dropFirst().filter { !$0.hasPrefix("--") }
         guard pos.count >= 2 else {

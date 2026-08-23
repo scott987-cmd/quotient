@@ -50,6 +50,17 @@ public struct RepoAlias: Codable, Sendable {
     /// 模拟器实跑才看得出来（老板原话：「不能做低质量的游戏」）。
     public var manualReview: Bool = false
 
+    /// **队列空了要不要自己按 PLAN.md 续活。默认关。**
+    ///
+    /// 老板 2026-08-23:「现在续的活不是我需要的,不要瞎续活」。
+    /// 原来续活对所有仓库默认开 —— 于是队列一空,系统就跑去给 DragonTales、
+    /// AssetPacks 这些他此刻根本不关注的仓库派活,agent 自己从 PLAN.md 挑,
+    /// 挑的还不是他想要的。空闲不是问题,乱干才是。
+    ///
+    /// 改成显式开关:只有他明确标了「持续推进」的仓库(现在是 Flint)才续活,
+    /// 别的仓库空着就空着。开:`llmq repo autofill <别名> on`。
+    public var autoRefill: Bool = false
+
     /// 本机上的实际路径。
     public var localPath: String {
         pathByMachine[Paths.machineName()] ?? path
@@ -74,6 +85,7 @@ public struct RepoAlias: Codable, Sendable {
         pathByMachine = try c.decodeIfPresent([String: String].self,
                                               forKey: .pathByMachine) ?? [:]
         manualReview = try c.decodeIfPresent(Bool.self, forKey: .manualReview) ?? false
+        autoRefill = try c.decodeIfPresent(Bool.self, forKey: .autoRefill) ?? false
     }
 }
 
