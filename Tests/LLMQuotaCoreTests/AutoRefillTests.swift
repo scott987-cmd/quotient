@@ -36,7 +36,9 @@ final class AutoRefillTests: XCTestCase {
     func testPromptFencesOffBossOnlyWork() {
         let p = AutoRefill.prompt(repoName: "flint", goal: "P3 内容:三张地图")
         XCTAssertTrue(p.contains("拍板"), "要提醒它避开老板专属的决定")
-        XCTAssertTrue(p.contains("一整块"), "要一次做一件完整的事,不开三个半成品")
+        XCTAssertTrue(p.contains("续活主线"), "必须让它照主线走,不是自由发挥")
+        XCTAssertTrue(p.contains("第一个") && p.contains("不要跳"),
+                      "严格挑第一个未完成的,保证活的连续性")
         XCTAssertTrue(p.contains("什么都别改"), "没值得做的就该空跑,不能乱开坑")
     }
 }
