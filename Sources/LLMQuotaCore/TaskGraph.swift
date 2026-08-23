@@ -216,7 +216,15 @@ public enum TaskGraph {
                 // 代价是任务「看得见却永远不跑」，不能再来一遍。
                 let blocker = t.dependsOn.first {
                     guard let up = byID[$0], !upstreamCleared(up) else { return false }
+                    // **「done 但零产出」也是断点。** 实锤(2026-08-23):头发图
+                    // s1 跑完零产出、状态 done,upstreamCleared 正确地不放行 s2 ——
+                    // 但这里只认 blocked/failed,漏了这种,s2 就永远留在 queued:
+                    // 既不就绪(被 upstreamCleared 挡)、又不冻结(不进搁浅识别)、
+                    // 还占着「进行中」显示。老板看到的是「进行中的任务消失了」。
+                    // upstreamCleared 已经判过它不合格,这里跟上,把 s2 冻成 blocked,
+                    // 它就能被搁浅那条路暴露、进 work blocked 归 Claude 处置。
                     return up.state == .blocked || up.state == .failed
+                        || (up.state == .done && (up.changedFiles ?? 1) == 0)
                 }
 
                 if t.state == .queued, let b = blocker, let up = byID[b] {
@@ -450,7 +458,17 @@ public extension TaskGraph {
             let failed = steps.filter {
                 $0.state == .failed && $0.discardedAt == nil
             }
-            guard !failed.isEmpty else { return nil }
+            // **零产出 done 造成的断点也是搁浅。** 实锤(2026-08-23):头发图
+            // s1 跑完零产出、状态 done,把 s2 冻住(见 reconcile),但整张图
+            // 一个 failed 步都没有 —— 原来这里 `guard !failed.isEmpty` 直接
+            // 判它不搁浅,于是它卡死却不进 work blocked、不到老板眼前,
+            // 「进行中的任务消失了」。零产出 done 后面跟着 frozen 下游,
+            // 和 failed 一样是「卡死、需要人看」,要一起算。
+            let zeroOutputBreak = steps.contains { up in
+                up.state == .done && (up.changedFiles ?? 1) == 0
+                    && steps.contains { d in d.state == .blocked && d.frozenBy == up.id }
+            }
+            guard !failed.isEmpty || zeroOutputBreak else { return nil }
             // **等人的不算搁浅。** frozenBy == nil 的 blocked 是人工闸门
             // 拦下的，人一放行就继续 —— 那是在等决定，不是卡死。
             let frozen = steps.filter { $0.state == .blocked && $0.frozenBy != nil }
