@@ -747,6 +747,16 @@ public struct WorkScheduler: Sendable {
 public protocol AgentRunner: Sendable {
     var platform: Platform { get }
     var binaryName: String { get }
+    /// 这个执行器在本机的可执行文件(或脚本)在哪;不可用返回 nil。
+    ///
+    /// **必须写在协议里,不能只留在扩展里。** 只在扩展里的话,通过 `any AgentRunner`
+    /// 调 `isAvailable` 会**静态派发**到扩展的默认实现(`Proc.which(binaryName)`),
+    /// 各执行器自己那套判断永远不会被调用 —— ZcodeRunner 从加进来那天起就是这样:
+    /// 它精心判了「脚本在不在」,而调度问的却是「zcode 在不在 PATH 上」(ZCode 是
+    /// .app 里的脚本,永远不在 PATH),于是 GLM 一条活都派不出去,而日志只说
+    /// 「zcode 没装或不可执行」—— 装了的人怎么查都查不出来(2026-08-23 实锤,
+    /// 老板连问三次「ZCode 没在移动端展示」)。
+    var binaryPath: String? { get }
     /// 能不能改文件、跑命令。
     ///
     /// 纯文本生成型的 CLI（比如 mmx text chat）只能进出文本，

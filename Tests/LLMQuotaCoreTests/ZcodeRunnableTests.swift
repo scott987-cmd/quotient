@@ -116,4 +116,30 @@ final class ZcodeRunnableTests: XCTestCase {
                        "dashboard.json 是单文件后写覆盖:只看本机的话 mini 每写一次就把 ZCode 盖掉,老板又看不见了")
         XCTAssertEqual(AgentIdentity.binaryName(for: .glm), "zcode")
     }
+
+    /// **通过 `any AgentRunner` 问可用性,必须问到执行器自己那套判断。**
+    ///
+    /// 这条是整件事的根:binaryPath 原来只在协议扩展里,`isAvailable` 静态派发到
+    /// 默认实现 `Proc.which("zcode")` —— 而 ZCode 是 .app 里的脚本,永远不在 PATH。
+    /// 于是 ZcodeRunner 里那套「四样齐」的判断从来没被调用过,GLM 一条活都派不出去。
+    func test_通过协议问可用性_不会退回PATH查找() {
+        _ = fake(script: true, node: true, cliConfig: true, creds: true)
+        let asProtocol: any AgentRunner = ZcodeRunner()
+        XCTAssertNotNil(asProtocol.binaryPath, "协议这一层必须拿到执行器自己的判断")
+        XCTAssertTrue(asProtocol.isAvailable,
+                      "zcode 不在 PATH 上,但脚本/node/配置/凭据都齐了 —— 必须算可用")
+
+        // 反过来:四样不齐时,协议这一层也要说不可用
+        _ = fake(script: true, node: true, cliConfig: false, creds: true)
+        let broken: any AgentRunner = ZcodeRunner()
+        XCTAssertFalse(broken.isAvailable)
+    }
+
+    /// 调度真正走的那条路(RunnerRegistry.all 里取出来的是 any AgentRunner)。
+    func test_调度取到的执行器也用同一套判断() {
+        _ = fake(script: true, node: true, cliConfig: true, creds: true)
+        let fromRegistry = RunnerRegistry.all.first { $0.platform == .glm }
+        XCTAssertNotNil(fromRegistry)
+        XCTAssertTrue(fromRegistry?.isAvailable == true, "调度问的就是这个")
+    }
 }
