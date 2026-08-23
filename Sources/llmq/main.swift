@@ -2213,17 +2213,23 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         }
         let cmd = pick.runner.command(prompt: effectivePrompt, cwd: ws.path,
                                       session: session)
-        let attemptTimeoutPreview = ProcessInfo.processInfo.environment["LLMQ_ATTEMPT_TIMEOUT"]
-            .flatMap(Double.init) ?? task.profile?.timeout ?? perAttemptTimeout
+        // **续活任务的时限放宽到 90 分钟。**
+        //
+        // 续活的单位是「主线的一整块」(老板要求不拆细、一块做完),实测
+        // fa4e5eeb 做头发收尾改了 14 个文件,45 分钟被掐死在半路(WIP 提交救回)。
+        // 按档次算的 45 分钟上限是给「一个任务」设的,一整块理应更长。
+        // 用 origin 判(结构化字段),不看提示词文本。
+        let refillFloor: TimeInterval = task.origin == "auto-refill" ? 90 * 60 : 0
+        let attemptTimeoutPreview = max(refillFloor,
+            ProcessInfo.processInfo.environment["LLMQ_ATTEMPT_TIMEOUT"]
+                .flatMap(Double.init) ?? task.profile?.timeout ?? perAttemptTimeout)
         print(Ansi.dim(String(format: "  执行中…（单次上限 %.0f 秒）", attemptTimeoutPreview)))
         let started = Date()
         // 画像估出来的超时比固定 10 分钟合理：简单任务不该占着 10 分钟的坑，
         // 那会拖垮整个候选轮转。
         // 调试开关：压低单次超时以复现「做了一半被中断」的接力场景。
         // 这类场景自然发生时很难抓，但它恰恰是接力逻辑最该被验证的路径。
-        let attemptTimeout = ProcessInfo.processInfo.environment["LLMQ_ATTEMPT_TIMEOUT"]
-            .flatMap(Double.init)
-            ?? task.profile?.timeout ?? perAttemptTimeout
+        let attemptTimeout = attemptTimeoutPreview
         // **跑之前记一个基准。**
         //
         // 下面那些计数全是相对 `main` 算的**累计量** —— 接力场景里它们包含
