@@ -248,16 +248,24 @@ final class NudgeTruthTests: XCTestCase {
         var frozen = WorkTask(id: "t1", prompt: "下游步骤", repo: "/tmp")
         frozen.state = .blocked
         frozen.frozenBy = "t0s3"          // 上游冻的
-        var gated = WorkTask(id: "t2", prompt: "碰构建配置的活", repo: "/tmp")
+        var gated = WorkTask(id: "t2", prompt: "碰签名配置的活", repo: "/tmp")
         gated.state = .blocked            // 人工闸门拦的，frozenBy 为 nil
+        gated.note = "碰到高危路径（ExportOptions.plist），等你确认"   // 归老板(BossGate)
+        // 归 Claude 处置的技术拦截也是 blocked + frozenBy nil,但**不该喊老板**
+        // (老板 2026-08-22:「给我应该就是风险类或者验收类」)。口径与 blockedPage
+        // 同一份(ViewFeed.awaitsBoss),否则角标有数、页面没卡片。
+        var mine = WorkTask(id: "t3", prompt: "改 Tools 脚本的活", repo: "/tmp")
+        mine.state = .blocked
+        mine.note = "碰到高危路径（Tools/x.sh），等 Claude 处置"
         try? TaskStore.append(frozen)
         try? TaskStore.append(gated)
+        try? TaskStore.append(mine)
 
         let keys = Nudge.pending().map(\.key)
         let blockedItem = Nudge.pending().first { $0.key.hasPrefix("blocked") }
-        XCTAssertNotNil(blockedItem, "人工闸门拦下的那个要喊：\(keys)")
+        XCTAssertNotNil(blockedItem, "人工闸门拦下、归老板的那个要喊：\(keys)")
         XCTAssertEqual(blockedItem?.badge, 1,
-                       "只该算 1 个（人工闸门那个），上游冻的不算")
+                       "只该算 1 个（归老板那个），上游冻的和归 Claude 的都不算")
     }
 
     /// 一个都不需要决定时，一条都不推。

@@ -35,6 +35,10 @@ public struct OfficeEvent: Codable, Sendable, Identifiable {
         /// 只是一片安静。**看不见原因本身，就是那个要修的问题。**
         /// 静默超过一定时间就记一条，说清是哪一种。
         case idle
+        /// 另一台更新的机器写了这台还不认识的种类。**整份文件不能因此解不出来。**
+        /// 契约评审实锤(2026-08-23):merged() 对每机文件整份 `try? decode`,一个
+        /// 未知 kind 就把那台机器的全部事件从合并结果里抹掉,手机上那个工位永远安静。
+        case other
     }
 
     public var id: String
@@ -79,7 +83,9 @@ public struct OfficeEvent: Codable, Sendable, Identifiable {
         id = try c.decodeIfPresent(String.self, forKey: .id)
             ?? UUID().uuidString.prefix(12).lowercased().description
         at = try c.decodeIfPresent(Date.self, forKey: .at) ?? Date()
-        kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .finished
+        // 未知的 rawValue 不抛:退成 .other(见 Kind.other 的说明)。
+        let rawKind = try c.decodeIfPresent(String.self, forKey: .kind)
+        kind = rawKind.map { Kind(rawValue: $0) ?? .other } ?? .finished
         taskID = try c.decodeIfPresent(String.self, forKey: .taskID) ?? ""
         platform = try c.decodeIfPresent(Platform.self, forKey: .platform)
         toPlatform = try c.decodeIfPresent(Platform.self, forKey: .toPlatform)

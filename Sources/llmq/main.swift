@@ -2240,7 +2240,27 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let r = Proc.run(cmd.launchPath, cmd.args, cwd: ws.path, env: cmd.env,
                          timeout: attemptTimeout)
         let elapsed = Date().timeIntervalSince(started)
-        let changed = GitWorkspace.changedFileCount(in: ws.path)
+        // **有提交就不算「没改动」,绝不能连分支一起删。**
+        //
+        // 实锤(2026-08-23 17:06,85ace4f7):Kimi 在工作区提交了一份评审报告
+        // (9201d66,1 个文件),这里却算出 0 个文件,接着下面 cleanup 把分支删了 ——
+        // 成果只剩一个悬空提交,任务还记成 done。根因没抓到(同样的场景单测算出 1),
+        // 但后果不能再发生:数文件和数提交两道一起判,任何一道说「有」就按有产出走
+        // 正常路径(验证/保留分支),并把两个数都打进日志,下次出事有账可查。
+        let changedByFiles = GitWorkspace.changedFileCount(in: ws.path)
+        // 直接拿原始结果:git 本身出错/输出为空时也不能当成「0 个提交」。
+        let aheadProbe = GitWorkspace.git(["rev-list", "--count", "main..HEAD"], in: ws.path)
+        let aheadText = aheadProbe.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let gitAnswered = aheadProbe.exitCode == 0 && !aheadText.isEmpty
+        let aheadCommits = Int(aheadText) ?? 0
+        if changedByFiles == 0 && (aheadCommits > 0 || !gitAnswered) {
+            print(Ansi.yellow("  ⚠︎ 文件数算出 0 但"
+                  + (gitAnswered ? "相对 main 有 \(aheadCommits) 个提交" : "git 没给出有效回答(rc \(aheadProbe.exitCode))")
+                  + " —— 按有产出处理,不删分支")
+                  + Ansi.dim("  diff: " + GitWorkspace.git(["diff", "--name-only", "main...HEAD"], in: ws.path).stdout.prefix(200)
+                             + "  err: " + aheadProbe.stderr.prefix(120)))
+        }
+        let changed = changedByFiles == 0 && (aheadCommits > 0 || !gitAnswered) ? 1 : changedByFiles
         // 这一轮**这个 agent 自己**动了多少。base 用它开工时的 HEAD。
         let mine = headBefore.map { GitWorkspace.changedFileCount(in: ws.path, base: $0) }
         let myCommits = headBefore.map { GitWorkspace.commitsAhead(in: ws.path, base: $0) } ?? 0
@@ -2471,25 +2491,41 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 // 直接冲突 —— 那个端口是带 mTLS 的集群口，不该为了一个审批按钮
                 // 再开一个。而 Ask 这条通道走 iCloud 文件，一个入站端口都不需要，
                 // iOS App 已经能把带选项的问题渲染成按钮。
-                let ask = Ask(
-                    taskID: task.id,
-                    machineID: Paths.machineID(),
-                    round: task.askRounds + 1,
-                    platform: task.platform,
-                    taskPrompt: task.prompt,
-                    repoName: (task.repo as NSString).lastPathComponent,
-                    questions: [Ask.Question(
-                        text: "这次改动碰到了高危路径，要放行吗？\n"
-                            + risky.prefix(8).joined(separator: "\n"),
-                        options: ["放行并提交", "丢弃这次改动"],
-                        // 不给倾向性建议：高危改动该由人看过再定，
-                        // 给了「建议放行」等于把这道闸门又软化回去。
-                        suggestion: nil)],
-                    progressNote: "改了 \(changed) 个文件，工作区留在 \(ws.path)")
-                try? AskStore.publish(ask)
-                task.pendingAsk = ask
-                task.askRounds += 1
-                print(Ansi.dim("  已推到手机等确认"))
+                // **这是审批,不是提问:kind 必须是 .approval。**
+                //
+                // 契约评审实锤(2026-08-23,Kimi):全仓没有一处传 kind: .approval,
+                // AskIngest 的审批分支是死代码。手机「问题」页答「放行并提交」走的是
+                // 提问分支 —— 重新排队、agent 从头再跑、再撞同一条高危路径、再弹一张
+                // **新 id** 的问题(去重失效)。这就是老板「确认了还一直重复弹」的完整
+                // 复现路径,每轮还白烧一份额度。
+                //
+                // **只有归老板拍板的才推手机。** 归 Claude 处置的(纯技术路径)留在
+                // 本机 `llmq work blocked` 里由我处理,不推 —— 老板 2026-08-22:
+                // 「给我应该就是风险类或者验收类」「minimax 咋都让人审批」。
+                if bossCall {
+                    let ask = Ask(
+                        taskID: task.id,
+                        machineID: Paths.machineID(),
+                        round: task.askRounds + 1,
+                        platform: task.platform,
+                        taskPrompt: task.prompt,
+                        repoName: (task.repo as NSString).lastPathComponent,
+                        questions: [Ask.Question(
+                            text: "这次改动碰到了高危路径，要放行吗？\n"
+                                + risky.prefix(8).joined(separator: "\n"),
+                            options: ["放行并提交", "丢弃这次改动"],
+                            // 不给倾向性建议：高危改动该由人看过再定，
+                            // 给了「建议放行」等于把这道闸门又软化回去。
+                            suggestion: nil)],
+                        progressNote: "改了 \(changed) 个文件，工作区留在 \(ws.path)",
+                        kind: .approval)
+                    try? AskStore.publish(ask)
+                    task.pendingAsk = ask
+                    task.askRounds += 1
+                    print(Ansi.dim("  已推到手机等确认"))
+                } else {
+                    print(Ansi.dim("  归 Claude 处置,不推手机(llmq work blocked 可见)"))
+                }
             } else {
                 // 提交前先验一次。**在提交之前**是刻意的：提交完再验的话，
                 // 坏代码已经落在分支上，还得再回滚一次；而且 work review
@@ -5437,6 +5473,7 @@ func cmdOffice(_ rest: [String]) throws {
         case .finished:   icon = "收工"
         case .exhausted:  icon = "耗尽"
         case .idle:       icon = "静默"
+        case .other:      icon = "其它"
         }
         var who = e.platform?.displayName ?? "—"
         if let to = e.toPlatform { who += " → " + to.displayName }
@@ -5972,6 +6009,10 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
         x.pendingAsk = nil
         x.note = (parts[1] == "approve" ? "手机上放行并提交:" : "手机上丢弃:")
             + (inv.note ?? r.note)
+        // 同一件事有两个入口(「等你放行」卡片 / 「问题」页)。从卡片放行之后
+        // 问题文件还挂在 questions/ 里,手机「问题」页照样显示、再答一次就成了
+        // stale-ask(「确认了还弹 / 答了白答」)。两个入口必须互相撤销。
+        AskStore.retract(taskID: x.id, machine: Paths.machineID())
         try? TaskStore.append(x)
         return true
 
@@ -6000,7 +6041,15 @@ func landingRound() {
                     // 上一版我在这里 `continue`，把补证据、agent 审核、
                     // 分支刷新**一起**挡掉了，结果是既要人审又没图可看。
                     if repo.manualReview {
-                        let n = Review.list(repo: path).filter { $0.evidence.isEmpty }.count
+                        // 只数真该交证据的产出分支:审核结论/证据任务自己的分支
+                        // 不需要截图,算进去会让这行日志连续 83 轮喊「1 条还没交证据」
+                        // 而实际一条证据任务都没派(2026-08-23)—— 日志说谎比不说更糟。
+                        let n = Review.list(repo: path).filter {
+                            $0.evidence.isEmpty
+                                && !($0.prompt ?? "").hasPrefix("【审查")
+                                && !($0.prompt ?? "").hasPrefix("【证据】")
+                                && !($0.prompt ?? "").hasPrefix("【看效果】")
+                        }.count
                         if n > 0 {
                             print(Ansi.dim("  要看效果 " + repo.alias
                                 + "：\(n) 条还没交证据，先派它们去跑一遍截图"))

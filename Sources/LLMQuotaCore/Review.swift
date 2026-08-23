@@ -1334,7 +1334,7 @@ extension Review {
                                        decided: Set<String>? = nil) -> [Item] {
         let d = decided ?? decidedBranches()
         return list(repo: repo, base: base, tasks: tasks)
-            .filter { !d.contains(repo + "|" + $0.branch) }
+            .filter { !isDecided(repo: repo, branch: $0.branch, in: d) }
             // **人的队列里只放「有东西可看」的。**
             //
             // 老板 2026-08-22:「minimax 咋都让人审批,不是说没有图片或者
@@ -1529,6 +1529,16 @@ extension Review {
         try? lines.sorted().joined(separator: "\n").write(to: f, atomically: true, encoding: .utf8)
     }
 
+    /// `.done` 里两种键并存:`repo|branch`(markDecided 写)和 `repo|branch|action`
+    /// (ingestVerdicts / giveUp 写)。原来只按两段键匹配,三段键的「已办」在这里看不见:
+    /// 合入重试满 3 次 giveUp 之后分支照样再发给手机,人重点一次又被同一个三段键拦下,
+    /// 什么都不会发生(契约评审 2026-08-23)。两种键都认。
+    public static func isDecided(repo: String, branch: String, in done: Set<String>) -> Bool {
+        let two = repo + "|" + branch
+        if done.contains(two) { return true }
+        return done.contains { $0.hasPrefix(two + "|") }
+    }
+
     public static func decidedBranches() -> Set<String> {
         let doneFile = verdictsDir.appendingPathComponent(".done")
         return Set((try? String(contentsOf: doneFile, encoding: .utf8))?
@@ -1551,12 +1561,22 @@ extension Review {
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
         var applied: [(Verdict, Bool)] = []
 
-        for name in names where name.hasSuffix(".json") {
+        // `.attempts.json` / `.done` 这类自己的账本文件也在这个目录,别当 verdict 解。
+        for name in names where name.hasSuffix(".json") && !name.hasPrefix(".") {
             guard let v = SafeDecode.json(
                 at: verdictsDir.appendingPathComponent(name), as: Verdict.self)
             else { continue }
             let key = v.repo + "|" + v.branch + "|" + v.action
             guard !done.contains(key) else { continue }
+            // **这台机器没有这个仓库就别碰这条结论。**
+            //
+            // 契约评审实锤(2026-08-23):verdicts/ 双向同步,两台机器都跑 ingest。
+            // 下面「分支不存在 = 早办完了」的捷径用 branchExists 判,而 git 在
+            // 没有该仓库的机器上同样返回 false → 这台先把它记进 .done,同步过去,
+            // 真有仓库的那台被 .done 拦住永远跳过 —— 手机上条目正常消失、无报错,
+            // 代码从未合入。discard 更直接:不查就执行、记办结。
+            // 没仓库的机器:既不执行、也不记,留给有仓库的那台。
+            guard GitWorkspace.isRepo(v.repo) else { continue }
 
             var ok = false
             var failure = ""

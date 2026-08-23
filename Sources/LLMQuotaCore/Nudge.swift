@@ -203,7 +203,9 @@ public enum Nudge {
         // 而 App 里连操作入口都没有 —— 老板的原话是「还是能收到虚假的
         // 审批任务」。WorkTask.frozenBy 早就是为了区分这两者而存在的，
         // 这里漏用了。
-        let blocked = tasks.filter { $0.state == .blocked && $0.frozenBy == nil }
+        // 口径必须和 blockedPage 一份(ViewFeed.awaitsBoss):归 Claude 处置的
+        // 技术拦截不算「等你放行」,不然角标有数、页面没卡片。
+        let blocked = tasks.filter { ViewFeed.awaitsBoss($0) }
         if !blocked.isEmpty {
             out.append(("blocked-\(blocked.count)", .needsYou,
                         "\(blocked.count) 个任务被拦下等你放行", blocked.count))

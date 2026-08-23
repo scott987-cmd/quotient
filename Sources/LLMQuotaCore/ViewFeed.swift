@@ -614,12 +614,21 @@ extension ViewFeed {
     /// 归 Claude(记成「等 Claude 处置」),不进这一页 —— 见 BossGate。
     ///
     /// 上游没完成而冻住的那些也不列 —— 人对它们无事可做,上游一好就自动解冻。
+    /// 「等老板放行」的**唯一判定**。角标(Nudge)、推送、这一页三处共用。
+    ///
+    /// 契约评审实锤(2026-08-23):Nudge 数的是 `blocked && frozenBy == nil`(含
+    /// 「等 Claude 处置」的技术拦截),这一页只列 note 含「等你确认」的 —— 角标
+    /// 「等你放行 1」点进去是空页、长期不消,看起来像「确认了还在弹」。
+    public static func awaitsBoss(_ t: WorkTask) -> Bool {
+        t.state == .blocked && t.frozenBy == nil && (t.note ?? "").contains("等你确认")
+    }
+
     public static func blockedPage(now: Date = Date(),
                                    tasks: [WorkTask] = TaskStore.all()) -> Page {
         var latest: [String: WorkTask] = [:]
         for t in tasks { latest[t.id] = t }
         let waiting = latest.values
-            .filter { $0.state == .blocked && ($0.note ?? "").contains("等你确认") }
+            .filter { awaitsBoss($0) }
             .sorted { ($0.endedAt ?? .distantPast) > ($1.endedAt ?? .distantPast) }
         guard !waiting.isEmpty else {
             return Page(page: "blocked", sections: [
