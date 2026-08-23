@@ -195,12 +195,20 @@ final class DiscardedUpstreamTests: XCTestCase {
     /// 实测（2026-08-18）：Greed 隐私清单那张图**四步全跑完、全零产出**，
     /// 烧掉 262 + 159 + 52 + 40 秒，一个文件都没产出，
     /// 而外面看起来每一步都是「完成」。
-    func testZeroOutputUpstreamBlocksDownstream() {
+    /// **上游零产出不再冻死下游 —— 放它试跑。**
+    ///
+    /// 旧断言写「上游零产出，下游只能对着空气干活」→ 冻死下游。
+    /// 老板 2026-08-23 的头发图证伪了这个假设：s1 零产出（准备/空转步），
+    /// 但 s2 不依赖 s1 产物，自己就把 gen-hair.py + 6 发型 + 眉毛睫毛全写出来。
+    /// 旧规则把能独立干活的 s2 冻死，还害整条真成果（22 文件）被误判空跑
+    /// 作废。系统在 s2 跑前无法知道它依不依赖 s1，该乐观放行。
+    /// 「真空转」由整图零产出的事后检测兜底（见 ZeroOutputBlockerTests）。
+    func testZeroOutputUpstreamDoesNotBlockDownstream() {
         var up = step("s1", state: .done)
         up.changedFiles = 0
         let down = step("s2", state: .queued, dependsOn: ["s1"])
-        XCTAssertFalse(TaskGraph.isReady(down, in: [up, down]),
-                       "上游一个文件都没产出，下游只能对着空气干活")
+        XCTAssertTrue(TaskGraph.isReady(down, in: [up, down]),
+                      "上游零产出，下游仍就绪 —— 它可能独立干完，别悲观冻死等人救")
     }
 
     /// 有产出就放行 —— 别把闸做成「什么都不许过」。

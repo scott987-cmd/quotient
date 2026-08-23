@@ -71,17 +71,21 @@ public enum TaskGraph {
         // 烧掉 262 + 159 + 52 + 40 秒，产出一个文件都没有。
         // 而外面看起来每一步都是「完成」。
         //
-        // 只看 `state == .done` 判不出这种情况 —— 零产出也是 done。
-        // 所以：上游没产出任何文件时不放行下游，让这张图**停在第一处断点**，
-        // 由搁浅那条路暴露出来（它已完成的步骤为 0，会被正确识别）。
+        // **上游零产出,不冻死下游 —— 放它试跑。**
         //
-        // **例外：最后一步没有下游**，所以「验收步骤本来就不改文件」
-        // 这种正当情况不受影响 —— 没人依赖它。
-        // `nil` 和 `0` 不是一回事：nil 是**没记录过**（老任务、或者
-        // 执行器没回报），0 是**真的一个文件都没改**。
-        // 拿 nil 当 0 会把历史任务和测试构造的节点全判成断点 ——
-        // 宁可放过没记录的，也不能把「不知道」当成「没干」。
-        if let n = up.changedFiles, n == 0 { return false }
+        // 老板 2026-08-23 的头发图给出反例并纠正了原判据:s1 零产出(它是
+        // 准备/空转步),但 s2 **不真依赖 s1 的产物**,自己就把 gen-hair.py、
+        // 6 个发型、眉毛睫毛全写出来了。原来这里「上游零产出就不放行」把能
+        // 独立干活的 s2 冻死,还害我把整条真成果误判成空跑作废掉(22 个文件
+        // 差点白毁)。
+        //
+        // 系统在 s2 跑之前**无法知道**它依不依赖 s1 的产物文件 —— 那就该
+        // 乐观放行让它试,而不是悲观冻死等人介入(老板最烦这个)。赌错的代价
+        // 不对称:放行赌错 = 下游也零产出、多跑一步,由「整图零产出」的事后
+        // 检测兜底(见 stranded);冻死赌错 = 能干的活被卡住、要人来救。
+        //
+        // 原来担心的 Greed「四步全零产出空烧」由**整图**零产出识别兜底,
+        // 不该靠**单步**零产出冻死下游 —— 后者误伤面太大。
         return true
     }
 
@@ -216,15 +220,7 @@ public enum TaskGraph {
                 // 代价是任务「看得见却永远不跑」，不能再来一遍。
                 let blocker = t.dependsOn.first {
                     guard let up = byID[$0], !upstreamCleared(up) else { return false }
-                    // **「done 但零产出」也是断点。** 实锤(2026-08-23):头发图
-                    // s1 跑完零产出、状态 done,upstreamCleared 正确地不放行 s2 ——
-                    // 但这里只认 blocked/failed,漏了这种,s2 就永远留在 queued:
-                    // 既不就绪(被 upstreamCleared 挡)、又不冻结(不进搁浅识别)、
-                    // 还占着「进行中」显示。老板看到的是「进行中的任务消失了」。
-                    // upstreamCleared 已经判过它不合格,这里跟上,把 s2 冻成 blocked,
-                    // 它就能被搁浅那条路暴露、进 work blocked 归 Claude 处置。
                     return up.state == .blocked || up.state == .failed
-                        || (up.state == .done && (up.changedFiles ?? 1) == 0)
                 }
 
                 if t.state == .queued, let b = blocker, let up = byID[b] {
@@ -458,17 +454,19 @@ public extension TaskGraph {
             let failed = steps.filter {
                 $0.state == .failed && $0.discardedAt == nil
             }
-            // **零产出 done 造成的断点也是搁浅。** 实锤(2026-08-23):头发图
-            // s1 跑完零产出、状态 done,把 s2 冻住(见 reconcile),但整张图
-            // 一个 failed 步都没有 —— 原来这里 `guard !failed.isEmpty` 直接
-            // 判它不搁浅,于是它卡死却不进 work blocked、不到老板眼前,
-            // 「进行中的任务消失了」。零产出 done 后面跟着 frozen 下游,
-            // 和 failed 一样是「卡死、需要人看」,要一起算。
-            let zeroOutputBreak = steps.contains { up in
-                up.state == .done && (up.changedFiles ?? 1) == 0
-                    && steps.contains { d in d.state == .blocked && d.frozenBy == up.id }
-            }
-            guard !failed.isEmpty || zeroOutputBreak else { return nil }
+            // **整张图全跑完却一个文件都没产出 = 空转,要提醒。**
+            //
+            // 不再靠「单步零产出冻死下游」(那条误伤能独立干活的下游,
+            // 见 upstreamCleared 的头发反例)。改成事后看整图:所有步骤都
+            // 结束了、没有一步在排/在跑,而**全部 done 步加起来 changedFiles
+            // 也是 0** —— 这才是 Greed 那种「四步全空烧」的真空转,该被看见。
+            // 单步零产出 + 下游有产出(头发)不命中这条,正常放过。
+            let allEnded = !steps.contains { $0.state == .queued || $0.state == .running }
+            let doneSteps = steps.filter { $0.state == .done }
+            let totalOutput = doneSteps.reduce(0) { $0 + ($1.changedFiles ?? 0) }
+            let idleGraph = allEnded && !doneSteps.isEmpty && totalOutput == 0
+                && doneSteps.allSatisfy { $0.changedFiles != nil }   // 有记录才敢判
+            guard !failed.isEmpty || idleGraph else { return nil }
             // **等人的不算搁浅。** frozenBy == nil 的 blocked 是人工闸门
             // 拦下的，人一放行就继续 —— 那是在等决定，不是卡死。
             let frozen = steps.filter { $0.state == .blocked && $0.frozenBy != nil }

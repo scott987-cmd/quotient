@@ -1,12 +1,12 @@
 import XCTest
 @testable import LLMQuotaCore
 
-/// **上游「done 但零产出」时,下游要被冻成 blocked,不能留在 queued。**
+/// **单步零产出不冻死下游;整图零产出才算空转。**
 ///
-/// 老板 2026-08-23:「手机端看不到进行中的任务」。根子:头发图 s1 跑完
-/// 零产出、状态 done,upstreamCleared 正确地不放行 s2 —— 但 reconcile 的
-/// blocker 判定只认 blocked/failed,漏了这种,s2 永远留在 queued:
-/// 既不就绪、又不进搁浅识别、还占着「进行中」显示。三不管地带。
+/// 老板 2026-08-23 的头发图纠正了旧判据:s1 零产出(准备/空转步),但 s2
+/// 不真依赖 s1 产物,自己就把整条头发产线写出来了。旧规则「上游零产出就
+/// 冻死下游」把能独立干活的 s2 冻死,还害得整条真成果(22 文件)被误判空跑
+/// 作废。系统在 s2 跑前无法知道它依不依赖 s1 —— 该乐观放行,别悲观冻死等人。
 final class ZeroOutputBlockerTests: XCTestCase {
     private func step(_ id: String, _ state: WorkTask.State,
                       deps: [String] = [], changed: Int? = nil) -> WorkTask {
@@ -15,34 +15,33 @@ final class ZeroOutputBlockerTests: XCTestCase {
         return t
     }
 
-    func testZeroOutputUpstreamFreezesDownstream() {
-        let tasks = [
-            step("s1", .done, changed: 0),          // 空跑
-            step("s2", .queued, deps: ["s1"]),
-        ]
-        let s2 = TaskGraph.reconcile(tasks).last { $0.id == "s2" }!
-        XCTAssertEqual(s2.state, .blocked, "零产出上游要把下游冻住,不能留 queued 假装在跑")
-        XCTAssertEqual(s2.frozenBy, "s1")
+    /// 零产出上游**不再冻死**下游 —— 放它试跑(头发 s2 的场景)。
+    func testZeroOutputUpstreamDoesNotFreezeDownstream() {
+        let tasks = [step("s1", .done, changed: 0), step("s2", .queued, deps: ["s1"])]
+        XCTAssertTrue(TaskGraph.isReady(tasks[1], in: tasks),
+                      "上游零产出,下游仍该就绪 —— 它可能不依赖上游产物,能独立干完")
+        // reconcile 不把它冻成 blocked
+        XCTAssertFalse(TaskGraph.reconcile(tasks).contains { $0.id == "s2" && $0.state == .blocked },
+                       "不该被冻结")
     }
 
-    /// 上游有产出就正常放行,别误冻。
-    func testProductiveUpstreamDoesNotFreeze() {
+    /// 但**整张图全跑完却零产出** = 真空转(Greed 四步全空),要被搁浅识别。
+    func testWholeGraphZeroOutputIsStranded() {
         let tasks = [
-            step("s1", .done, changed: 5),
-            step("s2", .queued, deps: ["s1"]),
+            step("s1", .done, changed: 0),
+            step("s2", .done, deps: ["s1"], changed: 0),
         ]
-        // reconcile 只返回**改了状态**的任务;上游有产出时 s2 无需改动,
-        // 所以它不在返回里 —— 这正证明它没被冻(没被 reconcile 动过)。
-        XCTAssertFalse(TaskGraph.reconcile(tasks).contains { $0.id == "s2" },
-                       "上游真干了活,s2 不该被冻(reconcile 不动它)")
+        XCTAssertFalse(TaskGraph.stranded(tasks).isEmpty,
+                       "整图零产出、全跑完 —— 这是空转,必须被看见")
     }
 
-    /// 冻住之后,搁浅识别要能看到它(这样才进 work blocked,不是消失)。
-    func testFrozenGraphBecomesVisibleAsStranded() {
-        let base = [step("s1", .done, changed: 0), step("s2", .queued, deps: ["s1"])]
-        var merged = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { a,_ in a })
-        for t in TaskGraph.reconcile(base) { merged[t.id] = t }   // 合并回全集
-        XCTAssertFalse(TaskGraph.stranded(Array(merged.values)).isEmpty,
-                       "冻住的图必须被搁浅识别到 —— 否则又消失在三不管地带")
+    /// 单步零产出但下游有产出(头发)→ 不是空转,正常放过。
+    func testMixedOutputIsNotStranded() {
+        let tasks = [
+            step("s1", .done, changed: 0),
+            step("s2", .done, deps: ["s1"], changed: 22),
+        ]
+        XCTAssertTrue(TaskGraph.stranded(tasks).isEmpty,
+                      "s1 空转但 s2 干出 22 个文件 —— 这条图是好的,别误报搁浅")
     }
 }
