@@ -1497,6 +1497,22 @@ extension Review {
     ///
     /// 现在只认 `.done` 台账:执行成功、或者重试到上限彻底放弃,才算办完。
     /// 正在重试的留在列表里 —— 人有权看见「我点了合入但一直没合上」。
+    /// 记「这条产出人已经处置完了」—— 待验收列表靠这个台账隐藏它。
+    ///
+    /// 原来只有 verdicts 那条路(原生「等你验收」)会写 .done;下发页面
+    /// (views/review)走的是 actions 通道 → runInvocation → merge/discard,
+    /// **办成了也不记** → 卡片不消失、人再点一次 → 分支已没 → 失败 3 次
+    /// 静默放弃(本地 actions/.failures.json 里 9 条全是这样)。
+    /// 两条路同一个台账,人点了哪条都生效。
+    public static func markDecided(repo: String, branch: String) {
+        let f = verdictsDir.appendingPathComponent(".done")
+        try? FileManager.default.createDirectory(at: verdictsDir, withIntermediateDirectories: true)
+        var lines = Set((try? String(contentsOf: f, encoding: .utf8))?
+            .split(separator: "\n").map(String.init) ?? [])
+        lines.insert(repo + "|" + branch)
+        try? lines.sorted().joined(separator: "\n").write(to: f, atomically: true, encoding: .utf8)
+    }
+
     public static func decidedBranches() -> Set<String> {
         let doneFile = verdictsDir.appendingPathComponent(".done")
         return Set((try? String(contentsOf: doneFile, encoding: .utf8))?

@@ -158,16 +158,50 @@ public enum OfficeLog {
     }
 
     /// 发布最近的事件给手机。顺带把本地日志截短。
+    /// 每台机器自己那份:sharedRoot/office/<machineID>.json,由镜像同步到各机。
+    static var perMachineDir: URL {
+        (dirOverride ?? Paths.sharedRoot).appendingPathComponent("office", isDirectory: true)
+    }
+
+    /// 把本地 + 其它机器的事件并在一起(按时间),给根上的 office.json 用。
+    /// 谁来写都是同一个集合 —— last-writer-wins 也就不再互相覆盖。
+    public static func merged(local: [OfficeEvent], machineID: String = Paths.machineID()) -> [OfficeEvent] {
+        var byKey: [String: OfficeEvent] = [:]
+        func key(_ e: OfficeEvent) -> String {
+            "\(e.at.timeIntervalSince1970)|\(e.kind.rawValue)|\(e.taskID)|\(e.detail.prefix(40))"
+        }
+        for e in local { byKey[key(e)] = e }
+        if let files = try? FileManager.default.contentsOfDirectory(atPath: perMachineDir.path) {
+            let dec = SnapshotCoding.decoder()
+            for f in files where f.hasSuffix(".json") && !f.hasPrefix(machineID) {
+                guard let d = try? Data(contentsOf: perMachineDir.appendingPathComponent(f)),
+                      let evs = try? dec.decode([OfficeEvent].self, from: d) else { continue }
+                for e in evs { byKey[key(e)] = e }
+            }
+        }
+        return Array(byKey.values.sorted { $0.at < $1.at }.suffix(keep))
+    }
+
     public static func publish() {
-        let events = Array(all().suffix(keep))
-        guard let out = publishedFile else { return }
-        if let d = try? SnapshotCoding.prettyEncoder().encode(events) {
+        let mine = Array(all().suffix(keep))
+        // ① 本机那份(给别的机器拉)
+        try? FileManager.default.createDirectory(at: perMachineDir, withIntermediateDirectories: true)
+        if let d = try? SnapshotCoding.prettyEncoder().encode(mine) {
+            ICloudSafe.write(d, to: perMachineDir.appendingPathComponent(Paths.machineID() + ".json"))
+        }
+        // ② 根上合并的那份(手机读的)
+        if let out = publishedFile,
+           let d = try? SnapshotCoding.prettyEncoder().encode(merged(local: mine)) {
             ICloudSafe.write(d, to: out)
         }
-        // 截短。append-only 的文件不管的话会一直长下去。
-        if let d = try? SnapshotCoding.encoder().encodeLines(events) {
-            // 这个是本地文件，ICloudSafe 会识别出来直接写、不进看门狗。
-            // 走同一个函数是为了让规则简单：这个文件里一律用它，不留特例。
+        // ③ 截短本地 append-only 日志 —— **只在真的超长时,而且解出来的不能比
+        //    文件里少得离谱**。对账实锤(2026-08-23):Mac mini 的事件日志只剩
+        //    2 行,历史全没了 —— 原来这里无条件把 all() 的结果回写,all() 因为
+        //    任何原因解空(半行、并发写),整份日志就被一次 publish 清空。
+        let rawLines = (try? String(contentsOf: localFile, encoding: .utf8))?
+            .split(separator: "\n").count ?? 0
+        if rawLines > keep, mine.count >= keep / 2,
+           let d = try? SnapshotCoding.encoder().encodeLines(mine) {
             ICloudSafe.write(d, to: localFile)
         }
     }

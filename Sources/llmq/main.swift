@@ -5903,12 +5903,21 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
         guard parts.count == 3 else { return false }
         let bits = parts[2].split(separator: "|", maxSplits: 1).map(String.init)
         guard bits.count == 2 else { return false }
+        // **分支已经不在 = 已经办过了。** 和 ingestVerdicts 同一条规则:合并成功
+        // 会删分支,人双击、或 autoLand/另一条路先合掉了,第二下对着不存在的
+        // 分支只会失败 3 次静默放弃(对账实锤:actions/.failures.json 9 条全是这样)。
+        if !GitWorkspace.branchExists(bits[1], in: bits[0]) {
+            Review.markDecided(repo: bits[0], branch: bits[1])
+            return true
+        }
         if parts[1] == "merge" {
-            if case .success = Review.merge(repo: bits[0], branch: bits[1]) { return true }
-            return false
+            guard case .success = Review.merge(repo: bits[0], branch: bits[1]) else { return false }
+            Review.markDecided(repo: bits[0], branch: bits[1])   // 卡片要消失,两条路同一台账
+            return true
         }
         Review.discard(repo: bits[0], branch: bits[1],
                        reason: inv.note ?? "手机上丢弃")
+        Review.markDecided(repo: bits[0], branch: bits[1])
         return true
 
     // 手机上放行一个被拦下的高危任务。

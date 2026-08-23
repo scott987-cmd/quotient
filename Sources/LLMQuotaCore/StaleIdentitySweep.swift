@@ -40,9 +40,18 @@ public enum StaleIdentitySweep {
     /// 扫一个目录,同名机器只留最新。返回删掉的文件数。
     @discardableResult
     public static func sweepDir(_ dir: URL, selfID: String = Paths.machineID()) -> Int {
+        sweepDirNames(dir, selfID: selfID).count
+    }
+
+    /// 同上,但返回**删掉的文件名**,给调用方去删 iCloud 上的孪生。
+    ///
+    /// 对账实锤(2026-08-23):这里只删本地,而镜像对「别人的文件」只拉不删
+    /// (Mirror.syncPerMachine)—— 删掉的旧身份文件下一轮又从 iCloud 拉回来,
+    /// 云端永远收敛不掉;手机的计划清单页因此一直有两个「MacBook Pro」。
+    public static func sweepDirNames(_ dir: URL, selfID: String = Paths.machineID()) -> [String] {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir,
-                includingPropertiesForKeys: nil) else { return 0 }
+                includingPropertiesForKeys: nil) else { return [] }
         // 机器名 → (最新时间, 最新文件)
         var newest: [String: (Date, URL)] = [:]
         var byName: [String: [URL]] = [:]
@@ -52,7 +61,7 @@ public enum StaleIdentitySweep {
             if let cur = newest[id.name], cur.0 >= id.at { continue }
             newest[id.name] = (id.at, f)
         }
-        var removed = 0
+        var removed: [String] = []
         for (name, urls) in byName {
             guard let keep = newest[name]?.1 else { continue }
             for u in urls where u != keep {
@@ -61,7 +70,7 @@ public enum StaleIdentitySweep {
                 // 文件拉到本地,sweep 每轮删掉「较旧」那台的活文件 —— 互删的删除战。
                 // machineID 已是硬件派生、稳定,拿它自保:本机 ID 的文件绝不删。
                 if identity(of: u)?.id == selfID { continue }
-                if (try? fm.removeItem(at: u)) != nil { removed += 1 }
+                if (try? fm.removeItem(at: u)) != nil { removed.append(u.lastPathComponent) }
             }
         }
         return removed
@@ -69,10 +78,22 @@ public enum StaleIdentitySweep {
 
     /// 扫所有按机器分文件的共享目录。
     @discardableResult
-    public static func run(sharedRoot: URL = Paths.sharedRoot) -> Int {
+    public static func run(sharedRoot: URL = Paths.sharedRoot,
+                           iCloudRoot: URL? = Paths.iCloudSnapshotsDir?.deletingLastPathComponent()) -> Int {
         var total = 0
         for sub in perMachineDirs {
-            total += sweepDir(sharedRoot.appendingPathComponent(sub, isDirectory: true))
+            let names = sweepDirNames(sharedRoot.appendingPathComponent(sub, isDirectory: true))
+            total += names.count
+            // **云端的孪生也要删。** 镜像对「别人的文件」只拉不删:只删本地,
+            // 下一轮就被从 iCloud 拉回来,云端永远收敛不掉,手机上一直两个 MacBook。
+            // 这些文件早就同步到本地了(是 ~/Library/Mobile Documents 里的普通文件),
+            // removeItem 不触发下载,不会卡。
+            if let root = iCloudRoot {
+                for n in names {
+                    try? FileManager.default.removeItem(
+                        at: root.appendingPathComponent(sub).appendingPathComponent(n))
+                }
+            }
         }
         return total
     }

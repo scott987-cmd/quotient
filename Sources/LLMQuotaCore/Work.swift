@@ -1573,7 +1573,7 @@ public enum GitWorkspace {
     }
 
     /// 这条分支在不在。
-    static func branchExists(_ branch: String, in repo: String) -> Bool {
+    public static func branchExists(_ branch: String, in repo: String) -> Bool {
         git(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
             in: repo).exitCode == 0
     }
