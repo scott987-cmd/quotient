@@ -500,8 +500,7 @@ public enum Review {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
                 && $0.manualReview
         }
-        let dirty = GitWorkspace.git(["status", "--porcelain"], in: repo).stdout
-        if !dirty.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let _ = dirtBlockingLanding(repo: repo) {
             return pending0(repo: repo, base: base, tasks: tasks).map {
                 Blocked(branch: $0.branch,
                         reason: "仓库里有未提交的改动（多半是人正在里面写代码）"
@@ -581,6 +580,26 @@ public enum Review {
         return out
     }
 
+    /// 「仓库脏着,落地整轮让开」的**唯一判定**(autoLand / whyNotLanding /
+    /// mergeUnverified 三处共用;以前各写一份 `status --porcelain`)。
+    ///
+    /// 只有 STATUS.md 脏 = 上一次落地自己留下的(提交撞 index.lock 没成),
+    /// 先补提交掉再判 —— 不然落地被自己的脏堵死(2026-08-23 Flint 两小时)。
+    /// 返回 nil = 干净可落地;非 nil = 脏(porcelain 原文),让开。
+    public static func dirtBlockingLanding(repo: String) -> String? {
+        func porcelain() -> String {
+            GitWorkspace.git(["status", "--porcelain"], in: repo).stdout
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let first = porcelain()
+        if first.isEmpty { return nil }
+        if ProgressLog.healStatusOnlyDirt(repo: repo) {
+            let again = porcelain()
+            return again.isEmpty ? nil : again
+        }
+        return first
+    }
+
     public static func autoLand(repo: String, base: String = "main",
                                 tasks: [WorkTask] = TaskStore.all(),
                                 maxPerCall: Int = 1) -> [AutoLandOutcome] {
@@ -589,8 +608,7 @@ public enum Review {
         // 也**不给任何分支记否决**：环境没就绪不是分支的错。
         // 真实翻车：自动落地首航撞上一次会话的未提交改动，
         // 一份完全没问题的产出被记了否决、从此不再自动重试。
-        let dirty = GitWorkspace.git(["status", "--porcelain"], in: repo).stdout
-        guard dirty.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard dirtBlockingLanding(repo: repo) == nil else {
             return []
         }
 
@@ -932,9 +950,7 @@ public enum Review {
         guard head == base else {
             return .failure(ClusterCA.err("当前在 \(head) 上，不是 \(base)。先切过去再合。"))
         }
-        let dirty = GitWorkspace.git(["status", "--porcelain"], in: repo)
-            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard dirty.isEmpty else {
+        guard dirtBlockingLanding(repo: repo) == nil else {
             // 工作区脏的时候合并会把用户没提交的改动卷进冲突里，很难收拾。
             return .failure(ClusterCA.err("工作区有未提交的改动，先处理掉再合。"))
         }

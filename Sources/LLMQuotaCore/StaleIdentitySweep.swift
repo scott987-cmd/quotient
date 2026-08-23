@@ -76,10 +76,20 @@ public enum StaleIdentitySweep {
         return removed
     }
 
+    /// 云端孪生所在的 iCloud 根(`~/Library/Mobile Documents/com~apple~CloudDocs/LLMQuotaBar`)。
+    ///
+    /// **不能写成 `Paths.iCloudSnapshotsDir?.deletingLastPathComponent()`。** 那个属性
+    /// 名字里还带 iCloud,指向早就改成了本地暂存 `sharedRoot/snapshots`(「属性名保留,
+    /// 指向变了」)。于是第一版「删云端孪生」删的还是本地那份,真正的 iCloud 文件一直在,
+    /// 镜像下一轮又拉回来:worker.log 里每轮「家务 清掉 3 个过时机器身份」循环往复,
+    /// 手机上一直两个 MacBook(2026-08-23 实锤:D127CAB4 的 presence 在 iCloud 里
+    /// 躺到下午)。名字会骗人,路径要拿真的。
+    public static var defaultICloudRoot: URL { Push.mirrorDir }
+
     /// 扫所有按机器分文件的共享目录。
     @discardableResult
     public static func run(sharedRoot: URL = Paths.sharedRoot,
-                           iCloudRoot: URL? = Paths.iCloudSnapshotsDir?.deletingLastPathComponent()) -> Int {
+                           iCloudRoot: URL? = defaultICloudRoot) -> Int {
         var total = 0
         for sub in perMachineDirs {
             let names = sweepDirNames(sharedRoot.appendingPathComponent(sub, isDirectory: true))

@@ -77,6 +77,16 @@ public enum MergeReview {
         public var head: String = ""
         /// 那个提交的时间。老格式审核任务没记 sha 时用它兜底。
         public var headAt: Date?
+        /// 这条分支**要做的事**(来源任务的标题),没有任务记录时为空。
+        public var taskTitle: String = ""
+        /// 分支上相对 main 的全部提交主题(旧→新)。
+        ///
+        /// 只给 `subject`(= 最后一个提交的主题)是个坑:多提交分支的最后一个
+        /// 提交往往是收尾小活(「xcodegen 重新生成…」),评审拿它当「PR 描述」
+        /// 去对照整条 diff,判「标题与实际改动严重不符 → 不合入」——
+        /// 实锤 2026-08-23 Flint 主线第 3 块被这样否了两票,而改动本身站得住。
+        /// 把任务标题和全部提交摆出来,评审才知道这条分支到底是干什么的。
+        public var commits: [String] = []
     }
 
     /// 挑出该派给评审 agent 的分支。
@@ -135,11 +145,20 @@ public enum MergeReview {
             if needsByRepo && why.isEmpty {
                 why.append("这个仓库要「看效果才合」，代码能不能合由 agent 判")
             }
+            let title = item.prompt?.split(separator: "\n").first.map {
+                String($0).trimmingCharacters(in: .whitespaces)
+            } ?? ""
+            var commits: [String] = []
+            if let mb = Review.mergeBase(repo: repo, base: base, branch: item.branch) {
+                commits = GitWorkspace.git(["log", "--reverse", "--format=%s", "\(mb)..\(item.branch)"], in: repo)
+                    .stdout.split(separator: "\n").map { String($0) }.filter { !$0.isEmpty }
+            }
             return Candidate(branch: item.branch, repo: repo, files: item.files,
                              subject: item.subject,
                              whyNotMechanical: why.joined(separator: "；"),
                              needed: requiredApprovals(files: item.files),
-                             head: item.head, headAt: item.committedAt)
+                             head: item.head, headAt: item.committedAt,
+                             taskTitle: title, commits: commits)
         }
     }
 
@@ -167,12 +186,30 @@ public enum MergeReview {
     /// 前缀必须是 `【审查·合入】`：执行器按提示词里有没有「合入」二字选
     /// `kind`，而 `TaskIntake` 按 `【评审` / `【审查` 前缀决定走评审平台。
     /// **首行格式被 `isMergeReviewPrompt` 依赖 —— 两处一起改。**
+    /// 给评审看的「这条分支是干什么的」。
+    ///
+    /// 任务标题 + 全部提交主题(旧→新)。**最后一个提交的主题不是 PR 描述**,
+    /// 别让评审拿它去对照整条 diff(见 Candidate.commits 的实锤)。
+    static func describe(_ c: Candidate) -> String {
+        var lines: [String] = []
+        if !c.taskTitle.isEmpty { lines.append("这条分支要做的事（来源任务）：\(c.taskTitle)") }
+        if c.commits.count > 1 {
+            lines.append("分支上共 \(c.commits.count) 个提交（旧→新），下面是全部主题；"
+                         + "**整条 diff 是它们的总和，别拿最后一个提交的标题去对照整条改动**：")
+            for (i, m) in c.commits.prefix(20).enumerated() { lines.append("  \(i + 1). \(m)") }
+            if c.commits.count > 20 { lines.append("  …（还有 \(c.commits.count - 20) 个，git log main..\(c.branch) 看全）") }
+        } else {
+            lines.append("这条分支：\(c.subject)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     public static func reviewPrompt(_ c: Candidate) -> String {
         var s = """
         【审查·合入】分支 \(c.branch) 的改动能不能合进 main。
 
         \(headMarker(c.head))
-        这条分支：\(c.subject)
+        \(describe(c))
         机器不敢自己拿主意的原因：\(c.whyNotMechanical)
 
         **先把全量改动自己拉出来看**：`git diff main...\(c.branch)`（或逐文件

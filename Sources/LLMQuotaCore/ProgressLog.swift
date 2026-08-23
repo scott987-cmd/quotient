@@ -150,10 +150,57 @@ public enum ProgressLog {
 
         // 只提交这一个路径。用 pathspec 而不是 `add -A`：
         // 万一工作区里还有别的东西，不能顺手替用户提交掉。
-        _ = GitWorkspace.git(["add", "--", "STATUS.md"], in: repo)
-        _ = GitWorkspace.git(["commit", "-m", "进度：记录 \(branch ?? "落地")",
-                              "--", "STATUS.md"], in: repo)
-        return true
+        return commitStatus(repo: repo, message: "进度：记录 \(branch ?? "落地")")
+    }
+
+    /// 把 STATUS.md 提交掉。**提交失败不能装没事。**
+    ///
+    /// 实锤(2026-08-23 14:59,Flint):落地跑在后台线程,主循环同一时刻在对
+    /// 同一个仓库跑 `git diff`/`merge-tree`(发验收摘要),`git commit` 撞上
+    /// index.lock 失败 —— 结果被 `_ =` 吞掉,STATUS.md 留在暂存区。下一轮
+    /// autoLand 的「仓库脏着就整轮让开」把**自己留下的脏**当成了人在写代码,
+    /// 整仓两小时没落地一条;续活以为主线第 3 块没人做,又派了一遍(白烧
+    /// 10 分钟 Kimi)。自己弄脏的自己得收:重试几次,还不行就把 STATUS.md
+    /// 还原,宁可少记一行进度,也不能把落地整个堵死。
+    @discardableResult
+    static func commitStatus(repo: String, message: String) -> Bool {
+        for attempt in 0..<4 {
+            _ = GitWorkspace.git(["add", "--", "STATUS.md"], in: repo)
+            let r = GitWorkspace.git(["commit", "-m", message, "--", "STATUS.md"], in: repo)
+            if r.exitCode == 0 { return true }
+            // 没东西可提交(别处已经提交过了)也算完成。
+            if r.stdout.contains("nothing to commit") || r.stderr.contains("nothing to commit") {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.3 * Double(attempt + 1))
+        }
+        // 还原,别留脏。锁还在的话 restore/checkout 也会失败,所以再用不碰
+        // index 的办法把工作区内容写回 HEAD 版本;暂存区里残留的那份等锁一放,
+        // 下一轮 healStatusOnlyDirt 会补提交掉(它只认 STATUS.md 一个文件脏)。
+        _ = GitWorkspace.git(["restore", "--staged", "--", "STATUS.md"], in: repo)
+        _ = GitWorkspace.git(["checkout", "--", "STATUS.md"], in: repo)
+        let headVersion = GitWorkspace.git(["show", "HEAD:STATUS.md"], in: repo)
+        if headVersion.exitCode == 0 {
+            try? headVersion.stdout.write(
+                to: URL(fileURLWithPath: repo).appendingPathComponent("STATUS.md"),
+                atomically: true, encoding: .utf8)
+        }
+        FileHandle.standardOutput.write(Data(
+            "  ⚠︎ STATUS.md 提交没成(多半撞上了 index.lock),已还原,这一行进度没记\n".utf8))
+        return false
+    }
+
+    /// 仓库只有 STATUS.md 脏着(上次提交没成留下的)—— 那是我们自己的文件,
+    /// 补提交掉,别让它挡住落地。返回 true = 处理过且现在干净了。
+    /// 人真正在改别的文件时不碰(那时仓库脏是对的,该让开)。
+    @discardableResult
+    public static func healStatusOnlyDirt(repo: String) -> Bool {
+        let lines = GitWorkspace.git(["status", "--porcelain"], in: repo).stdout
+            .split(separator: "\n").map { String($0) }.filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return false }
+        let paths = lines.map { String($0.dropFirst(3)).trimmingCharacters(in: .whitespaces) }
+        guard paths.allSatisfy({ $0 == "STATUS.md" }) else { return false }
+        return commitStatus(repo: repo, message: "进度：补记（上次提交没成）")
     }
 
     /// 把 begin/end 之间换成新内容；没有标记就追加到末尾。

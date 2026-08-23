@@ -135,7 +135,7 @@ public enum AutoRefill {
     /// 「按目标挑下一块」。现在**系统选块**:标题直接写「主线 N:块名」,
     /// 手机上一眼看出它在干哪一块;也从机制上保证「一块接一块」的连续性,
     /// 不靠 agent 自觉。做完要在 PLAN.md 那一条末尾标「已完成」,下次就跳过。
-    public static func nextMainlineItem(in plan: String) -> MainlineItem? {
+    public static func nextMainlineItem(in plan: String, skipping: Set<Int> = []) -> MainlineItem? {
         guard let start = plan.range(of: "续活主线") else { return nil }
         let tail = plan[start.upperBound...]
         // 主线一节到下一个「## 」标题为止
@@ -159,9 +159,63 @@ public enum AutoRefill {
         }
         flush()
         for (i, text) in items where !text.contains("已完成") && !text.contains("✅") {
+            if skipping.contains(i) { continue }
             return MainlineItem(index: i, text: text)
         }
         return nil
+    }
+
+    /// 一条已派过的主线任务,它的分支现在处于什么状态。
+    public enum BranchState: Sendable { case merged, pending, gone }
+
+    /// **已经派出去、还没落地的主线块。** 这些块不能再派第二遍。
+    ///
+    /// 实锤(2026-08-23):主线第 3 块 14:09 派给 Kimi,14:49 做完、36 个文件、
+    /// 证据齐全,分支等审核/落地;PLAN.md 的「已完成」标在它的分支上,main 上的
+    /// PLAN 还写着没完成 —— 16:10 续活又把第 3 块派了一遍(Kimi 跑 10 分钟、
+    /// 零产出)。「已完成」只看 main 上的 PLAN 不够:**派过且分支还在、没合、
+    /// 没丢的块就是在飞**,跳过它。这是老板说的「一块接一块」真正的判据。
+    ///
+    /// 判据(每个主线任务取最新一条记录):
+    ///   - 在排/在跑/在等人 → 在飞(其实 isIdle 早已拦住,写全为了判定完整)
+    ///   - done:分支还在且没合进 base → 在飞;合了/丢了/分支没了 → 不在
+    ///   - failed / 已丢弃 → 不在(该重派)
+    public static func mainlineItemsInFlight(
+        repo: String, tasks: [WorkTask], base: String = "main",
+        branchState: ((String) -> BranchState)? = nil
+    ) -> Set<Int> {
+        let want = NSString(string: repo).expandingTildeInPath
+        let state = branchState ?? { branch in
+            guard GitWorkspace.branchExists(branch, in: repo) else { return .gone }
+            let r = GitWorkspace.git(["merge-base", "--is-ancestor", branch, base], in: repo)
+            return r.exitCode == 0 ? .merged : .pending
+        }
+        var latest: [String: WorkTask] = [:]
+        for t in tasks where NSString(string: t.repo).expandingTildeInPath == want {
+            latest[t.id] = t
+        }
+        var out: Set<Int> = []
+        for t in latest.values {
+            guard let n = mainlineIndex(ofTitle: t.prompt) else { continue }
+            if t.discardedAt != nil { continue }
+            switch t.state {
+            case .queued, .running, .blocked:
+                out.insert(n)
+            case .done:
+                if let b = t.branch, state(b) == .pending { out.insert(n) }
+            default:
+                continue
+            }
+        }
+        return out
+    }
+
+    /// 从任务标题(提示词首行)读出「主线第几块」。
+    public static func mainlineIndex(ofTitle prompt: String) -> Int? {
+        let first = prompt.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            .first.map(String.init) ?? ""
+        guard let r = first.range(of: #"【续活·主线 (\d+)】"#, options: .regularExpression) else { return nil }
+        return Int(first[r].filter(\.isNumber))
     }
 
     static func goalDoc(repo: String) -> String? {
@@ -226,7 +280,14 @@ public enum AutoRefill {
         }
         // **系统选块,不让 agent 猜。** 没有主线 / 主线全部已完成 → 不派,
         // 而不是派一条「你自己看着办」—— 那正是老板说的「瞎续活」。
-        guard let item = nextMainlineItem(in: goal) else {
+        // **派过还没落地的块不重复派。** main 上的 PLAN 只在分支落地后才会标
+        // 「已完成」;这中间(等审核/等验收)的窗口里不能把同一块再派一遍。
+        let inFlight = mainlineItemsInFlight(repo: repo, tasks: tasks)
+        guard let item = nextMainlineItem(in: goal, skipping: inFlight) else {
+            if let waiting = nextMainlineItem(in: goal) {
+                return Outcome(repo: repo, enqueued: false,
+                               note: "主线第 \(waiting.index) 块已经做完在等落地/验收,后面没有别的块 —— 不重复派")
+            }
             return Outcome(repo: repo, enqueued: false,
                            note: "PLAN.md 没有「续活主线」或主线全部已完成 —— 等老板给下一段")
         }
