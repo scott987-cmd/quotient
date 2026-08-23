@@ -1088,6 +1088,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
         tmperr="${TMPDIR:-/tmp}/mmx-err-$$"
         tmpout="${TMPDIR:-/tmp}/mmx-out-$$"
         subjref=""
+        video_out=""   # 视频额度一旦报「用量上限」,本轮后面的 VIDEO 全跳过,别一条条撞
         while IFS= read -r line; do
           case "$line" in
             REF\ *)
@@ -1186,6 +1187,10 @@ public struct MiniMaxMediaRunner: AgentRunner {
               dest="${parts[1]-}"; vsecs="${parts[2]-}"
               [ -n "$dest" ] || { echo "FAIL 空路径: $line"; bad=$((bad+1)); continue }
               [ -s "$dest" ] && { echo "SKIP $dest 已存在"; ok=$((ok+1)); continue }
+              # 额度已经撞过上限:后面的视频一条都别再试。实测(2026-08-22)一条任务
+              # 排了 6 条 VIDEO,第一条就「已达到 Token Plan 用量上限」,后面 5 条
+              # 每条照样发请求、照样被拒,日志里六个 FAIL 看不出是同一个原因。
+              [ -n "$video_out" ] && { echo "SKIP $dest 视频额度已达上限,本轮不再试(明天再派,或改 IMG)"; bad=$((bad+1)); continue }
               /bin/mkdir -p "${dest:h}"
               # 走 Hailuo 传统线,**不带 --model/--duration**。
               # 两次实测(2026-08-20/21)夹出来的现实:
@@ -1207,8 +1212,16 @@ public struct MiniMaxMediaRunner: AgentRunner {
                     /bin/rm -f "$dest"; bad=$((bad+1));;
                 esac
               else
-                err="$(<"$tmperr")"
+                err="$(<"$tmperr") $(<"$tmpout")"
                 echo "FAIL $dest :: ${err[1,400]}"; bad=$((bad+1))
+                # MiniMax 的视频额度(每天 3 条 / 每周 21 条)打满时报「已达到 Token Plan
+                # 用量上限」。记下来,本轮后面的 VIDEO 直接跳过,并在摘要里把话说明白 ——
+                # 让 agent 知道是额度没了不是提示词不对,别改词重试。
+                case "$err" in
+                  *用量上限*|*"usage limit"*|*"quota"*|*"Quota"*|*insufficient*)
+                    video_out=1
+                    echo "NOTE 视频额度已达上限 —— 本轮剩余 VIDEO 全部跳过;这不是提示词问题,别改词重试,明天再派或改 IMG";;
+                esac
               fi;;
             MUSIC\ *)
               rest="${line#MUSIC }"
@@ -1241,7 +1254,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
           echo "提示词里一条媒体规格都没有 —— 这个执行器只认逐行的："
           echo "  REF   <参考图路径>          （之后的 IMG 锁定同一角色，REF - 清除）"
           echo "  IMG   <相对路径> [宽高比] :: <画面描述>"
-          echo "  VIDEO <相对路径> :: <画面描述>（额度每天仅 3 条,关键画面才用;有 REF 时=让参考图动起来;时长走 Hailuo 默认）"
+          echo "  VIDEO <相对路径> :: <画面描述>（额度每天仅 3 条,关键画面才用;有 REF 时=让参考图动起来;时长走 Hailuo 默认;额度撞顶后本轮余下 VIDEO 自动跳过,别重试）"
           echo "  MUSIC <相对路径> :: <音乐描述>"
           echo "注意图片关键字是 IMG，不是 IMAGE（写错了就一行都不匹配）。"
           echo "自然语言描述它读不懂。收到的提示词开头是：${LLMQ_MEDIA_SPEC[1,120]}"

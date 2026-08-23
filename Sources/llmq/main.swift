@@ -1227,10 +1227,10 @@ func cmdWork(_ args: [String]) throws {
         return
 
     case "restart-worker":
-        let inFlight = TaskStore.all().filter {
-            $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? false)
-        }
-        if let busy = inFlight.first {
+        // 在飞判定只有一份(inFlightAgent):这里原来是自己写的一份 `?? false`,
+        // 和 restartResidentServices 的 `?? true` 不一致 —— 任务刚起、PID 还没落盘
+        // 的那一小段窗口里,这条命令会把它踢死。同一件事两处判,必出这种事。
+        if let busy = inFlightAgent() {
             let ran = busy.startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
             print(Ansi.yellow("没重启 worker：") + Ansi.dim(
                 "\(busy.id) 正在跑（已 \(ran) 秒）。新二进制等它干完自然生效。"))
@@ -2860,6 +2860,10 @@ func cmdWorkLoop(_ args: [String]) throws {
     // 改成只延后**派活**这一件事,别的照常每 30s 跑。
     var dispatchHoldUntil = Date.distantPast
 
+    // 记下「我是哪份二进制」。每轮末尾空闲时发现磁盘上换了就退出,launchd 用新的
+    // 拉起来 —— 这才是「新二进制等它干完自然生效」的机制(见 BinarySwap)。
+    let swapWatch = BinarySwap.watch()
+
     while !stopping {
         // **家务每轮开头做,不藏在 runOneTask 里。**
         //
@@ -3168,6 +3172,18 @@ func cmdWorkLoop(_ args: [String]) throws {
         ViewFeed.publish(ViewFeed.blockedPage())
         ViewFeed.publish(RoadmapPage.page())
         ViewFeed.publishMenu(ViewFeed.menu())
+
+        // **换二进制只在这里、只在空闲时。**
+        //
+        // runOneTask 是同步的,走到这儿说明本轮的 agent 已经收工;后台落地
+        // (跑测试)还在就再等一轮。退出码 0,launchd KeepAlive 用新二进制拉起。
+        // 别在别处 kickstart:那会把正在跑的 agent 一起杀掉(fa4e5eeb 2026-08-23
+        // 就这么死了两次,每次十几分钟的 Kimi 额度白烧)。
+        if BinarySwap.shouldExit(changed: swapWatch.changed(),
+                                 inFlight: inFlightAgent() != nil || landingInFlight) {
+            print(Ansi.cyan("[\(Format.dateTime(Date()))] 二进制换了,手上没活 —— 退出让 launchd 用新版拉起"))
+            break
+        }
 
         // 分片睡眠，这样收到信号能很快响应，而不用等满一个 tick。
         var slept = 0.0
@@ -5213,8 +5229,9 @@ func cmdUpdate(_ rest: [String]) throws {
         // cluster serve 是**常驻**的：更新只是把磁盘上的文件换掉，
         // 那个已经跑了几天的进程还在执行老代码。于是「服务端的 bug 修好了、
         // 也发版了、对方也更新了」三件事同时成立，问题却一点没变 ——
-        // 这正好浪费了一轮排查。采集和 worker 不受影响，它们是
-        // StartInterval 每次新起进程，自然就用上了新二进制。
+        // 这正好浪费了一轮排查。采集是 StartInterval 每次新起进程,自然用上新的;
+        // worker 是 KeepAlive 常驻,下面这句只在它手上没活时踢,有活就不踢 ——
+        // 它会在空闲点自己退出换新(BinarySwap),不会杀正在跑的 agent。
         let kicked = restartResidentServices()
         if !kicked.isEmpty {
             print(Ansi.dim("  已重启常驻服务（换二进制不换进程，得踢一下）："
@@ -5255,6 +5272,16 @@ func noteIdle(_ verdict: IdleReason.Verdict, quiet: Bool) -> RunOutcome {
     return .noTask
 }
 
+/// 「有 agent 在飞」的唯一判定。restart-worker、restartResidentServices、
+/// 循环末尾的换二进制判断都用它 —— 以前是三份各写各的,`?? false` 和 `?? true`
+/// 并存,PID 还没落盘那一小段窗口里就被踢死过(2026-08-22 凌晨一个刚跑 32 秒的任务)。
+/// **没记 PID 的 running 也算在飞**:宁可多等一轮。
+func inFlightAgent() -> WorkTask? {
+    TaskStore.all().first {
+        $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? true)
+    }
+}
+
 func restartResidentServices() -> [String] {
     let listed = Proc.run("/bin/launchctl", ["list"], cwd: "/tmp", env: [:], timeout: 15)
     var done: [String] = []
@@ -5274,13 +5301,11 @@ func restartResidentServices() -> [String] {
     // 形同虚设（2026-08-22 凌晨实测踢死一个刚跑 32 秒的任务）。
     // 宁可多等一轮：踢晚一点只是新版本晚几分钟生效，踢错一次是烧掉
     // 一整个任务的额度，还要人来问「任务怎么停了」。
-    let inFlight = TaskStore.all().filter {
-        $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? true)
-    }
+    let inFlight = inFlightAgent()
 
     for label in ["com.llmquotabar.cluster", "com.llmquotabar.worker"] {
         guard listed.stdout.contains(label) else { continue }
-        if label == "com.llmquotabar.worker", let busy = inFlight.first {
+        if label == "com.llmquotabar.worker", let busy = inFlight {
             let ran = busy.startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
             print(Ansi.yellow("没重启 worker：") + Ansi.dim(
                 "\(busy.id) 正在跑（已 \(ran) 秒，\(busy.platform?.displayName ?? "?")）。"

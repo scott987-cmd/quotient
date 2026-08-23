@@ -432,10 +432,11 @@ public enum ReleaseChannel {
 
         markInstalled(manifest.sha256)
 
-        // 常驻循环还在跑旧二进制，踢一下让它换过来。
-        _ = Proc.run("/bin/launchctl",
-                     ["kickstart", "-k", "gui/\(getuid())/com.llmquotabar.worker"],
-                     cwd: "/", env: [:], timeout: 20)
+        // **这里不踢 worker。** 原来末尾有一句无条件 `launchctl kickstart -k worker`,
+        // 把调用方 `restartResidentServices()` 的在飞守卫整个绕过去了 —— 自动更新一到,
+        // 正在跑的 agent 跟着死(fa4e5eeb 2026-08-23 被杀两次,每次十几分钟 Kimi 额度)。
+        // 同一件事两处判,必出这种事。换二进制由 work loop 自己在空闲点做(BinarySwap),
+        // 要立刻踢的场合走调用方那条带守卫的路。
     }
 
     // MARK: - 工具
