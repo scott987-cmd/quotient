@@ -1834,11 +1834,20 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             let repoPath = NSString(string: cand.repo).expandingTildeInPath
             let exists = GitWorkspace.git(["rev-parse", "--verify", "--quiet",
                                            "refs/heads/" + own], in: repoPath).exitCode == 0
-            let merged = GitWorkspace.git(["merge-base", "--is-ancestor", own, "main"],
-                                          in: repoPath).exitCode == 0
-            if merged || (!exists && GitWorkspace.git(
+            // **「是 main 的祖先」≠「已落地」。** 控制流 review §7b 实锤:
+            // 一条 0 个提交领先 main 的分支(agent 没改文件就提问,答复后带着
+            // 分支重排)对 `merge-base --is-ancestor` 恒真 —— 于是 1f8de767s5
+            // 三个问题答完、一行活没干,被这里标成「产出早已落地」永不执行。
+            // 图分支更糟:共享分支落地后每个解冻的后续步骤都被这样标 done。
+            // 落地的唯一硬证据是 main 上有这条分支的合并提交(mergeUnverified
+            // 固定写 "merge <branch>"),再要求分支已无领先提交。
+            let mergedOnMain = !GitWorkspace.git(
                 ["log", "--oneline", "-1", "--grep", "merge " + own, "main"],
-                in: repoPath).stdout.isEmpty == false) {
+                in: repoPath).stdout.isEmpty
+            let ahead = Int(GitWorkspace.git(["rev-list", "--count", "main..\(own)"],
+                                             in: repoPath).stdout
+                .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            if mergedOnMain && (!exists || ahead == 0) {
                 if !quiet { print(Ansi.yellow("  已完成 " + cand.id + "：") + Ansi.dim("它的分支 \(own) 已合进 main")) }
                 var x = cand
                 x.state = .done
@@ -2830,7 +2839,22 @@ func cmdWorkLoop(_ args: [String]) throws {
         }
     }
 
+    // 派活的「静默期」截止时刻。原来 .noPlatform 睡 300s、每小时上限睡
+    // 60–600s 都是 Thread.sleep —— 整轮卡住,末尾刷新/收答复/手机动作/落地
+    // 派发全部跟着停,手机看起来又「没更新了」(控制流 review §1)。
+    // 改成只延后**派活**这一件事,别的照常每 30s 跑。
+    var dispatchHoldUntil = Date.distantPast
+
     while !stopping {
+        // **家务每轮开头做,不藏在 runOneTask 里。**
+        //
+        // 控制流 review §2:Housekeeping.roundCheck 全仓库只在 runOneTask 开头
+        // 调,而 runOneTask 只在有活时被调 —— 队列空 / 限流时,菜单栏 App 死了
+        // 不复活(手机停旧快照)、验收残留不清(7GB 那件事)、磁盘不查。
+        // 和续活同一个形状。这里每轮先做,低磁盘时记下来让派活跳过。
+        let hk = Housekeeping.roundCheck()
+        if let n = hk.note { print(Ansi.yellow("  家务 ") + n) }
+        let lowDisk = hk.skipDispatch
         if Date().timeIntervalSince(lastCollect) >= policy.collectSeconds {
             phase("采集", 45) { _ = try? LLMQuota.collect() }
             lastCollect = Date()
@@ -3042,7 +3066,7 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 续活不能藏在它里面(见 refillIfIdle 的说明)。
         if TaskStore.nextQueued() == nil { refillIfIdle(quiet: true) }
 
-        if TaskStore.nextQueued() != nil {
+        if TaskStore.nextQueued() != nil, !lowDisk, Date() >= dispatchHoldUntil {
             if gate.allow() {
                 print("\n" + Ansi.dim("[\(Format.dateTime(Date()))] 取到任务"))
                 let outcome = try runOneTask(dryRun: false, quiet: true)
@@ -3064,7 +3088,8 @@ func cmdWorkLoop(_ args: [String]) throws {
                     // 只有真·暂时性的原因才会走到这里 —— 永久性的已经在
                     // runOneTask 里转成 blocked 了，不再堵队列。
                     print(Ansi.dim("  暂时没有可用平台（冷却或额度耗尽），等一等"))
-                    Thread.sleep(forTimeInterval: min(300, policy.tickSeconds * 10))
+                    // 不睡:只延后派活,末尾刷新/收答复/落地照常每 30s 跑。
+                    dispatchHoldUntil = Date().addingTimeInterval(min(300, policy.tickSeconds * 10))
                 case .blocked:
                     // 既不算成功也不算失败。而且**立刻去取下一个任务**，
                     // 不睡一个 tick —— 提问的任务已经不在 queued 里了，
@@ -3103,7 +3128,8 @@ func cmdWorkLoop(_ args: [String]) throws {
                 print(Ansi.yellow("[\(Format.dateTime(Date()))] 已达每小时上限 "
                     + "\(policy.maxTasksPerHour) 个，"
                     + Format.duration(next.timeIntervalSinceNow) + "后恢复"))
-                Thread.sleep(forTimeInterval: min(600, max(60, next.timeIntervalSinceNow)))
+                // 不睡:只延后派活(见 dispatchHoldUntil)。
+                dispatchHoldUntil = next
             }
         } else if Date().timeIntervalSince(lastHeartbeat) >= policy.heartbeatSeconds {
             // 空闲时也要偶尔说句话，否则你无法区分"没任务"和"循环挂了"。

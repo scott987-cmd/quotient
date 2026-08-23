@@ -290,8 +290,18 @@ public enum Review {
     /// 临时 worktree 是一次性的，验砸了直接删掉，主仓库全程没被碰过。
     ///
     /// 返回 nil 表示通过（或没配验证命令）；返回字符串是失败原因。
+    /// 验证失败。`transient` = 不是这份产出的错(超时 / 被杀 / 建不出工作区 /
+    /// 主仓库状态不对),下一轮该重试而不是记否决。
+    /// NSError.userInfo 里的结构化标志:这次没合是瞬时故障,不该记否决。
+    public static let transientKey = "llmq.transient"
+
+    public struct VerifyFailure {
+        public var message: String
+        public var transient: Bool
+    }
+
     public static func verifyMerge(repo: String, branch: String, base: String,
-                                   command: String, timeout: Int = 900) -> String? {
+                                   command: String, timeout: Int = 900) -> VerifyFailure? {
         let tmp = NSTemporaryDirectory() + "llmq-verify-\(UUID().uuidString.prefix(8))"
         defer {
             _ = GitWorkspace.git(["worktree", "remove", "--force", tmp], in: repo)
@@ -299,7 +309,8 @@ public enum Review {
         }
         let add = GitWorkspace.git(["worktree", "add", "--detach", tmp, base], in: repo)
         guard add.exitCode == 0 else {
-            return "建临时工作区失败：\(add.stderr.prefix(160))"
+            return VerifyFailure(message: "建临时工作区失败：\(add.stderr.prefix(160))",
+                                 transient: true)
         }
         let m = GitWorkspace.git(
             ["merge", "--no-ff", "-m", "verify \(branch)", branch], in: tmp)
@@ -311,7 +322,9 @@ public enum Review {
             // 退出码 0，而这里报冲突，查了半天才发现是消息在骗人）。
             let detail = (m.stderr + " " + m.stdout)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return "合并没成（退出码 \(m.exitCode)）：\(detail.prefix(300))"
+            // 合并本身失败(冲突/锁/环境)不是验证结论,归 StaleBranch/重试管。
+            return VerifyFailure(message: "合并没成（退出码 \(m.exitCode)）：\(detail.prefix(300))",
+                                 transient: true)
         }
         let r = Proc.run("/bin/sh", ["-c", command], cwd: tmp, env: [:],
                          timeout: TimeInterval(timeout))
@@ -325,15 +338,19 @@ public enum Review {
             return nil
         case .killed, .timedOut:
             // 交回给调用方当「这轮先别合」处理，而不是「这份产出不行」。
-            // 措辞里写清是基础设施 —— 不写的话人和评审 agent 还是会当成失败。
-            return ExitClassify.describe(kind) + "（下一轮会重试）"
+            // **transient 必须是结构化标志。** 控制流 review §6 实锤:这句
+            // 「（下一轮会重试）」只是文字,autoLand 拿到后照样 setAutoLandVeto,
+            // 下一轮 activeVeto 直接 continue —— 文字承诺重试,控制流永久否决。
+            // 超过 verifyTimeout(15 分钟构建)、发布重启时被 SIGTERM,都走这条。
+            return VerifyFailure(message: ExitClassify.describe(kind) + "（下一轮会重试）",
+                                 transient: true)
         case .failed:
             let out = (r.stderr + "\n" + r.stdout)
                 .split(separator: "\n")
                 .filter { $0.lowercased().contains("error") || $0.contains("failed") }
                 .prefix(3).joined(separator: "；")
-            return "验证没过（退出码 \(r.exitCode)）"
-                + (out.isEmpty ? "" : "：\(out.prefix(240))")
+            return VerifyFailure(message: "验证没过（退出码 \(r.exitCode)）"
+                + (out.isEmpty ? "" : "：\(out.prefix(240))"), transient: false)
         }
     }
 
@@ -748,6 +765,17 @@ public enum Review {
                     branch: item.branch, landed: true,
                     note: "任务 done、无冲突、不碰敏感路径、验收通过 —— 自动合入"))
             case .failure(let e):
+                // **瞬时失败(超时/被杀/建不出工作区/主仓库状态不对)不记否决。**
+                // 控制流 review §6:这些以前全进 setAutoLandVeto,而 veto 只在
+                // head 变化时失效 —— 一份正常产出因为一次 15 分钟构建超时、或
+                // 验证期间有人切了个分支,就被永久否决,还写着「下一轮会重试」。
+                // 现在看结构化标志:瞬时的只记一笔、下轮再试。
+                if (e.userInfo[transientKey] as? Bool) == true {
+                    outcomes.append(AutoLandOutcome(
+                        branch: item.branch, landed: false,
+                        note: e.localizedDescription + "（瞬时故障，没记否决，下一轮再试）"))
+                    continue
+                }
                 // **验证没过先派人修,别急着判死。**
                 //
                 // 原来这里直接记否决 +「留给人工审」——而那个「人」就是老板,
@@ -807,7 +835,10 @@ public enum Review {
         }), let cmd = reg.verifyCommand, !cmd.isEmpty {
             if let why = verifyMerge(repo: repo, branch: branch, base: base,
                                      command: cmd, timeout: reg.verifyTimeout) {
-                return .failure(ClusterCA.err("没合：\(why)"))
+                return .failure(NSError(
+                    domain: "Review", code: why.transient ? 2 : 1,
+                    userInfo: [NSLocalizedDescriptionKey: "没合：\(why.message)",
+                               transientKey: why.transient]))
             }
         }
         let r = mergeUnverified(repo: repo, branch: branch, base: base,

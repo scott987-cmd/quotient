@@ -63,7 +63,28 @@ public enum AutoRefill {
             return !(up.state == .failed || up.discardedAt != nil)               // 上游活着才算忙
         }
         if busy { return false }
-        return Review.list(repo: repo).isEmpty
+        // **等落地的分支,只有系统还在主动处理它时才算忙。**
+        //
+        // 原来是 `Review.list(repo:).isEmpty` —— 那个 list 是「所有未合入的
+        // agent 分支」,**包含一切「留给人工」的终态**:被否决的、审核放弃的、
+        // 证据派到上限的、刷新刷不动的。任一条存在,仓库就永远 isIdle=false,
+        // 续活永远不触发。控制流 review 在 worker.log 里数出来:
+        // 「要看效果 flint:1 条还没交证据」连续 59 轮、跨三天 ——
+        // 这整段时间 Flint 不可能续活,不管我把续活挪到哪。
+        //
+        // 改成:某条分支算忙,当且仅当它有在排/在跑的派生任务(审核/证据/
+        // 刷新/修验证)—— 系统正在动它。没人动的分支是「留给人工」,
+        // 不该挡住主线往前推。
+        let pending = Review.list(repo: repo)
+        let activelyHandled = pending.contains { item in
+            let b = item.branch
+            return TaskKind.hasPendingDerived(branch: b, tasks: tasks, kind: TaskKind.isReview)
+                || TaskKind.hasPendingDerived(branch: b, tasks: tasks, kind: TaskKind.isEvidence)
+                || TaskKind.hasPendingDerived(branch: b, tasks: tasks, kind: TaskKind.isRefresh)
+                || tasks.contains { ($0.state == .queued || $0.state == .running)
+                                    && VerifyRepair.isRepairPrompt($0.prompt, of: b) }
+        }
+        return !activelyHandled
     }
 
     static func lastRefillAt(repo: String, tasks: [WorkTask]) -> Date? {

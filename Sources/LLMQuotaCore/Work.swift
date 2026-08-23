@@ -1670,7 +1670,22 @@ public enum GitWorkspace {
             // 先把主干拉到脚下，再从主干开新分支 —— 否则新任务会站在
             // 上一个任务的分支上，把无关的改动一起带进来。
             _ = git(["checkout", "--detach", base], in: path, timeout: 30)
-            _ = git(["branch", "-f", branch, base], in: path, timeout: 30)
+            // **分支上已有提交就绝不 `branch -f` 回 base。**
+            //
+            // 实锤(2026-08-22 19:53,Flint reflog):`agent/graph/1f8de767` 被
+            // `branch: Reset to main`,s1–s4 的 6 个提交 / 14 个文件从分支上
+            // 消失,s5 在提问里原话「分支被重置到了 main」,整张图后来只能人工
+            // 丢弃重派。图任务**共用一条分支**,前面步骤的产出就在上面 ——
+            // 这里的 `-f` 等于把别人干完的活抹掉。注释说「上下文丢了总比
+            // 跑不起来强」,对有提交的分支是**丢产出**,不是丢上下文。
+            // 规则:分支存在且领先 base ≥1 个提交 → 直接切过去复用;
+            // 只有不存在/0 提交的分支才允许(重)建。
+            let ahead = Int(git(["rev-list", "--count", "\(base)..\(branch)"],
+                               in: path, timeout: 30).stdout
+                .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            if ahead == 0 {
+                _ = git(["branch", "-f", branch, base], in: path, timeout: 30)
+            }
             let co = git(["checkout", branch], in: path, timeout: 30)
             if co.exitCode == 0 {
                 return Workspace(path: path, branch: branch)
