@@ -3098,6 +3098,22 @@ func cmdWorkLoop(_ args: [String]) throws {
             lastHeartbeat = Date()
         }
 
+        // **每轮都刷新手机看到的一切 —— 哪怕这一轮没派出任何活。**
+        //
+        // 老板 2026-08-23:「手机端显示半小时没有更新状态了」「flint 任务状态
+        // 没有显示」「手机显示啥任务也没有跑」。根子:office.json / 任务板 /
+        // ViewFeed 页面原来只在「派活」和「收工」时更新,而队列全在等前置的
+        // 那一个多小时里,主循环每轮都因 nextQueued()==nil 跳过这些 publish ——
+        // 系统明明在正常运转(在等、在续活、在做家务),手机上却像死了。
+        // 「没派活」不等于「状态不用更新」。这里无条件刷一次,手机最多滞后一个 tick。
+        OfficeLog.publish()
+        TaskBoardStore.publishNow()
+        ClusterPresenceStore.publish()
+        ViewFeed.publish(ViewFeed.reviewPage())
+        ViewFeed.publish(ViewFeed.blockedPage())
+        ViewFeed.publish(RoadmapPage.page())
+        ViewFeed.publishMenu(ViewFeed.menu())
+
         // 分片睡眠，这样收到信号能很快响应，而不用等满一个 tick。
         var slept = 0.0
         while slept < policy.tickSeconds && !stopping {
