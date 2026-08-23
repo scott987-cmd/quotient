@@ -2094,6 +2094,15 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         if !task.triedPlatforms.contains(pick.platform) {
             task.triedPlatforms.append(pick.platform)
         }
+        // **选定平台后立刻落盘一次,让任务板/办公室知道是谁在干。**
+        //
+        // 老板 2026-08-23:「办公室也不展示,我记得之前有一个会展示每个 agent
+        // 在干嘛」。根因:state=.running 那次 append 发生在上面(平台还没选),
+        // 落盘的 running 记录 platform 为空 → 任务板那行没有 platform 字段 →
+        // 手机办公室按(机器,平台)摆桌,摆不到任何人桌上,看起来没人在干活。
+        // 实锤:fa4e5eeb running 了 26 分钟,记录里 platform: None。
+        try? TaskStore.append(task)
+        TaskBoardStore.publishNow()
         print(Ansi.bold("\n[\(idx + 1)/\(decision.candidates.count)] " + pick.platform.displayName))
         // 记一笔给办公室画面。第一个候选是「老板派活」，之后的是「同事接手」——
         // 后者是真实的协作，不是编出来的。

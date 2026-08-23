@@ -34,11 +34,11 @@ final class AutoRefillTests: XCTestCase {
     /// 提示词要把「哪些不归你」写明 —— 否则自主任务会一头撞进
     /// 账号/签名/上架这类只有老板能拍板的事(见 BossGate)。
     func testPromptFencesOffBossOnlyWork() {
-        let p = AutoRefill.prompt(repoName: "flint", goal: "P3 内容:三张地图")
+        let p = AutoRefill.prompt(repoName: "flint", goal: "P3 内容:三张地图",
+                                  item: AutoRefill.MainlineItem(index: 1, text: "【关卡】三张地图"))
         XCTAssertTrue(p.contains("拍板"), "要提醒它避开老板专属的决定")
-        XCTAssertTrue(p.contains("续活主线"), "必须让它照主线走,不是自由发挥")
-        XCTAssertTrue(p.contains("第一个") && p.contains("不要跳"),
-                      "严格挑第一个未完成的,保证活的连续性")
+        XCTAssertTrue(p.hasPrefix("【续活·主线 1】"), "系统选块,标题第一行写明第几块")
+        XCTAssertTrue(p.contains("不顺手开别的块"), "一次只做这一块,保证连续性")
         XCTAssertTrue(p.contains("什么都别改"), "没值得做的就该空跑,不能乱开坑")
     }
 }

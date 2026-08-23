@@ -122,6 +122,48 @@ public enum AutoRefill {
         return true
     }
 
+    /// 主线里的一块。
+    public struct MainlineItem: Equatable, Sendable {
+        public var index: Int      // 1-based
+        public var text: String    // 「【人物·皮肤】人物有真皮肤…」那一整行(去掉序号)
+    }
+
+    /// 从 PLAN.md 的「⭐ 续活主线」一节里挑**第一个没标「已完成」的块**。
+    ///
+    /// 老板 2026-08-23:「续活任务也不知道在干啥」。原来只把整份 PLAN.md 塞给
+    /// agent 让它自己挑,挑了哪块、做完前谁也看不出 —— 任务标题永远是通用的
+    /// 「按目标挑下一块」。现在**系统选块**:标题直接写「主线 N:块名」,
+    /// 手机上一眼看出它在干哪一块;也从机制上保证「一块接一块」的连续性,
+    /// 不靠 agent 自觉。做完要在 PLAN.md 那一条末尾标「已完成」,下次就跳过。
+    public static func nextMainlineItem(in plan: String) -> MainlineItem? {
+        guard let start = plan.range(of: "续活主线") else { return nil }
+        let tail = plan[start.upperBound...]
+        // 主线一节到下一个「## 」标题为止
+        let section = tail.split(separator: "\n", omittingEmptySubsequences: false)
+        var idx = 0
+        var current: (Int, String)? = nil
+        var items: [(Int, String)] = []
+        func flush() { if let c = current { items.append(c) }; current = nil }
+        for raw in section.dropFirst() {
+            let line = String(raw)
+            if line.hasPrefix("## ") { break }          // 下一节
+            let t = line.trimmingCharacters(in: .whitespaces)
+            // 「1. 【…】…」开头 = 新的一块;续行(以空格/— 开头)并进上一块
+            if let m = t.range(of: #"^(\d+)\.\s+"#, options: .regularExpression) {
+                flush()
+                idx = Int(t[m.lowerBound..<m.upperBound].filter(\.isNumber)) ?? idx + 1
+                current = (idx, String(t[m.upperBound...]))
+            } else if var c = current, !t.isEmpty, !t.hasPrefix("**"), !t.hasPrefix(">") {
+                c.1 += " " + t; current = c
+            }
+        }
+        flush()
+        for (i, text) in items where !text.contains("已完成") && !text.contains("✅") {
+            return MainlineItem(index: i, text: text)
+        }
+        return nil
+    }
+
     static func goalDoc(repo: String) -> String? {
         for f in goalFiles {
             let p = (repo as NSString).appendingPathComponent(f)
@@ -132,29 +174,30 @@ public enum AutoRefill {
         return nil
     }
 
-    static func prompt(repoName: String, goal: String) -> String {
+    static func prompt(repoName: String, goal: String, item: MainlineItem) -> String {
         """
-        【续活】\(repoName) 的队列空了 —— 按项目目标挑出下一块该做的事,并做完它。
+        【续活·主线 \(item.index)】\(item.text.prefix(40))
 
-        这是一条**自主任务**:没有人给你指定具体做什么,你自己从目标文档里挑。
+        \(repoName) 的队列空了。**系统已经按主线替你选好了要做的块 —— 就做这一块**:
+
+        > 主线第 \(item.index) 块:\(item.text)
+
+        这不是让你自由挑;做完这一块之后,**在 PLAN.md 的「⭐ 续活主线」里把
+        第 \(item.index) 条末尾加上「— 已完成」**(系统靠这个标记知道该进下一块)。
 
         目标文档:
         ---
         \(goal)
         ---
 
-        怎么挑 —— **不是让你自由发挥,是严格照主线走**:
-        1. 找到上面「⭐ 续活主线」那一节的编号清单。**没有这一节就什么都别做**,
-           如实说「PLAN.md 没有续活主线,不知道该做哪块」然后停 ——
-           绝不自己从别处猜一块活出来(那正是老板说的「瞎续活」)。
-        2. 看仓库现状(git log、STATUS.md、已有目录/资产),判断主线里
-           **每一块做到哪了**。
-        3. 做**从上往下第一个「还没完成」的那一块** —— 就那一块,不要跳、
-           不要挑后面顺眼的、不要同时开好几块。这是为了「活的连续性」:
-           一块接一块,不留半成品。
-        4. 如果第一个未完成的那块**已经有分支在做**(git branch 里有对应
-           agent 分支),说明它在进行中 —— 别重复开,什么都别做,如实说明。
-        5. **提交信息第一行写:主线第 N 块「块名」,以及你判断它未完成的依据。**
+        怎么做:
+        1. 先看仓库现状(git log、STATUS.md、已有目录/资产),确认这一块**目前做到哪**。
+           如果它其实已经做完了(只是 PLAN.md 没标),就只把 PLAN.md 标上「已完成」
+           然后停,别重做。
+        2. 如果已经有分支在做这一块(git branch 里有对应 agent 分支),别重复开 ——
+           什么都别改,如实说明。
+        3. 否则就把这一块做完:一整块,不留半成品,不顺手开别的块。
+        4. **提交信息第一行写:主线第 \(item.index) 块「块名」。**
 
         避开这两类(归老板,主线里也标了):账号/签名/上架/花钱/商标;
         以及需要他看效果拍板的(做完交录屏,别等他)。
@@ -178,6 +221,12 @@ public enum AutoRefill {
             return Outcome(repo: repo, enqueued: false,
                            note: "没有目标文档(PLAN.md / ROADMAP.md / AGENTS.md),不知道该往哪走")
         }
+        // **系统选块,不让 agent 猜。** 没有主线 / 主线全部已完成 → 不派,
+        // 而不是派一条「你自己看着办」—— 那正是老板说的「瞎续活」。
+        guard let item = nextMainlineItem(in: goal) else {
+            return Outcome(repo: repo, enqueued: false,
+                           note: "PLAN.md 没有「续活主线」或主线全部已完成 —— 等老板给下一段")
+        }
         // **跨机抢占,先到先得。**
         //
         // 2026-08-23 复审(第三轮)逮到:lastRefillAt 读的是 tasks.jsonl,
@@ -194,11 +243,12 @@ public enum AutoRefill {
         }
         do {
             let r = try TaskIntake.enqueue(
-                prompt: prompt(repoName: alias, goal: goal),
+                prompt: prompt(repoName: alias, goal: goal, item: item),
                 repo: repo, classify: true, split: false, force: true,
                 origin: "auto-refill")
             if case .single = r {
-                return Outcome(repo: repo, enqueued: true, note: "队列空了,按目标补了一块活")
+                return Outcome(repo: repo, enqueued: true,
+                               note: "主线第 \(item.index) 块:\(item.text.prefix(30))")
             }
             return Outcome(repo: repo, enqueued: false, note: "入队没成")
         } catch {

@@ -35,6 +35,14 @@ final class GraphBranchPreserveTests: XCTestCase {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(ahead1, "1", "第一步的提交应在图分支上")
 
+        // 模拟真实事故现场:工作区 HEAD 不在图分支上(detached —— 验收/合并
+        // 之类的操作会留下这种状态)。这时 prepare 走的是「目录还在但要换分支」
+        // 的重置路径 —— 旧代码在那条路上 `branch -f agent/graph/G main`,
+        // 把 s1 的提交从分支上抹掉。
+        // (不脱离 HEAD 的话 existingWorkspace 直接复用,测试根本踩不到那条路 ——
+        // 第一版测试就是这样绿得没说服力:变异后失败断言 0。)
+        _ = g(["checkout", "-q", "--detach"], in: ws1.path)
+
         // 第二步:同一张图再 prepare —— 以前这里会 branch -f 回 main,抹掉 s1
         let ws2 = try GitWorkspace.prepare(repo: d, taskID: "Gs2", platform: .kimi, graphID: "G")
         XCTAssertEqual(ws2.branch, ws1.branch, "同一张图共用一条分支")
