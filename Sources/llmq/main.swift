@@ -1649,12 +1649,19 @@ func probePlatforms() throws {
 
     for runner in RunnerRegistry.all {
         guard runner.isAvailable else {
+            // **诊断不能说谎。** 原来一律报「不在 PATH 上」——而 ZCode 装了、
+            // 路径也对,缺的是 CLI 配置或凭据;照着这句去找 PATH 永远找不出问题
+            // (2026-08-23 实际耽误了一轮排查)。执行器能说清就让它说。
+            let why: String
+            if runner is ZcodeRunner, !ZcodeRunner.missingPieces().isEmpty {
+                why = ZcodeRunner.missingPieces().joined(separator: "；")
+            } else {
+                why = runner.binaryName + " 不在 PATH 上"
+            }
             print(pad(runner.platform.displayName, 10) + pad(Ansi.dim("未安装"), 12)
-                + pad("—", 8) + runner.binaryName + " 不在 PATH 上")
+                + pad("—", 8) + why)
             health.append(.init(platform: runner.platform.displayName,
-                                status: "未安装",
-                                detail: runner.binaryName + " 不在 PATH 上",
-                                seconds: 0))
+                                status: "未安装", detail: why, seconds: 0))
             continue
         }
         let cmd = runner.command(prompt: "回复两个字：可用", cwd: probeDir)
