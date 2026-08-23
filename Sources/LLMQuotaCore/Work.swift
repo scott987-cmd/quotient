@@ -1471,10 +1471,16 @@ public enum Proc {
         // 这一行会永久阻塞，把上面那个 timeout 参数彻底架空。
         // 超时的意义就是「无论如何都要返回」，所以这里也必须有上限：
         // 到点就关掉读端，让 read 立刻返回。
+        // **无论哪条路,读端读完都要显式关掉。** 以前只在超时那条路上关,正常路上
+        // 指望 Pipe 析构 —— 而 Process 持有的这对 Pipe 在常驻进程里迟迟不释放,
+        // 每次调用稳定漏 2 个 fd(见上面写端那段的实锤)。
         if group.wait(timeout: .now() + 5) == .timedOut {
             try? outPipe.fileHandleForReading.close()
             try? errPipe.fileHandleForReading.close()
             _ = group.wait(timeout: .now() + 2)
+        } else {
+            try? outPipe.fileHandleForReading.close()
+            try? errPipe.fileHandleForReading.close()
         }
 
         return Result(

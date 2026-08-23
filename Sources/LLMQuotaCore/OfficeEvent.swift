@@ -171,18 +171,40 @@ public enum OfficeLog {
 
     /// 把本地 + 其它机器的事件并在一起(按时间),给根上的 office.json 用。
     /// 谁来写都是同一个集合 —— last-writer-wins 也就不再互相覆盖。
-    public static func merged(local: [OfficeEvent], machineID: String = Paths.machineID()) -> [OfficeEvent] {
+    /// 现在还活着的机器身份:本机 + 有每机事件文件的 + 有在线状态文件的。
+    /// 不在这个集合里的 machineID 是漂移期留下的旧身份(同一台机器换过 ID)。
+    static func liveMachineIDs(selfID: String) -> Set<String> {
+        var live: Set<String> = [selfID]
+        for dir in [perMachineDir, Paths.sharedRoot.appendingPathComponent("presence", isDirectory: true)] {
+            for f in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            where f.hasSuffix(".json") && !f.hasPrefix(".") {
+                live.insert(String(f.dropLast(5)))
+            }
+        }
+        return live
+    }
+
+    public static func merged(local: [OfficeEvent], machineID: String = Paths.machineID(),
+                              liveIDs: Set<String>? = nil) -> [OfficeEvent] {
+        // **旧身份的事件不进合并结果。**
+        //
+        // 老板 2026-08-23 晚:「办公室出现了一台未知的机器」。MacBook 换过 machineID
+        // (D127… → 9FBD…),它本地事件日志里还有 110 条旧 ID 的历史;它发布根 office.json
+        // 时原样带上,而旧 ID 的 presence 刚被 StaleIdentitySweep 清掉 —— 手机解析不出
+        // 名字,就多出一个「未知机器」工位。身份已死的事件只是噪音,按现存身份过滤。
+        let live = liveIDs ?? liveMachineIDs(selfID: machineID)
+        func alive(_ e: OfficeEvent) -> Bool { e.machineID.isEmpty || live.contains(e.machineID) }
         var byKey: [String: OfficeEvent] = [:]
         func key(_ e: OfficeEvent) -> String {
             "\(e.at.timeIntervalSince1970)|\(e.kind.rawValue)|\(e.taskID)|\(e.detail.prefix(40))"
         }
-        for e in local { byKey[key(e)] = e }
+        for e in local where alive(e) { byKey[key(e)] = e }
         if let files = try? FileManager.default.contentsOfDirectory(atPath: perMachineDir.path) {
             let dec = SnapshotCoding.decoder()
             for f in files where f.hasSuffix(".json") && !f.hasPrefix(machineID) {
                 guard let d = try? Data(contentsOf: perMachineDir.appendingPathComponent(f)),
                       let evs = try? dec.decode([OfficeEvent].self, from: d) else { continue }
-                for e in evs { byKey[key(e)] = e }
+                for e in evs where alive(e) { byKey[key(e)] = e }
             }
         }
         return Array(byKey.values.sorted { $0.at < $1.at }.suffix(keep))
