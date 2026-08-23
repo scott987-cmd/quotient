@@ -581,6 +581,10 @@ extension ViewFeed {
             MenuEntry(page: "blocked", title: "等你放行",
                       icon: "exclamationmark.shield", badge: badge("blocked"),
                       group: "要你拍板"),
+            // 各仓库的计划和进度 —— 老板随时能翻,不用问「还在做吗」。
+            // 放「看进展」组,不占「要你拍板」那组(它是只读的)。
+            MenuEntry(page: "roadmap", title: "计划进度",
+                      icon: "map", badge: nil, group: "看进展"),
             MenuEntry(page: "playbook", title: "项目清单",
                       icon: "list.bullet.rectangle.portrait",
                       badge: badge("playbook"), group: "要你拍板"),

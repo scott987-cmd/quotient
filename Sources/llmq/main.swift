@@ -2971,6 +2971,7 @@ func cmdWorkLoop(_ args: [String]) throws {
             // 为这种时刻留的，用它，别等发新包。
             ViewFeed.publish(ViewFeed.reviewPage())
             ViewFeed.publish(ViewFeed.blockedPage())
+            ViewFeed.publish(RoadmapPage.page())
             ViewFeed.publish(ViewFeed.playbookPage())
             ViewFeed.publishMenu(ViewFeed.menu())
             for inv in ViewFeed.pendingInvocations() {
