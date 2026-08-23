@@ -881,7 +881,10 @@ public enum AgentIdentity {
     /// 平台 → 干活的 agent 名。
     static let map: [Platform: String] = [
         .claude:   "Claude Code",
-        .glm:      "Claude Code · GLM",
+        // 老板 2026-08-22 起主要用 GLM 官方客户端 ZCode(/Applications/ZCode.app),
+        // 不再靠改 Claude Code 的 BASE_URL。名字必须跟着变 —— 他在手机上找「ZCode」,
+        // 而这里一直写着旧跑法,于是「ZCode 没在移动端展示」(2026-08-23 他的原话)。
+        .glm:      "ZCode · GLM",
         .deepseek: "Claude Code · DeepSeek",
         .volcark:  "opencode · 火山",
         .codex:    "Codex CLI",
@@ -893,7 +896,10 @@ public enum AgentIdentity {
 
     /// 它跑的是哪个可执行文件。用来在详情里说清「到底是谁」。
     static let binary: [Platform: String] = [
-        .claude: "claude", .glm: "claude", .deepseek: "claude",
+        .claude: "claude", .deepseek: "claude",
+        // GLM 有官方 CLI 了,不再是「借用 Claude Code」那一类 ——
+        // 它的用量就是 GLM 自己的套餐,归属不用再打折扣(见 isBorrowedClient)。
+        .glm: "zcode",
         .codex: "codex", .qwen: "qwen", .kimi: "kimi",
         .minimax: "mmx", .gemini: "gemini",
         // 火山方舟现在有专属客户端了：opencode 经本地 LiteLLM 网关转过去。
