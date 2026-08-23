@@ -2900,6 +2900,20 @@ func cmdWorkLoop(_ args: [String]) throws {
     // 拉起来 —— 这才是「新二进制等它干完自然生效」的机制(见 BinarySwap)。
     let swapWatch = BinarySwap.watch()
 
+    // **橱窗刷新不跟着主循环的节奏走。**
+    //
+    // runOneTask 是同步的,一条复杂任务能占住主线程 90 分钟;而手机看的那几页
+    // 原来只在「一轮末尾」发布 —— 于是 agent 一开工,手机上就彻底静止。
+    // 老板反复报的「半小时没更新」「看不到进行中的任务」「点进去就没有了」
+    // 都是这一个根(见 Showcase)。这个定时器独立于主线程,照常刷。
+    let showcase = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+    showcase.schedule(deadline: .now() + Showcase.interval, repeating: Showcase.interval)
+    showcase.setEventHandler {
+        _ = Watchdog.run("showcase", timeout: 120) { _ = Showcase.refresh() }
+    }
+    showcase.resume()
+    defer { showcase.cancel() }
+
     while !stopping {
         // **家务每轮开头做,不藏在 runOneTask 里。**
         //
@@ -3201,13 +3215,9 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 那一个多小时里,主循环每轮都因 nextQueued()==nil 跳过这些 publish ——
         // 系统明明在正常运转(在等、在续活、在做家务),手机上却像死了。
         // 「没派活」不等于「状态不用更新」。这里无条件刷一次,手机最多滞后一个 tick。
-        OfficeLog.publish()
-        TaskBoardStore.publishNow()
-        ClusterPresenceStore.publish()
-        ViewFeed.publish(ViewFeed.reviewPage())
-        ViewFeed.publish(ViewFeed.blockedPage())
-        ViewFeed.publish(RoadmapPage.page())
-        ViewFeed.publishMenu(ViewFeed.menu())
+        // 一份实现:定时器和这里走同一套发布器(Showcase.defaultPublishers)。
+        // 抄一份在这里的话,加一页就得记得改两处 —— 这个项目已经因此栽过很多次。
+        Showcase.refresh(force: true)
 
         // **换二进制只在这里、只在空闲时。**
         //
