@@ -2,8 +2,12 @@ import Foundation
 
 /// 原生 CLI 会话的本机映射。
 ///
-/// 执行会话只跟随一条任务，或一张图里的一个能力泳道。仓库长期知识应写进
-/// AGENTS.md / STATUS / briefing，不能靠把不相关任务串进一段无限增长的聊天。
+/// 原生会话跟随「机器 × Runner × 稳定工作区 × 能力泳道」。
+///
+/// 稳定工作区本身已经是「仓库 × Agent」隔离的，因此同一个 Agent 在同一项目
+/// 接到新任务时应继续项目会话，而不是因为 taskID 变化就从零开始。不同 Runner、
+/// 不同仓库和不同能力泳道仍然隔离；长期且需要跨工具保存的事实继续写进
+/// AGENTS.md / STATUS / briefing，不能只押在聊天记录上。
 public enum GraphSession {
     public static var fileOverride: URL?
     private static let lock = NSLock()
@@ -62,11 +66,38 @@ public enum GraphSession {
         if let d = try? JSONEncoder().encode(m) { ICloudSafe.write(d, to: file) }
     }
 
-    private static func workspaceKey(_ workspace: String, _ context: Context) -> String {
+    private static func legacyWorkspaceKey(_ workspace: String, _ context: Context) -> String {
         let path = URL(fileURLWithPath: NSString(string: workspace).expandingTildeInPath)
             .standardizedFileURL.path
         return "workspace|machine:\(Context.escaped(context.machineID))|runner:"
             + Context.escaped(context.runnerID) + "|path:" + Context.escaped(path)
+    }
+
+    private static func projectKey(_ workspace: String, _ context: Context) -> String {
+        let path = URL(fileURLWithPath: NSString(string: workspace).expandingTildeInPath)
+            .standardizedFileURL.path
+        return "v3|machine:\(Context.escaped(context.machineID))|runner:"
+            + Context.escaped(context.runnerID) + "|lane:"
+            + context.capability.rawValue + "|workspace:" + Context.escaped(path)
+    }
+
+    /// 阶段 3a 之前使用 `repo:<主仓库>|<平台>` 保存项目会话。升级到稳定
+    /// Agent 工作区后路径变了，但上下文没有失效：精确 ID 执行器沿用旧 ID，
+    /// `-c/--last` 型执行器把它当成“这个项目已有历史”的可信启动标记。
+    public static func migrateLegacyProject(
+        context: Context, support: SessionSupport, workspace: String,
+        repo: String, platform: Platform
+    ) {
+        guard support != .none else { return }
+        lock.lock(); defer { lock.unlock() }
+        var m = load()
+        let target = projectKey(workspace, context)
+        guard m[target] == nil else { return }
+        let source = "repo:" + NSString(string: repo).expandingTildeInPath
+            + "|" + platform.rawValue
+        guard let legacy = m[source] else { return }
+        m[target] = support == .projectLatest ? "project" : legacy
+        save(m)
     }
 
     /// 决定本轮会话方式。stableID 的新 ID 在启动前落盘：进程被杀后仍知道该恢复谁。
@@ -78,19 +109,38 @@ public enum GraphSession {
         case .stableID:
             lock.lock(); defer { lock.unlock() }
             var m = load()
-            if let existing = m[context.storageKey] { return .resume(existing) }
+            let key = projectKey(workspace, context)
+            if let existing = m[key] { return .resume(existing) }
+            // 从任务级旧映射迁移：同一条任务升级后不应平白丢一次上下文。
+            if let legacy = m[context.storageKey] {
+                m[key] = legacy; save(m)
+                return .resume(legacy)
+            }
             let id = UUID().uuidString.lowercased()
-            m[context.storageKey] = id
+            m[key] = id
             save(m)
             return .create(id)
         case .projectLatest:
             lock.lock(); defer { lock.unlock() }
-            let m = load()
-            return m[workspaceKey(workspace, context)] == context.storageKey
-                ? .projectResume : .fresh
+            var m = load()
+            let key = projectKey(workspace, context)
+            if m[key] != nil { return .projectResume }
+            // 兼容阶段 3a 的任务级工作区标记。
+            if m[legacyWorkspaceKey(workspace, context)] == context.storageKey {
+                m[key] = "project"; save(m)
+                return .projectResume
+            }
+            return .fresh
         case .reportedID:
             lock.lock(); defer { lock.unlock() }
-            return load()[context.storageKey].map(Mode.resume) ?? .fresh
+            var m = load()
+            let key = projectKey(workspace, context)
+            if let id = m[key] { return .resume(id) }
+            if let legacy = m[context.storageKey] {
+                m[key] = legacy; save(m)
+                return .resume(legacy)
+            }
+            return .fresh
         }
     }
 
@@ -102,14 +152,19 @@ public enum GraphSession {
         var m = load(); m[context.storageKey] = id; save(m)
     }
 
+    public static func rememberReportedID(context: Context, workspace: String, id: String) {
+        guard !id.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        var m = load(); m[projectKey(workspace, context)] = id; save(m)
+    }
+
     /// 子进程确实启动后，当前 cwd 的“最近会话”才可以归给这条任务。
     public static func markLaunched(context: Context, support: SessionSupport,
                                     workspace: String) {
         guard support == .projectLatest else { return }
         lock.lock(); defer { lock.unlock() }
         var m = load()
-        m[context.storageKey] = "project"
-        m[workspaceKey(workspace, context)] = context.storageKey
+        m[projectKey(workspace, context)] = "project"
         save(m)
     }
 
@@ -122,6 +177,17 @@ public enum GraphSession {
             && m[key] == context.storageKey {
             m.removeValue(forKey: key)
         }
+        save(m)
+    }
+
+
+    /// 只清掉这个 Agent 在这个项目/泳道上的坏会话，不影响它在其他项目的上下文。
+    public static func forget(context: Context, workspace: String) {
+        lock.lock(); defer { lock.unlock() }
+        var m = load()
+        m.removeValue(forKey: projectKey(workspace, context))
+        m.removeValue(forKey: context.storageKey)
+        m.removeValue(forKey: legacyWorkspaceKey(workspace, context))
         save(m)
     }
 
@@ -143,7 +209,7 @@ public enum GraphSession {
             || key.hasPrefix(graphID + "|") {
             m.removeValue(forKey: key)
         }
-        let live = Set(m.keys.filter { $0.hasPrefix("v2|") })
+        let live = Set(m.keys.filter { $0.hasPrefix("v2|") || $0.hasPrefix("v3|") })
         for key in Array(m.keys) where key.hasPrefix("workspace|")
             && !live.contains(m[key] ?? "") {
             m.removeValue(forKey: key)

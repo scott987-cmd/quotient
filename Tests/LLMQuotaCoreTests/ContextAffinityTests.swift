@@ -28,12 +28,13 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertEqual(ClaudeRunner().sessionSupport, .stableID)
         XCTAssertEqual(QwenRunner().sessionSupport, .projectLatest)
         XCTAssertEqual(ZcodeRunner().sessionSupport, .reportedID)
-        XCTAssertEqual(KimiRunner().sessionSupport, .none)
-        XCTAssertEqual(CodexRunner().sessionSupport, .none)
+        XCTAssertEqual(KimiRunner().sessionSupport, .projectLatest)
+        XCTAssertEqual(CodexRunner().sessionSupport, .projectLatest)
+        XCTAssertEqual(OpenCodeRunner().sessionSupport, .projectLatest)
         XCTAssertNotEqual(MiniMaxMediaRunner().runnerID, MiniMaxReviewRunner().runnerID)
     }
 
-    func testStableSessionsAreTaskScopedAndForgetIsExact() {
+    func testStableSessionsAreProjectScopedWithinTheAgentWorkspace() {
         let a = GraphSession.Context(taskID: "task-a", graphID: nil,
                                      capability: .coding, runnerID: "claude.code",
                                      machineID: "machine")
@@ -43,19 +44,25 @@ final class ContextAffinityTests: XCTestCase {
         guard case .create(let aid) = GraphSession.mode(
             context: a, support: .stableID, workspace: "/tmp/repo")
         else { return XCTFail("task-a 首次应创建会话") }
-        guard case .create = GraphSession.mode(
+        guard case .resume(let bid) = GraphSession.mode(
             context: b, support: .stableID, workspace: "/tmp/repo")
-        else { return XCTFail("同仓库另一任务不能串到 task-a") }
+        else { return XCTFail("同一 Agent 工作区的新任务应续接项目会话") }
+        XCTAssertEqual(bid, aid)
         XCTAssertEqual(GraphSession.mode(
             context: a, support: .stableID, workspace: "/tmp/repo"), .resume(aid))
 
-        GraphSession.forget(context: a)
+        guard case .create(let otherID) = GraphSession.mode(
+            context: b, support: .stableID, workspace: "/tmp/other-repo")
+        else { return XCTFail("不同项目工作区不能串会话") }
+        XCTAssertNotEqual(otherID, aid)
+
+        GraphSession.forget(context: a, workspace: "/tmp/repo")
         guard case .create = GraphSession.mode(
             context: a, support: .stableID, workspace: "/tmp/repo")
-        else { return XCTFail("删掉 task-a 后应新建") }
+        else { return XCTFail("项目会话失效后应新建") }
         guard case .resume = GraphSession.mode(
-            context: b, support: .stableID, workspace: "/tmp/repo")
-        else { return XCTFail("精确删除不能误伤 task-b") }
+            context: b, support: .stableID, workspace: "/tmp/other-repo")
+        else { return XCTFail("清理一个项目不能误伤另一个项目") }
     }
 
     func testUnsupportedRunnerNeverCreatesSessionState() {
@@ -67,7 +74,7 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertTrue(GraphSession.load().isEmpty)
     }
 
-    func testProjectLatestRequiresMatchingWorkspaceAffinity() {
+    func testProjectLatestFollowsTheAgentWorkspaceAcrossTasks() {
         let a = GraphSession.Context(taskID: "task-a", graphID: nil,
                                      capability: .coding, runnerID: "qwen.code",
                                      machineID: "machine")
@@ -81,12 +88,54 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertEqual(GraphSession.mode(
             context: a, support: .projectLatest, workspace: "/tmp/shared"), .projectResume)
         XCTAssertEqual(GraphSession.mode(
-            context: b, support: .projectLatest, workspace: "/tmp/shared"), .fresh)
+            context: b, support: .projectLatest, workspace: "/tmp/shared"), .projectResume)
+        XCTAssertEqual(GraphSession.mode(
+            context: b, support: .projectLatest, workspace: "/tmp/other"), .fresh)
+    }
+
+    func testLegacyRepoAffinityBootstrapsTheStableAgentWorkspace() throws {
+        let context = GraphSession.Context(
+            taskID: "new-task", graphID: nil, capability: .coding,
+            runnerID: "kimi.code", machineID: "machine")
+        let legacy = ["repo:/tmp/flint|kimi": "old-project-marker"]
+        try JSONEncoder().encode(legacy).write(to: GraphSession.fileOverride!)
+
+        GraphSession.migrateLegacyProject(
+            context: context, support: .projectLatest,
+            workspace: "/tmp/flint-kimi", repo: "/tmp/flint", platform: .kimi)
+
+        XCTAssertEqual(GraphSession.mode(
+            context: context, support: .projectLatest,
+            workspace: "/tmp/flint-kimi"), .projectResume)
     }
 
     func testQwenUsesProjectResumeOnlyWhenRequested() {
         let fresh = QwenRunner().command(prompt: "p", cwd: "/tmp", session: .fresh).args
         let resume = QwenRunner().command(
+            prompt: "p", cwd: "/tmp", session: .projectResume).args
+        XCTAssertFalse(fresh.contains("-c"))
+        XCTAssertTrue(resume.contains("-c"))
+    }
+
+    func testKimiUsesProjectResumeOnlyWhenRequested() {
+        let fresh = KimiRunner().command(prompt: "p", cwd: "/tmp", session: .fresh).args
+        let resume = KimiRunner().command(
+            prompt: "p", cwd: "/tmp", session: .projectResume).args
+        XCTAssertFalse(fresh.contains("-c"))
+        XCTAssertTrue(resume.contains("-c"))
+    }
+
+    func testCodexUsesProjectResumeOnlyWhenRequested() {
+        let fresh = CodexRunner().command(prompt: "p", cwd: "/tmp", session: .fresh).args
+        let resume = CodexRunner().command(
+            prompt: "p", cwd: "/tmp", session: .projectResume).args
+        XCTAssertFalse(fresh.contains("resume"))
+        XCTAssertTrue(resume.starts(with: ["exec", "resume", "--last"]))
+    }
+
+    func testOpenCodeUsesProjectResumeOnlyWhenRequested() {
+        let fresh = OpenCodeRunner().command(prompt: "p", cwd: "/tmp", session: .fresh).args
+        let resume = OpenCodeRunner().command(
             prompt: "p", cwd: "/tmp", session: .projectResume).args
         XCTAssertFalse(fresh.contains("-c"))
         XCTAssertTrue(resume.contains("-c"))

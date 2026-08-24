@@ -139,6 +139,7 @@ public struct OpenCodeRunner: AgentRunner {
     public let platform: Platform
     public var runnerID: String { "opencode.\(platform.rawValue).code" }
     public let binaryName = "opencode"
+    public let sessionSupport: SessionSupport = .projectLatest
     /// 它能改文件。
     public let canEdit = true
 
@@ -148,7 +149,13 @@ public struct OpenCodeRunner: AgentRunner {
 
     public func command(prompt: String, cwd: String)
         -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd, session: .fresh)
+    }
+
+    public func command(prompt: String, cwd: String, session: GraphSession.Mode)
+        -> (launchPath: String, args: [String], env: [String: String]) {
         var args = ["run", "--auto", "--dir", cwd]
+        if case .projectResume = session { args.append("-c") }
         // `--auto` 是它的 yolo：自动批准没有被显式拒绝的权限请求。
         // 无头跑必须要它 —— 否则会停在权限提示上直到超时，
         // 这个坑在 Qwen 上踩过一次（consecutive_identical_tool_calls

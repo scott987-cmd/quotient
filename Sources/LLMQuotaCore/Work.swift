@@ -967,19 +967,28 @@ public struct QwenRunner: AgentRunner {
 public struct GeminiRunner: AgentRunner {
     public let platform: Platform = .gemini
     public let runnerID = "gemini.code"
+    public let sessionSupport: SessionSupport = .projectLatest
     public let binaryName = "gemini"
     public init() {}
 
     public func command(
         prompt: String, cwd: String
     ) -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd, session: .fresh)
+    }
+
+    public func command(
+        prompt: String, cwd: String, session: GraphSession.Mode
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
+        var args = ["-p", prompt, "--yolo"]
+        if case .projectResume = session { args += ["--resume", "latest"] }
         // --yolo 是确认存在的开关（--approval-mode yolo 等价）。
         // 无头模式下没人点确认，不加它 agent 会卡在审批上直到超时。
         // GEMINI_CLI_TRUST_WORKSPACE：无头环境下 Gemini 拒绝在未信任目录里动手，
         // 而 worktree 每次都是新路径，永远不可能被交互式标记为信任。
         // 变量名是从包里翻出来的，报错信息里显示的是截断的。
-        (binaryPath ?? "gemini", ["-p", prompt, "--yolo"],
-         ["GEMINI_CLI_TRUST_WORKSPACE": "true"])
+        return (binaryPath ?? "gemini", args,
+                ["GEMINI_CLI_TRUST_WORKSPACE": "true"])
     }
 }
 
@@ -1142,15 +1151,24 @@ public struct ZcodeRunner: AgentRunner {
 public struct KimiRunner: AgentRunner {
     public let platform: Platform = .kimi
     public let runnerID = "kimi.code"
+    public let sessionSupport: SessionSupport = .projectLatest
     public let binaryName = "kimi"
     public init() {}
 
     public func command(
         prompt: String, cwd: String
     ) -> (launchPath: String, args: [String], env: [String: String]) {
-        (
+        command(prompt: prompt, cwd: cwd, session: .fresh)
+    }
+
+    public func command(
+        prompt: String, cwd: String, session: GraphSession.Mode
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
+        var args = ["-p", prompt, "--add-dir", cwd]
+        if case .projectResume = session { args.insert("-c", at: 0) }
+        return (
             binaryPath ?? "kimi",
-            ["-p", prompt, "--add-dir", cwd],
+            args,
             [:]
         )
     }
@@ -1439,15 +1457,27 @@ public struct MiniMaxMediaRunner: AgentRunner {
 public struct CodexRunner: AgentRunner {
     public let platform: Platform = .codex
     public let runnerID = "codex.code"
+    public let sessionSupport: SessionSupport = .projectLatest
     public let binaryName = "codex"
     public let canEdit = true
     public init() {}
 
     public func command(prompt: String, cwd: String)
         -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd, session: .fresh)
+    }
+
+    public func command(prompt: String, cwd: String, session: GraphSession.Mode)
+        -> (launchPath: String, args: [String], env: [String: String]) {
         // 0.147 起没有 --full-auto 了（1 秒退出码 2 实测）——
         // --approve-for-me = 自动审批 + workspace-write 沙箱，同义替代。
-        (binaryPath ?? "codex", ["exec", "--approve-for-me", prompt], [:])
+        let args: [String]
+        if case .projectResume = session {
+            args = ["exec", "resume", "--last", "--approve-for-me", prompt]
+        } else {
+            args = ["exec", "--approve-for-me", prompt]
+        }
+        return (binaryPath ?? "codex", args, [:])
     }
 }
 

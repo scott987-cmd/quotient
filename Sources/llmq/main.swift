@@ -2333,12 +2333,15 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             && task.askRounds < Ask.Policy.maxRounds
             && resumedAnswer == nil
         if mayAsk { effectivePrompt += AskContract.clause(askFile: askFile.path) }
-        // 会话只跟随这条任务（图内则跟随能力泳道）。新任务不会串进同仓库
-        // 旧任务的聊天；仓库长期事实仍靠 AGENTS.md / STATUS / RepoMap。
+        // 会话跟随「稳定工作区 × Runner × 能力泳道」。同一个 Agent 在同一项目
+        // 接新任务时继续已有上下文；不同 Agent/项目/泳道互不串线。
         let sessionContext = GraphSession.Context(
             taskID: task.id, graphID: task.graphID,
             capability: TaskCapabilityLane.classify(task.prompt),
             runnerID: pick.runner.runnerID, machineID: Paths.machineID())
+        GraphSession.migrateLegacyProject(
+            context: sessionContext, support: pick.runner.sessionSupport,
+            workspace: ws.path, repo: task.repo, platform: pick.platform)
         let session = GraphSession.mode(
             context: sessionContext, support: pick.runner.sessionSupport,
             workspace: ws.path)
@@ -2423,11 +2426,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 workspace: ws.path)
             if pick.runner.sessionSupport == .reportedID,
                let id = pick.runner.discoveredSessionID(from: r.stdout + "\n" + r.stderr) {
-                GraphSession.rememberReportedID(context: sessionContext, id: id)
+                GraphSession.rememberReportedID(
+                    context: sessionContext, workspace: ws.path, id: id)
             }
         } else if case .create = session {
             // 进程压根没启动，这个显式 ID 不可能真实存在；只删自己的精确映射。
-            GraphSession.forget(context: sessionContext)
+            GraphSession.forget(context: sessionContext, workspace: ws.path)
         }
         if r.exitCode == -1 {
             ContextAffinityPolicy.restore(task: &task, snapshot: ownerBeforeAttempt)
@@ -2577,7 +2581,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             let sessionFailed = GraphSession.isSessionFailure(blob)
                 && (session != .fresh)
             if sessionFailed {
-                GraphSession.forget(context: sessionContext)
+                GraphSession.forget(context: sessionContext, workspace: ws.path)
                 print(Ansi.dim("  会话已失效，丢掉重开（下次从零读一遍仓库）"))
             }
 
