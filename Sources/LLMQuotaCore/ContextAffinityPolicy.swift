@@ -62,4 +62,14 @@ public enum ContextAffinityPolicy {
     ) -> Bool {
         nextIsSameOwner || automaticHandoffCount < 1
     }
+
+    /// 重试只能使用总预算里真正剩下的时间。
+    ///
+    /// 例如首轮上限 90 分钟、总预算 95 分钟，首轮跑满后同 owner 收尾最多
+    /// 再拿 5 分钟，不能因为进入 retry 分支又重新获得完整 90 分钟。
+    public static func cappedAttemptTimeout(
+        requested: TimeInterval, totalBudget: TimeInterval, elapsed: TimeInterval
+    ) -> TimeInterval {
+        max(0, min(requested, totalBudget - max(0, elapsed)))
+    }
 }

@@ -2209,7 +2209,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     var idx = 0
     var ownerRetryUsed = false
     var sessionRepairUsed = false
-    var experimentalRetrySpent: TimeInterval = 0
     enum RetryCause { case timeoutExperiment, sessionRepair }
     var retryCauseByIndex: [Int: RetryCause] = [:]
     while idx < candidateQueue.count {
@@ -2395,8 +2394,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let isTimeoutExperimentRetry: Bool
         if case .timeoutExperiment? = retryCause { isTimeoutExperimentRetry = true }
         else { isTimeoutExperimentRetry = false }
-        let attemptTimeoutPreview = baseAttemptTimeout
+        let requestedAttemptTimeout = baseAttemptTimeout
             * (isTimeoutExperimentRetry ? max(1, retryMultiplier) : 1)
+        let attemptTimeoutPreview = ContextAffinityPolicy.cappedAttemptTimeout(
+            requested: requestedAttemptTimeout,
+            totalBudget: totalBudget,
+            elapsed: Date().timeIntervalSince(overallStart))
         print(Ansi.dim(String(format: "  执行中…（单次上限 %.0f 秒）", attemptTimeoutPreview)))
         let started = Date()
         let attemptID = UUID().uuidString.lowercased()
@@ -2451,7 +2454,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             ContextAffinityPolicy.restore(task: &task, snapshot: ownerBeforeAttempt)
             try? TaskStore.append(task)
         }
-        if case .timeoutExperiment? = retryCause { experimentalRetrySpent += elapsed }
         // **有提交就不算「没改动」,绝不能连分支一起删。**
         //
         // 实锤(2026-08-23 17:06,85ace4f7):Kimi 在工作区提交了一份评审报告
@@ -2592,8 +2594,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             // 只认明确的 session/conversation 失效词；普通构建失败和超时不能
             // 擅自清掉仍然有效的上下文。
             let blob = r.stdout + r.stderr
-            let sessionFailed = GraphSession.isSessionFailure(blob)
-                && (session != .fresh)
+            let sessionFailed = GraphSession.shouldInvalidate(
+                output: blob, timedOut: r.timedOut, wasResuming: session != .fresh)
             if sessionFailed {
                 GraphSession.forget(context: sessionContext, workspace: ws.path)
                 print(Ansi.dim("  会话已失效，丢掉重开（下次从零读一遍仓库）"))
@@ -2676,8 +2678,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 print(Ansi.yellow("  保留 owner 再试一次")
                     + Ansi.dim("（沿用会话、工作区和已保存进度）"))
             }
-            // 实验重试额外耗时不挤占原有跨 owner 的 30 分钟兜底预算。
-            let spent = Date().timeIntervalSince(overallStart) - experimentalRetrySpent
+            let spent = Date().timeIntervalSince(overallStart)
             let effectiveHasNext = idx + 1 < candidateQueue.count
             let nextIsSameOwner = effectiveHasNext
                 && candidateQueue[idx + 1].runner.runnerID == pick.runner.runnerID

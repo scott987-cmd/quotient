@@ -143,12 +143,15 @@ public enum Push {
         guard let cfg = Config.load() else { return 0 }
         let list = devices()
         guard !list.isEmpty, let jwt = signedJWT(cfg: cfg) else { return 0 }
-        let payload: [String: Any] = ["aps": ["badge": n, "content-available": 1]]
+        // badge 本身就是用户可见交互，APNs 要求它走 alert 类型。
+        // 以前把它伪装成 background；Apple 明确说 background 不会改角标，
+        // 而且这类低优先级通知允许被延迟/丢弃，于是清零最容易永远不到。
+        let payload: [String: Any] = ["aps": ["badge": n]]
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return 0 }
         var ok = 0
         for d in list {
             if post(token: d.token, environment: d.environment,
-                    payload: data, jwt: jwt, cfg: cfg, pushType: "background") { ok += 1 }
+                    payload: data, jwt: jwt, cfg: cfg, pushType: "alert") { ok += 1 }
         }
         return ok
     }

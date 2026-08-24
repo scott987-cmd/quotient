@@ -200,6 +200,15 @@ public enum GraphSession {
             || text.contains("invalid session")
     }
 
+    /// 超时输出是被截断的一整段 agent 日志，里面可能只是讨论过 "invalid
+    /// session"，不能据此销毁真实会话。只有进程主动返回且确实在恢复会话时，
+    /// 才把这些词当成会话层错误。
+    public static func shouldInvalidate(
+        output: String, timedOut: Bool, wasResuming: Bool
+    ) -> Bool {
+        !timedOut && wasResuming && isSessionFailure(output)
+    }
+
     public static func forgetGraph(_ graphID: String) {
         lock.lock(); defer { lock.unlock() }
         var m = load()

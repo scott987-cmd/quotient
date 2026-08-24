@@ -296,17 +296,31 @@ public enum Nudge {
         return p.sections.contains { !($0.cards ?? []).isEmpty }
     }
 
+    /// 每条横幅都必须携带**全部**真实待办数。
+    ///
+    /// APNs 的 badge 是覆盖，不是累加。若两类待办各有 1 条，而横幅分别带 1，
+    /// 最后一条会把刚同步好的总数 2 又覆盖回 1。把这段做成纯函数，测试可以
+    /// 直接钉住「所有横幅都带总数」这个协议。
+    static func notificationBadges(
+        for items: [(key: String, kind: Push.Kind, body: String, badge: Int)]
+    ) -> [Int] {
+        let total = items.reduce(0) { $0 + $1.badge }
+        return Array(repeating: total, count: items.count)
+    }
+
     public static func run(now: Date = Date()) -> Int {
         let items = pending(now: now)
+        let notificationBadges = notificationBadges(for: items)
+        let totalBadge = notificationBadges.first ?? 0
         // **角标要跟真实待办数同步，哪怕这一轮什么都不推。**
         //
         // 角标是持久的：设成 94 之后就一直挂着，而新推送被限流挡住时
         // 没人去改它。人盯着 94 找不到对应的东西，这个数就成了噪音。
         // 静默推送不响不弹，只把数字改对。
-        Push.syncBadge(items.reduce(0) { $0 + $1.badge })
+        Push.syncBadge(totalBadge)
 
         var sent = 0
-        for item in items {
+        for (item, appBadge) in zip(items, notificationBadges) {
             guard !recentlySent(item.key, body: item.body, now: now) else { continue }
             // **指向的页面是空的就别推。**
             //
@@ -336,7 +350,7 @@ public enum Nudge {
             //     （网络越差，掐断的概率越大，重发越频繁）。
             // 所以宁可漏，不可重。
             remember(item.key, body: item.body, now: now)
-            guard Push.send(item.kind, body: item.body, badge: item.badge) > 0 else { continue }
+            guard Push.send(item.kind, body: item.body, badge: appBadge) > 0 else { continue }
             sent += 1
         }
         return sent

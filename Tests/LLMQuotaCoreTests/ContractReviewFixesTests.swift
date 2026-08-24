@@ -55,6 +55,15 @@ final class ContractReviewFixesTests: XCTestCase {
         XCTAssertEqual(cards, badge, "角标说 N,页面就得有 N 张卡,否则「点进去是空的」")
     }
 
+    func test_每条推送都携带全部待办数_不能被单条角标覆盖() {
+        let items: [(key: String, kind: Push.Kind, body: String, badge: Int)] = [
+            ("review-2", .needsYou, "两份成果", 2),
+            ("blocked-1", .needsYou, "一项放行", 1),
+        ]
+        XCTAssertEqual(Nudge.notificationBadges(for: items), [3, 3],
+                       "APNs 角标是覆盖语义；任一横幅带局部数都会把总数改错")
+    }
+
     // MARK: M4 .done 两种键都认
 
     func test_已表态_两种键格式都认() {

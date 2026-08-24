@@ -164,6 +164,19 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertTrue(GraphSession.isSessionFailure("invalid session id"))
         XCTAssertFalse(GraphSession.isSessionFailure("build failed: symbol not found"))
         XCTAssertFalse(GraphSession.isSessionFailure("request timed out"))
+        XCTAssertFalse(GraphSession.shouldInvalidate(
+            output: "earlier reasoning mentioned invalid session id",
+            timedOut: true, wasResuming: true),
+            "超时日志里碰巧出现会话错误词，不能销毁仍可恢复的上下文")
+        XCTAssertTrue(GraphSession.shouldInvalidate(
+            output: "invalid session id", timedOut: false, wasResuming: true))
+    }
+
+    func testOwnerRetryOnlyUsesRemainingOverallBudget() {
+        XCTAssertEqual(ContextAffinityPolicy.cappedAttemptTimeout(
+            requested: 5_400, totalBudget: 5_700, elapsed: 5_401), 299)
+        XCTAssertEqual(ContextAffinityPolicy.cappedAttemptTimeout(
+            requested: 5_400, totalBudget: 5_700, elapsed: 5_800), 0)
     }
 
     func testGraphCapabilityLaneInheritsItsOwnOwner() {
