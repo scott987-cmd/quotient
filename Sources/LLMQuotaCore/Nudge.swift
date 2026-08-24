@@ -95,11 +95,42 @@ public enum Nudge {
     /// `tasks` 可注入，只为让测试能造出「搁浅」这种状态 ——
     /// 它是靠多个任务的组合才成立的，不注入就没法在测试里表达。
     public static func pending(now: Date = Date(),
-                               tasks: [WorkTask] = TaskStore.all())
+                               tasks: [WorkTask] = TaskStore.all(),
+                               publishedAsks: [Ask]? = nil)
     -> [(key: String, kind: Push.Kind, body: String, badge: Int)] {
         var out: [(String, Push.Kind, String, Int)] = []
 
-        // 0. **做出来的东西等你看。** 排在最前面 —— 这是老板最想被打扰的
+        // 0. **agent / 调度器真的在等你回答。**
+        //
+        // 问题文件早就会出现在手机「问题」页，但之前完全没进提醒清单：
+        // 人只有主动打开 App 才知道有人在等，等于这条提问通道没有通知。
+        // 同时不能只扫 iCloud 文件 —— 任务人工结束后可能残留旧文件；必须
+        // 和本机任务当前挂着的 pendingAsk 对上，且仍是 blocked，才算活问题。
+        // approval 由下面的 blocked 卡片提醒，避免同一件高危放行弹两次。
+        let visibleAsks = publishedAsks ?? AskStore.pending(machine: Paths.machineID())
+        let visibleIDs = Set(visibleAsks.map(\.id))
+        let questions = tasks.compactMap { task -> Ask? in
+            guard task.state == .blocked,
+                  let ask = task.pendingAsk,
+                  ask.kind == .question,
+                  visibleIDs.contains(ask.id) else { return nil }
+            return ask
+        }
+        if !questions.isEmpty {
+            let body: String
+            if questions.count == 1 {
+                let who = questions[0].platform?.displayName ?? "Agent"
+                body = "\(who) 有问题等你回答："
+                    + String((questions[0].questions.first?.text
+                              ?? questions[0].taskPrompt).prefix(42))
+            } else {
+                body = "\(questions.count) 个问题等你回答，任务正在等你"
+            }
+            out.append(("question-\(questions.count)-\(questions.first?.id ?? "")",
+                        .needsYou, body, questions.count))
+        }
+
+        // 1. **做出来的东西等你看。** 排在最前面 —— 这是老板最想被打扰的
         // 那件事(2026-08-22 原话:「关键成果产出需要找我确认」),
         // 而其余几条都是「出问题了」。带录屏的成果落地即入列,见 Milestone。
         // **手机上还没有「成果」这个页面** —— 推了也是点进去空的

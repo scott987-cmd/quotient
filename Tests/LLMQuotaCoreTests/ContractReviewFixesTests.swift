@@ -34,6 +34,16 @@ final class ContractReviewFixesTests: XCTestCase {
         XCTAssertTrue(tail.contains("AskStore.retract("), "两个入口(卡片/问题页)必须互相撤销,否则「确认了还弹」")
     }
 
+    func test_人工结束或重试任务会撤下旧问题() {
+        let s = mainSwift
+        for marker in ["case \"retry\":", "case \"done\":", "case \"discard\":"] {
+            guard let r = s.range(of: marker) else { return XCTFail("找不到 \(marker)") }
+            let end = s.index(r.upperBound, offsetBy: 4200, limitedBy: s.endIndex) ?? s.endIndex
+            XCTAssertTrue(String(s[r.upperBound..<end]).contains("AskStore.retract("),
+                          "\(marker) 改了任务终态/轮次，却把旧问题留在手机上")
+        }
+    }
+
     // MARK: M6 角标和页面一个口径
 
     private func blocked(_ note: String, frozenBy: String? = nil) -> WorkTask {

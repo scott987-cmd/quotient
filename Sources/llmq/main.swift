@@ -839,7 +839,12 @@ func cmdWork(_ args: [String]) throws {
         guard t.state == .failed || t.state == .blocked else {
             print(Ansi.red("只有失败或被拦下的任务能重试，这个是 \(t.state.rawValue)")); exit(1)
         }
+        if let ask = t.pendingAsk {
+            AskStore.retract(taskID: t.id,
+                             machine: ask.machineID.isEmpty ? Paths.machineID() : ask.machineID)
+        }
         t.state = .queued
+        t.pendingAsk = nil
         t.frozenBy = nil
         t.endedAt = nil
         t.runnerPID = nil
@@ -934,6 +939,10 @@ func cmdWork(_ args: [String]) throws {
         guard !hits.isEmpty else { print(Ansi.red("找不到 " + id)); exit(1) }
         var n = 0
         for var t in hits where t.state != .done {
+            if let ask = t.pendingAsk {
+                AskStore.retract(taskID: t.id,
+                                 machine: ask.machineID.isEmpty ? Paths.machineID() : ask.machineID)
+            }
             t.state = .done
             t.endedAt = Date()
             t.pendingAsk = nil          // 挂着的提问一起收掉，别留在手机上
@@ -987,7 +996,12 @@ func cmdWork(_ args: [String]) throws {
                 wipedWorktrees.insert(b)
                 Review.discard(repo: t.repo, branch: b, reason: reason)
             }
+            if let ask = t.pendingAsk {
+                AskStore.retract(taskID: t.id,
+                                 machine: ask.machineID.isEmpty ? Paths.machineID() : ask.machineID)
+            }
             t.state = .failed
+            t.pendingAsk = nil
             t.discardedAt = Date()
             t.discardReason = reason
             t.frozenBy = nil
