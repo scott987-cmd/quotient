@@ -138,6 +138,38 @@ public enum WorkProgressStore {
     }
 }
 
+/// 独立于 Agent 自报的长任务巡检。
+///
+/// Agent 忘记调用 `work progress` 时，租约闸会拒绝给它续时；但手机端过去仍只写
+/// “运行中”，也没有任何提醒。巡检只陈述一件能确定的事实：最近 20 分钟没有
+/// 结构化、可核验的里程碑。它不据此换 owner，也不假装判断代码质量。
+public enum WorkProgressSentinel {
+    public static let interval: TimeInterval = 20 * 60
+
+    public struct Finding: Sendable, Equatable {
+        public var taskID: String
+        public var minutesWithoutProgress: Int
+        public var neverReported: Bool
+    }
+
+    public static func finding(for task: WorkTask, progress: WorkProgress?,
+                               now: Date = Date()) -> Finding? {
+        guard task.state == .running, let startedAt = task.startedAt else { return nil }
+        let lastProof = progress?.updatedAt ?? startedAt
+        let age = now.timeIntervalSince(lastProof)
+        guard age >= interval else { return nil }
+        return Finding(taskID: task.id,
+                       minutesWithoutProgress: max(20, Int(age / 60)),
+                       neverReported: progress == nil)
+    }
+
+    public static func inspect(_ tasks: [WorkTask],
+                               progressByTaskID: [String: WorkProgress],
+                               now: Date = Date()) -> [Finding] {
+        tasks.compactMap { finding(for: $0, progress: progressByTaskID[$0.id], now: now) }
+    }
+}
+
 /// 续期闸门只认“新鲜的、新序号的、证据摘要真的变化了”的汇报。
 /// 每次最多续 60 分钟，但总次数不封顶：方向正确就让同一个会话继续做。
 public final class ExecutionLeaseGate {

@@ -79,6 +79,47 @@ final class WorkProgressTests: XCTestCase {
         XCTAssertEqual(brief.progressEvidenceCount, 1)
     }
 
+    func testTwentyMinuteSentinelFindsMissingAndStaleProgress() {
+        var task = WorkTask(id: "task", prompt: "长任务", repo: "/tmp/repo")
+        task.state = .running
+        task.startedAt = now.addingTimeInterval(-1_201)
+
+        let missing = WorkProgressSentinel.finding(for: task, progress: nil, now: now)
+        XCTAssertEqual(missing?.taskID, "task")
+        XCTAssertEqual(missing?.neverReported, true)
+
+        let stale = progress(sequence: 1, fingerprint: "changed",
+                             updatedAt: now.addingTimeInterval(-1_201))
+        XCTAssertNotNil(WorkProgressSentinel.finding(for: task, progress: stale, now: now))
+        let fresh = progress(sequence: 2, fingerprint: "new",
+                             updatedAt: now.addingTimeInterval(-60))
+        XCTAssertNil(WorkProgressSentinel.finding(for: task, progress: fresh, now: now))
+    }
+
+    func testPhoneProjectionMarksTwentyMinutesWithoutMilestone() throws {
+        var task = WorkTask(id: "task", prompt: "长任务", repo: "/tmp/repo")
+        task.state = .running
+        task.startedAt = now.addingTimeInterval(-1_201)
+
+        let board = TaskBoard.build(from: [task], machineName: "Mac mini", now: now)
+        let brief = try XCTUnwrap(board.tasks.first)
+        XCTAssertEqual(brief.progressPhase, "无可证明进展")
+        XCTAssertTrue(brief.progressSummary?.contains("20 分钟") == true)
+    }
+
+    func testTwentyMinuteInspectionNotifiesWithoutAddingUnreadBadge() {
+        var task = WorkTask(id: "task", prompt: "Flint 人物黄金样板", repo: "/tmp/repo")
+        task.state = .running
+        task.startedAt = now.addingTimeInterval(-1_201)
+
+        let item = Nudge.pending(now: now, tasks: [task], publishedAsks: [],
+                                 progressByTaskID: [:])
+            .first { $0.key.hasPrefix("progress-stalled-") }
+        XCTAssertEqual(item?.kind, .trouble)
+        XCTAssertEqual(item?.badge, 0)
+        XCTAssertTrue(item?.body.contains("20 分钟巡检") == true)
+    }
+
     func testProgressStoreAdvancesSequenceAndFingerprintWithWorkspace() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("llmq-progress-\(UUID().uuidString)")

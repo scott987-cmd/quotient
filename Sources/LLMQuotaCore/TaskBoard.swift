@@ -99,8 +99,13 @@ public enum TaskBoard {
         let running = t.state != .queued
         let started = running ? t.startedAt : nil
         let productionPhase = t.production?.stage.displayName
+        let stalled = WorkProgressSentinel.finding(for: t, progress: progress, now: now)
         let visiblePhase: String?
-        if let productionPhase, let livePhase = progress?.phase, !livePhase.isEmpty {
+        if stalled != nil, let productionPhase {
+            visiblePhase = productionPhase + " · 无可证明进展"
+        } else if stalled != nil {
+            visiblePhase = "无可证明进展"
+        } else if let productionPhase, let livePhase = progress?.phase, !livePhase.isEmpty {
             visiblePhase = productionPhase + " · " + livePhase
         } else {
             visiblePhase = progress?.phase ?? productionPhase
@@ -109,6 +114,9 @@ public enum TaskBoard {
             $0.stage == .goldenSample
                 ? "样板 \($0.goldenSampleID) · \($0.deliverableKind)"
                 : "扩张自样板 \($0.goldenSampleID) · \($0.deliverableKind)"
+        }
+        let stalledSummary = stalled.map {
+            "已 \($0.minutesWithoutProgress) 分钟没有结构化里程碑；系统仍保留当前 Agent 与会话"
         }
         return TaskBrief(
             id: t.id,
@@ -123,7 +131,7 @@ public enum TaskBoard {
             stepTotal: t.graphID.flatMap { stepTotals[$0] },
             repoAlias: aliasByPath[standardized(t.repo)],
             progressPhase: visiblePhase,
-            progressSummary: progress?.summary ?? productionSummary,
+            progressSummary: stalledSummary ?? progress?.summary ?? productionSummary,
             progressNextStep: t.production?.blockedReason ?? progress?.nextStep,
             progressUpdatedAt: progress?.updatedAt,
             progressEvidenceCount: progress?.evidence.count,

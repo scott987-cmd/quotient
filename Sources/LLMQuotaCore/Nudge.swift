@@ -96,9 +96,27 @@ public enum Nudge {
     /// 它是靠多个任务的组合才成立的，不注入就没法在测试里表达。
     public static func pending(now: Date = Date(),
                                tasks: [WorkTask] = TaskStore.all(),
-                               publishedAsks: [Ask]? = nil)
+                               publishedAsks: [Ask]? = nil,
+                               progressByTaskID: [String: WorkProgress]? = nil)
     -> [(key: String, kind: Push.Kind, body: String, badge: Int)] {
         var out: [(String, Push.Kind, String, Int)] = []
+
+        // 0. **长任务到 20 分钟仍没有可核验里程碑。**
+        //
+        // 这不是让老板审批，也不能因此换掉有上下文的 owner；它只是兑现移动端
+        // “20 分钟巡检”的承诺。badge 固定为 0：这是状态提醒，不是待办，不能再
+        // 制造一个点进去找不到审批项的未读数字。
+        let runningIDs = Set(tasks.filter { $0.state == .running }.map(\.id))
+        let progress = progressByTaskID
+            ?? WorkProgressStore.latestByTaskID(taskIDs: runningIDs)
+        let stalled = WorkProgressSentinel.inspect(tasks, progressByTaskID: progress, now: now)
+        if let first = stalled.first,
+           let task = tasks.first(where: { $0.id == first.taskID }) {
+            let body = stalled.count == 1
+                ? "20 分钟巡检：\(TaskBrief.title(for: task).prefix(30)) 已 \(first.minutesWithoutProgress) 分钟无可证明进展"
+                : "20 分钟巡检：\(stalled.count) 个运行中任务没有新的可证明进展"
+            out.append(("progress-stalled-\(first.taskID)", .trouble, body, 0))
+        }
 
         // 0. **agent / 调度器真的在等你回答。**
         //
