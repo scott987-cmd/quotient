@@ -2577,17 +2577,22 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         executionEnv["LLMQ_TASK_ID"] = task.id
         executionEnv["LLMQ_WORKSPACE"] = ws.path
         executionEnv["LLMQ_INITIAL_LEASE_SECONDS"] = String(Int(attemptTimeout))
+        let baselineFingerprint = WorkProgressStore.fingerprint(repo: ws.path)
         let leaseGate = ExecutionLeaseGate(
             taskID: task.id,
-            baselineFingerprint: WorkProgressStore.fingerprint(repo: ws.path),
+            baselineFingerprint: baselineFingerprint,
             existing: WorkProgressStore.load(taskID: task.id))
-        let commitLeaseGate = CommitProgressLeaseGate(baselineHead: headBefore)
+        let objectiveLeaseGate = ObjectiveProgressLeaseGate(
+            baselineHead: headBefore, baselineFingerprint: baselineFingerprint)
         let r = Proc.run(
             cmd.launchPath, cmd.args, cwd: ws.path, env: executionEnv,
             timeout: attemptTimeout,
             deadlineExtension: { _ in
                 if let renewed = leaseGate.renewal(
                     progress: WorkProgressStore.load(taskID: task.id)) {
+                    objectiveLeaseGate.observe(
+                        currentHead: GitWorkspace.headSHA(in: ws.path),
+                        currentFingerprint: WorkProgressStore.fingerprint(repo: ws.path))
                     let minutes = Int(renewed.seconds / 60)
                     print(Ansi.cyan("  续期 \(minutes) 分钟：")
                           + Ansi.dim("\(renewed.progress.phase) · \(renewed.progress.summary)"))
@@ -2597,13 +2602,20 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 }
 
                 // 不能把续期完全押在 Agent 会不会记得调用 `work progress` 上。
-                // Flint f8042579 连续落了 8 个小提交，服务端却因它没主动汇报，
-                // 仍在 600s + 900s 两道闹钟上杀了同一个 Kimi 会话。
-                // 新提交本身就是可核验里程碑；同一个 HEAD 只消费一次。
-                guard let automatic = commitLeaseGate.renewal(
-                    currentHead: GitWorkspace.headSHA(in: ws.path)) else { return nil }
-                let short = String(automatic.head.prefix(8))
-                let summary = "检测到新提交 \(short)，服务端自动保持当前会话"
+                // 提交和未提交的真实 diff 都是客观进展；同一份指纹只消费一次。
+                let currentHead = GitWorkspace.headSHA(in: ws.path)
+                let currentFingerprint = WorkProgressStore.fingerprint(repo: ws.path)
+                guard let automatic = objectiveLeaseGate.renewal(
+                    currentHead: currentHead,
+                    currentFingerprint: currentFingerprint) else { return nil }
+                let changed = GitWorkspace.git(["status", "--porcelain=v1"], in: ws.path)
+                    .stdout.split(separator: "\n").count
+                let summary: String
+                if automatic.headChanged, let currentHead {
+                    summary = "检测到新提交 \(String(currentHead.prefix(8)))，服务端自动保持当前会话"
+                } else {
+                    summary = "检测到工作区有新改动（\(changed) 个文件），服务端自动保持当前会话"
+                }
                 if let item = try? WorkProgressStore.record(
                     taskID: task.id, phase: "持续实现", summary: summary,
                     nextStep: "继续当前任务", evidence: [], requestedMinutes: 20,

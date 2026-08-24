@@ -204,25 +204,39 @@ public final class ExecutionLeaseGate {
     }
 }
 
-/// Agent 忘记主动汇报时，用它自己落下的新提交兜底续期。
+/// Agent 忘记主动汇报时，用工作区的客观变化兜底续期。
 ///
-/// 提交比“进程还活着”强得多：它是可检查、可回滚、不会因同一份输出反复消费的
-/// 客观进展。这里只认新的 HEAD；未提交改动和重复心跳都不能续命。
-public final class CommitProgressLeaseGate {
+/// 新提交当然算进展；一批尚未提交、但已经落盘的代码和证据也算。后者正是长任务
+/// 最容易被误杀的窗口：Kimi 已写了五个取证文件，服务端却因为 HEAD 没变把会话
+/// 杀掉。同一份 HEAD + diff 指纹只能消费一次，因此静止的 WIP 不能无限续命。
+public final class ObjectiveProgressLeaseGate {
     private var lastAcceptedHead: String?
-    public let secondsPerCommit: TimeInterval
+    private var lastAcceptedFingerprint: String
+    public let secondsPerChange: TimeInterval
 
-    public init(baselineHead: String?, secondsPerCommit: TimeInterval = 20 * 60) {
+    public init(baselineHead: String?, baselineFingerprint: String,
+                secondsPerChange: TimeInterval = 20 * 60) {
         self.lastAcceptedHead = baselineHead
-        self.secondsPerCommit = max(60, secondsPerCommit)
+        self.lastAcceptedFingerprint = baselineFingerprint
+        self.secondsPerChange = max(60, secondsPerChange)
     }
 
-    public func renewal(currentHead: String?)
-        -> (seconds: TimeInterval, head: String)? {
-        guard let currentHead, !currentHead.isEmpty,
-              currentHead != lastAcceptedHead else { return nil }
+    /// Agent 已主动提交并被租约闸接受时同步基线，避免同一份成果下一轮又被兜底消费。
+    public func observe(currentHead: String?, currentFingerprint: String) {
         lastAcceptedHead = currentHead
-        return (secondsPerCommit, currentHead)
+        lastAcceptedFingerprint = currentFingerprint
+    }
+
+    public func renewal(currentHead: String?, currentFingerprint: String)
+        -> (seconds: TimeInterval, head: String?, fingerprint: String,
+            headChanged: Bool)? {
+        guard !currentFingerprint.isEmpty,
+              currentHead != lastAcceptedHead
+                || currentFingerprint != lastAcceptedFingerprint else { return nil }
+        let headChanged = currentHead != lastAcceptedHead
+        lastAcceptedHead = currentHead
+        lastAcceptedFingerprint = currentFingerprint
+        return (secondsPerChange, currentHead, currentFingerprint, headChanged)
     }
 }
 

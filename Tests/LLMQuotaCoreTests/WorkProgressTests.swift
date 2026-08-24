@@ -45,21 +45,49 @@ final class WorkProgressTests: XCTestCase {
     }
 
     func testNewCommitsRenewWhenAgentForgotToReportProgress() {
-        let gate = CommitProgressLeaseGate(baselineHead: "base")
+        let gate = ObjectiveProgressLeaseGate(
+            baselineHead: "base", baselineFingerprint: "clean")
 
-        XCTAssertNil(gate.renewal(currentHead: "base"),
+        XCTAssertNil(gate.renewal(currentHead: "base", currentFingerprint: "clean"),
                      "还停在开工提交时不能续期")
-        XCTAssertEqual(gate.renewal(currentHead: "commit-1")?.seconds, 20 * 60)
-        XCTAssertNil(gate.renewal(currentHead: "commit-1"),
-                     "同一个提交不能反复续命")
-        XCTAssertEqual(gate.renewal(currentHead: "commit-2")?.head, "commit-2",
+        XCTAssertEqual(gate.renewal(currentHead: "commit-1",
+                                    currentFingerprint: "commit-1-clean")?.seconds, 20 * 60)
+        XCTAssertNil(gate.renewal(currentHead: "commit-1",
+                                  currentFingerprint: "commit-1-clean"),
+                     "同一个提交和 diff 不能反复续命")
+        XCTAssertEqual(gate.renewal(currentHead: "commit-2",
+                                    currentFingerprint: "commit-2-clean")?.head, "commit-2",
                        "下一份真实提交应继续保持同一个执行会话")
     }
 
-    func testAutomaticCommitLeaseHasNoTotalCapWhileCommitsAdvance() {
-        let gate = CommitProgressLeaseGate(baselineHead: "base", secondsPerCommit: 600)
+    func testUncommittedWorkspaceChangesRenewOnlyWhenFingerprintAdvances() {
+        let gate = ObjectiveProgressLeaseGate(
+            baselineHead: "base", baselineFingerprint: "clean", secondsPerChange: 600)
+
+        XCTAssertEqual(gate.renewal(currentHead: "base",
+                                    currentFingerprint: "dirty-1")?.seconds, 600)
+        XCTAssertNil(gate.renewal(currentHead: "base", currentFingerprint: "dirty-1"),
+                     "静止的 WIP 不能无限续命")
+        XCTAssertEqual(gate.renewal(currentHead: "base",
+                                    currentFingerprint: "dirty-2")?.seconds, 600)
+    }
+
+    func testAcceptedExplicitProgressIsNotConsumedAgainByFallback() {
+        let gate = ObjectiveProgressLeaseGate(
+            baselineHead: "base", baselineFingerprint: "clean")
+        gate.observe(currentHead: "commit-1", currentFingerprint: "commit-1-clean")
+
+        XCTAssertNil(gate.renewal(currentHead: "commit-1",
+                                  currentFingerprint: "commit-1-clean"))
+    }
+
+    func testAutomaticObjectiveLeaseHasNoTotalCapWhileWorkspaceAdvances() {
+        let gate = ObjectiveProgressLeaseGate(
+            baselineHead: "base", baselineFingerprint: "clean", secondsPerChange: 600)
         for sequence in 1...20 {
-            XCTAssertEqual(gate.renewal(currentHead: "commit-\(sequence)")?.seconds, 600,
+            XCTAssertEqual(gate.renewal(
+                currentHead: "commit-\(sequence)",
+                currentFingerprint: "fingerprint-\(sequence)")?.seconds, 600,
                            "第 \(sequence) 个新提交仍应续期，不能重新引入总时长硬顶")
         }
     }
