@@ -3691,6 +3691,31 @@ func cmdRepo(_ args: [String]) throws {
             makeDefault: args.contains("--default"))
         print(Ansi.green("已登记 ") + e.alias + Ansi.dim("  " + e.path)
             + (e.isDefault ? Ansi.cyan("  [默认]") : ""))
+
+    case "bootstrap-game":
+        guard args.count >= 3,
+              let ownerFlag = args.firstIndex(of: "--owner"), ownerFlag + 1 < args.count,
+              let owner = Platform(rawValue: args[ownerFlag + 1]) else {
+            print("用法：llmq repo bootstrap-game <别名> <路径> --owner <平台> [--default]")
+            print(Ansi.dim("  创建缺失的游戏契约并登记负责人；已有文件绝不覆盖。"))
+            exit(2)
+        }
+        let result = try GameProjectBootstrap.apply(
+            alias: args[1], path: args[2], owner: owner,
+            makeDefault: args.contains("--default"))
+        print(Ansi.green("游戏项目已初始化：") + result.repo.alias)
+        print("  实现负责人  " + owner.displayName)
+        print("  质量契约    " + (result.repo.qualityContract ?? "—"))
+        if !result.created.isEmpty {
+            print("  新建          " + result.created.joined(separator: "、"))
+        }
+        if !result.preserved.isEmpty {
+            print(Ansi.dim("  保留已有文件  " + result.preserved.joined(separator: "、")))
+        }
+        print(Ansi.yellow("  首次派活前：补全 AGENTS.md、BENCHMARK.md 的“待填写”，"
+            + "并登记真实构建命令。"))
+        print(Ansi.dim("  llmq repo verify \(result.repo.alias) \"<构建 && 测试命令>\""))
+        return
     // llmq repo verify <别名> "<命令>" [--timeout 秒]
     // llmq repo focus <别名> [off] —— 标「持续推进」的仓库,队列空了才续活。
     // 老板 2026-08-23:「我们应该专注于项目去派活」「不要瞎续活」。
@@ -3850,7 +3875,7 @@ func cmdRepo(_ args: [String]) throws {
                 + "改路径：llmq repo add <别名> <新路径>"))
         }
     default:
-        print("用法：llmq repo [add|list|focus|verify|owner|quality]")
+        print("用法：llmq repo [add|bootstrap-game|list|focus|verify|owner|quality]")
         exit(2)
     }
 }
@@ -5290,6 +5315,51 @@ func relativeTime(_ d: Date) -> String {
     return "\(Int(t / 86400)) 天前"
 }
 
+func releaseWaitSeconds(_ args: [String], default value: Int) -> Int {
+    guard let i = args.firstIndex(of: "--wait-seconds"), i + 1 < args.count,
+          let parsed = Int(args[i + 1]) else { return value }
+    return max(0, parsed)
+}
+
+/// 等在线对端亲自确认目标版本。返回 false 就意味着“包发了，但集群发布没完成”。
+@discardableResult
+func waitForReleaseFanout(target: String, seconds: Int) -> Bool {
+    let localID = Paths.machineID()
+    func pending() -> [ClusterPresence] {
+        ReleaseFanout.pending(target: target, localMachineID: localID,
+                              presences: ClusterPresenceStore.all())
+    }
+    var missing = pending()
+    if missing.isEmpty {
+        print(Ansi.green("  ✓ 所有在线机器已确认 ") + target.prefix(12))
+        return true
+    }
+
+    if seconds > 0 {
+        print(Ansi.dim("等待在线机器确认（最多 \(seconds) 秒）："
+            + missing.map(\.machineName).joined(separator: "、")))
+    }
+    let deadline = Date().addingTimeInterval(TimeInterval(seconds))
+    while !missing.isEmpty, Date() < deadline {
+        Thread.sleep(forTimeInterval: min(5, max(0.2, deadline.timeIntervalSinceNow)))
+        // CLI 平时只读本地镜像；等待期间主动拉一次，不能要求人另开窗口刷新。
+        _ = MirrorService.sync(local: Paths.sharedRoot, cloud: Push.mirrorDir,
+                               selfMachineID: localID)
+        missing = pending()
+    }
+    guard missing.isEmpty else {
+        print(Ansi.red("集群发布未完成：以下在线机器还没确认 ") + target.prefix(12))
+        for p in missing {
+            print("  " + Ansi.red("✗ ") + p.machineName + Ansi.dim(
+                "  当前 " + (p.installedRelease ?? "未知")))
+        }
+        print(Ansi.dim("  自动更新每分钟检查；稍后用 llmq release verify 再确认。"))
+        return false
+    }
+    print(Ansi.green("  ✓ 所有在线机器已确认 ") + target.prefix(12))
+    return true
+}
+
 func cmdRelease(_ rest: [String]) throws {
     switch rest.first ?? "status" {
 
@@ -5420,10 +5490,13 @@ func cmdRelease(_ rest: [String]) throws {
         // 警告过的：换了二进制不等于换了正在跑的进程 —— 而这次连二进制
         // 都没换。
         try ReleaseChannel.install(m, payload: tar)
+        ClusterPresenceStore.publish()
         print(Ansi.green("本机已装上 ") + m.sha256.prefix(12))
         let restarted = restartResidentServices()
         if !restarted.isEmpty { print(Ansi.dim("  重启：" + restarted.joined(separator: " "))) }
-        // **发布不等于全网到齐 —— 把每台机器的状态摆出来。**
+        // **发布不等于全网到齐。** 过去这里只把旧机器红字列出来，命令仍以 0
+        // 退出，于是自动化和人都会把它当成完成。现在在线机器没亲自回报同一
+        // 哈希就返回失败；离线机器不阻塞，回来后 updater 会自行追上。
         //
         // 老板 2026-08-23:「发包真的基础的事情,每次都忘记两台全发」。
         // 根子不是我忘,是发布**只把包放进共享目录就宣布完成**,从不回头看
@@ -5432,40 +5505,29 @@ func cmdRelease(_ rest: [String]) throws {
         //
         // 这里按 presence 报告的 installedRelease 逐台核对:已跟上的打勾,
         // 没跟上的红着列出来,一眼就知道还差谁 —— 不用记、不用猜。
-        let target = m.sha256
-        let peers = ClusterPresenceStore.all().filter {
-            $0.machineID != Paths.machineID()
-        }
-        if peers.isEmpty {
-            print(Ansi.dim("集群里暂时只有本机。"))
-        } else {
-            print(Ansi.bold("各机器更新状态："))
-            print("  " + Ansi.green("✓ ") + Paths.machineName() + Ansi.dim("（本机，刚装）"))
-            var behind = 0
-            for p in peers.sorted(by: { $0.machineName < $1.machineName }) {
-                let cur = p.installedRelease ?? ""
-                if cur.hasPrefix(target.prefix(12)) {
-                    print("  " + Ansi.green("✓ ") + p.machineName + Ansi.dim("  已跟上"))
-                } else {
-                    behind += 1
-                    let was = cur.isEmpty ? "未知" : String(cur.prefix(12))
-                    print("  " + Ansi.red("✗ ") + p.machineName
-                        + Ansi.dim("  还在 \(was) —— 它会自动更新，一般 30 分钟内"))
-                }
-            }
-            if behind > 0 {
-                print(Ansi.yellow("  \(behind) 台还没跟上。") + Ansi.dim(
-                    "它们各自的 updater 每半小时拉一次；等急了可在那台上跑 llmq update。"))
-                print(Ansi.dim("  从机太老连 update 都没有时：llmq release bootstrap 打印引导脚本。"))
-            } else {
-                print(Ansi.green("  全部机器已是最新。"))
-            }
-        }
+        guard waitForReleaseFanout(
+            target: m.sha256, seconds: releaseWaitSeconds(rest, default: 180))
+        else { exit(3) }
 
     // llmq release install-updater [秒]
     case "install-updater":
-        let secs = rest.dropFirst().first.flatMap { Int($0) } ?? 1800
+        let secs = rest.dropFirst().first.flatMap { Int($0) } ?? 60
         try installUpdater(interval: secs)
+
+    case "verify":
+        switch ReleaseChannel.check() {
+        case .upToDate(let sha):
+            guard waitForReleaseFanout(
+                target: sha, seconds: releaseWaitSeconds(rest, default: 0))
+            else { exit(3) }
+        case .available(let m, _):
+            print(Ansi.red("本机还没安装当前发布 ") + m.sha256.prefix(12))
+            print(Ansi.dim("  先跑 llmq update")); exit(3)
+        case .noChannel:
+            print(Ansi.red("还没有发布过")); exit(3)
+        case .rejected(let why):
+            print(Ansi.red("拒绝：" + why)); exit(1)
+        }
 
     // llmq release bootstrap —— 打印一段自包含的引导脚本
     case "bootstrap":
@@ -5524,6 +5586,14 @@ func cmdRelease(_ rest: [String]) throws {
             print(Ansi.dim("还没有发布过。在主机上跑：llmq release publish"))
         case .upToDate(let sha):
             print(Ansi.green("已是最新 ") + sha.prefix(12))
+            let pending = ReleaseFanout.pending(
+                target: sha, localMachineID: Paths.machineID(),
+                presences: ClusterPresenceStore.all())
+            if !pending.isEmpty {
+                print(Ansi.yellow("集群尚未完成：")
+                    + pending.map { "\($0.machineName)(\($0.installedRelease ?? "未知"))" }
+                        .joined(separator: "、"))
+            }
         case .available(let m, _):
             print(Ansi.bold("有新版本 ") + m.sha256.prefix(12))
             print(Ansi.dim("  发布于 \(relativeTime(m.publishedAt))，来自 \(m.publishedBy)"))
@@ -5537,9 +5607,11 @@ func cmdRelease(_ rest: [String]) throws {
         print("""
         \(Ansi.bold("llmq release")) — 给集群发版
 
-          llmq release publish [--notes "..."]   编译、打包、签名、发到 iCloud
-          llmq release status                    看当前通道里是什么版本
-          llmq release install-updater [秒]      装成定时自动更新（默认 1800 秒）
+          llmq release publish [--notes "..."] [--wait-seconds 180]
+                                               发布；在线机器未全确认则失败
+          llmq release verify                   复核在线机器是否全到齐
+          llmq release status                   看当前通道和集群版本
+          llmq release install-updater [秒]     装成定时自动更新（默认 60 秒）
 
         签名链：集群 CA → release-signer 证书 → 清单签名 → 包哈希。
         从机会逐环验证，任何一环对不上就拒绝安装。
@@ -5549,8 +5621,7 @@ func cmdRelease(_ rest: [String]) throws {
 
 /// 装一个定时检查更新的 launchd 任务。
 ///
-/// 故意不做成"发现新版就立刻装"：更新会替换正在跑的二进制，
-/// 半小时一次已经足够快，而检查本身几乎不花钱（读两个小文件 + 验一次签名）。
+/// 每分钟检查一次。安装和重启都有在飞任务保护；检查本身只读两个小文件并验签。
 func installUpdater(interval: Int) throws {
     let label = "com.llmquotabar.updater"
     // 同 cmdInstallAgent：不能用 argv[0] 推路径，从 PATH 调用时它只是 "llmq"。
@@ -5611,6 +5682,9 @@ func cmdUpdate(_ rest: [String]) throws {
         }
         print(Ansi.dim("验签通过，安装 \(m.sha256.prefix(12))…"))
         try ReleaseChannel.install(m, payload: payload)
+        // 发布端在等这台机器亲自确认。不能等下一轮五分钟采集，安装成功就
+        // 立刻上报，再由菜单栏镜像到 iCloud。
+        ClusterPresenceStore.publish()
         print(Ansi.green("已更新到 ") + m.sha256.prefix(12))
         if !m.notes.isEmpty { print(Ansi.dim("  " + m.notes)) }
         // 换了二进制不等于换了正在跑的进程。
