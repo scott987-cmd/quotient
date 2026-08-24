@@ -20,18 +20,27 @@ public enum RoadmapPage {
         public var openCount: Int            // 还在排/在跑的
     }
 
-    /// 从 PLAN.md 抽一段人能看的概述:标题 + 阶段行,跳过纯符号行。
-    static func excerpt(_ plan: String, limit: Int = 800) -> String {
+    /// 从 PLAN.md 抽一段手机上能扫完的概述。完整计划仍留在仓库里；
+    /// 把几千字 Markdown 塞进通用卡片，只会得到一堵没有层级的文字墙。
+    static func excerpt(_ plan: String, limit: Int = 360) -> String {
         var out: [String] = []
         for raw in plan.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
+            var line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty { continue }
             // 表格分隔行(|---|---|)对人没意义,跳过。
             if line.allSatisfy({ "|-: ".contains($0) }) { continue }
+            // 表格正文、代码围栏和大段实现细节不适合摘要。
+            if line.hasPrefix("|") || line.hasPrefix("```") { continue }
+            line = line.replacingOccurrences(of: "**", with: "")
+            while line.hasPrefix("#") { line.removeFirst() }
+            line = line.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("- ") { line.removeFirst(2) }
+            if line.isEmpty { continue }
             out.append(line)
-            if out.joined(separator: "\n").count > limit { break }
+            if out.count == 6 || out.joined(separator: "\n").count >= limit { break }
         }
-        return out.joined(separator: "\n")
+        let text = out.joined(separator: "\n")
+        return text.count > limit ? String(text.prefix(limit)) + "…" : text
     }
 
     /// 收集每个仓库的计划状态。git/文件读取注入,方便测试。
@@ -77,15 +86,14 @@ public enum RoadmapPage {
             ], now: now)
         }
         return ViewFeed.Page(page: "roadmap", sections: data.map { repo in
-            let landings = repo.recentLandings.isEmpty
-                ? "（还没有落地记录）"
-                : "最近落地：\n  " + repo.recentLandings.joined(separator: "\n  ")
+            let latest = repo.recentLandings.first.map { "最近完成：" + $0 }
+                ?? "还没有落地记录"
             return ViewFeed.Section(
                 kind: "cards", title: repo.alias,
                 cards: [ViewFeed.Card(
                     id: "roadmap-" + repo.alias,
                     title: repo.openCount > 0 ? "在做 \(repo.openCount) 项" : "队列空闲",
-                    body: landings,
+                    body: latest,
                     detail: repo.goalExcerpt,
                     tone: .neutral, icon: "map")])
         }, now: now)

@@ -14,10 +14,13 @@ final class RoadmapPageTests: XCTestCase {
         | 阶段 | 内容 |
         |---|---|
         | P1 | 灰盒核心 |
+
+        当前阶段：打磨移动端
         """
         let e = RoadmapPage.excerpt(plan)
         XCTAssertTrue(e.contains("燧石行动计划"))
-        XCTAssertTrue(e.contains("P1"))
+        XCTAssertTrue(e.contains("当前阶段"))
+        XCTAssertFalse(e.contains("灰盒核心"), "表格正文在手机摘要里也是噪声")
         XCTAssertFalse(e.contains("|---|"), "表格分隔行对人没意义,该滤掉")
     }
 
@@ -38,5 +41,13 @@ final class RoadmapPageTests: XCTestCase {
         XCTAssertEqual(p.page, "roadmap")
         XCTAssertTrue((p.sections.first?.text ?? "").contains("PLAN.md"),
                       "空的时候要告诉人怎么让它有内容")
+    }
+
+    func testDynamicMenuOnlyContainsReadOnlyExtensions() {
+        let pages = ViewFeed.menu().entries.map(\.page)
+        XCTAssertEqual(pages, ["roadmap"])
+        XCTAssertFalse(pages.contains("review"))
+        XCTAssertFalse(pages.contains("blocked"))
+        XCTAssertFalse(pages.contains("playbook"))
     }
 }

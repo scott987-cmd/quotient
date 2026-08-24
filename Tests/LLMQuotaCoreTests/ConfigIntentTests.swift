@@ -279,6 +279,45 @@ final class ConfigIntentTests: XCTestCase {
         XCTAssertEqual(back.maxRisk, .sensitive, "风险上限被洗掉了")
     }
 
+    func testRoleIntentUpdatesOnlyEditableJobFields() throws {
+        var before = AgentRoles.role(for: .qwen)
+        before.dispatcherOn = ["控制机"]
+        before.mutedOn = ["离线机"]
+        before.reserveFraction = 0.4
+        try AgentRoles.save([before])
+
+        drop("""
+        {"id":"role-1","kind":"role","platform":"qwen",
+         "title":"移动端开发","maxRisk":"sensitive","tierLimit":"auto",
+         "prefers":["trivial","complex","trivial"],"note":"优先处理 SwiftUI"}
+        """)
+        let out = ConfigIntentIngest.run()
+        XCTAssertTrue(out.first?.accepted == true, out.first?.note ?? "没有回执")
+
+        let role = AgentRoles.role(for: .qwen)
+        XCTAssertEqual(role.title, "移动端开发")
+        XCTAssertEqual(role.maxRisk, .sensitive)
+        XCTAssertNil(role.maxTier)
+        XCTAssertEqual(role.prefers, [.trivial, .complex])
+        XCTAssertEqual(role.note, "优先处理 SwiftUI")
+        XCTAssertEqual(role.dispatcherOn, ["控制机"], "手机不许洗掉指挥身份")
+        XCTAssertEqual(role.mutedOn, ["离线机"], "手机不许洗掉机器静音")
+        XCTAssertEqual(role.reserveFraction, 0.4, "岗位编辑不许顺带改留白")
+    }
+
+    func testInvalidRoleIntentIsRejectedWithoutPartialWrite() {
+        let before = AgentRoles.role(for: .kimi)
+        drop("""
+        {"id":"role-bad","kind":"role","platform":"kimi",
+         "title":"新岗位","maxRisk":"root-access"}
+        """)
+        let out = ConfigIntentIngest.run()
+        XCTAssertFalse(out.first?.accepted ?? true)
+        XCTAssertTrue(out.first?.note.contains("风险上限") == true)
+        XCTAssertEqual(AgentRoles.role(for: .kimi).title, before.title,
+                       "字段验证必须先完成，不能只落一半")
+    }
+
     /// **超范围要拒，不能静默钳制。**
     ///
     /// 钳到 0.95 的话，用户记得自己设的是 99%，界面回读也说 95%，

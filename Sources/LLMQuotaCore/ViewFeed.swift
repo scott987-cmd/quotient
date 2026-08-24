@@ -241,9 +241,25 @@ public enum ViewFeed {
     /// 手机点了动作之后写来的东西。
     public struct Invocation: Codable, Sendable {
         public var id: String
+        /// 新手机每次点击生成一个。缺失时按旧版 id+at 兼容。
+        public var invocationID: String?
         public var at: Date
         public var device: String?
         public var note: String?
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+            invocationID = try c.decodeIfPresent(String.self, forKey: .invocationID)
+            at = try c.decodeIfPresent(Date.self, forKey: .at) ?? .distantPast
+            device = try c.decodeIfPresent(String.self, forKey: .device)
+            note = try c.decodeIfPresent(String.self, forKey: .note)
+        }
+
+        public var key: String {
+            if let invocationID, !invocationID.isEmpty { return "invocation@" + invocationID }
+            return id + "@" + ISO8601DateFormatter().string(from: at)
+        }
     }
 
     static var actionsDir: URL {
@@ -280,8 +296,7 @@ public enum ViewFeed {
             guard let inv = SafeDecode.json(
                 at: actionsDir.appendingPathComponent(n), as: Invocation.self)
             else { continue }
-            let key = inv.id + "@" + ISO8601DateFormatter().string(from: inv.at)
-            if done.contains(key) { continue }
+            if done.contains(inv.key) { continue }
             out.append(inv)
         }
         return out
@@ -314,7 +329,7 @@ public enum ViewFeed {
     @discardableResult
     public static func recordFailure(_ inv: Invocation, reason: String) -> Int {
         var m = failureCounts()
-        let key = inv.id + "@" + ISO8601DateFormatter().string(from: inv.at)
+        let key = inv.key
         let n = (m[key] ?? 0) + 1
         m[key] = n
         // 只留最近 200 条，和 .done 一个道理：这是防重试的账，不是审计日志。
@@ -330,13 +345,12 @@ public enum ViewFeed {
 
     /// 试够了没有。够了就该收口，别再重试。
     public static func exhausted(_ inv: Invocation) -> Bool {
-        let key = inv.id + "@" + ISO8601DateFormatter().string(from: inv.at)
-        return (failureCounts()[key] ?? 0) >= maxAttempts
+        return (failureCounts()[inv.key] ?? 0) >= maxAttempts
     }
 
     public static func markDone(_ inv: Invocation) {
         let f = actionsDir.appendingPathComponent(".done")
-        let key = inv.id + "@" + ISO8601DateFormatter().string(from: inv.at)
+        let key = inv.key
         // **写之前紧挨着重读一次。**
         //
         // 这是「读 → 改 → 写」，本身已经是合并语义，但**两台机器并发时
@@ -565,32 +579,12 @@ extension ViewFeed {
     /// 数字在这里算（以前是客户端数的）—— 「等你验收 2」这个 2
     /// 要跟 Nudge 的口径一致，两处各算一次迟早会对不上。
     public static func menu(now: Date = Date()) -> Menu {
-        let pending = Nudge.pending(now: now)
-        func badge(_ prefix: String) -> Int? {
-            let n = pending.first { $0.key.hasPrefix(prefix) }?.badge ?? 0
-            return n > 0 ? n : nil
-        }
         return Menu(entries: [
-            MenuEntry(page: "review", title: "等你验收",
-                      icon: "checkmark.seal", badge: badge("review"), group: "要你拍板"),
-            // 高危改动等人放行。**必须有这个入口** —— 在它之前,通知说
-            // 「1 个任务被拦下等你放行」,而手机上只有一个「卡住 N 件」的
-            // 计数,点了也没用(老板 2026-08-22:「我确认了,但是手机端一直
-            // 在重复弹出来让我确认」)。下面那段注释说「能点但什么都没有的
-            // 入口比没有更糟」—— 而「有提醒却没有入口」比这还糟。
-            MenuEntry(page: "blocked", title: "等你放行",
-                      icon: "exclamationmark.shield", badge: badge("blocked"),
-                      group: "要你拍板"),
             // 各仓库的计划和进度 —— 老板随时能翻,不用问「还在做吗」。
-            // 放「看进展」组,不占「要你拍板」那组(它是只读的)。
+            // 审批、验收和项目批准都有原生入口并集中在「现在」页；通用页面
+            // 只承担低风险的只读扩展，不能再生成第二套操作流程。
             MenuEntry(page: "roadmap", title: "计划进度",
                       icon: "map", badge: nil, group: "看进展"),
-            MenuEntry(page: "playbook", title: "项目清单",
-                      icon: "list.bullet.rectangle.portrait",
-                      badge: badge("playbook"), group: "要你拍板"),
-            // 「看板」不列在这里：它有自己的标签页，而且原生那版更全。
-            // 菜单里指向一个不再下发的页面，点进去只会是「这一页还没有内容」——
-            // 一个能点但什么都没有的入口，比没有这个入口更糟。
         ], now: now)
     }
 

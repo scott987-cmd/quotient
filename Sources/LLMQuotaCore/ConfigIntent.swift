@@ -64,10 +64,22 @@ public struct ConfigIntent: Codable, Sendable {
     /// 「参数不对」的话，用户不知道该补一个字段还是该改一个数。
     public var fraction: Double?
 
+    /// kind == "role" 时要改的岗位字段。全部使用跨版本稳定的字符串；
+    /// 没带的字段保持原值，空数组/空字符串则表示用户明确要清空。
+    public var title: String?
+    public var maxRisk: String?
+    /// trivial / standard / complex / auto，auto 表示恢复能力学习器决定。
+    public var tierLimit: String?
+    public var prefers: [String]?
+    public var note: String?
+
     public init(id: String = UUID().uuidString, createdAt: Date = Date(),
                 source: String = "phone", kind: String = ConfigIntent.kindReserve,
                 platform: String, fraction: Double? = nil,
-                planID: String? = nil, targetMachineID: String? = nil) {
+                planID: String? = nil, targetMachineID: String? = nil,
+                title: String? = nil, maxRisk: String? = nil,
+                tierLimit: String? = nil, prefers: [String]? = nil,
+                note: String? = nil) {
         self.id = id
         self.createdAt = createdAt
         self.source = source
@@ -76,6 +88,11 @@ public struct ConfigIntent: Codable, Sendable {
         self.fraction = fraction
         self.planID = planID
         self.targetMachineID = targetMachineID
+        self.title = title
+        self.maxRisk = maxRisk
+        self.tierLimit = tierLimit
+        self.prefers = prefers
+        self.note = note
     }
 
     /// 跨版本、跨设备传的结构一律手写 —— 合成解码器缺一个键就整条丢，
@@ -96,10 +113,16 @@ public struct ConfigIntent: Codable, Sendable {
         fraction = try c.decodeIfPresent(Double.self, forKey: .fraction)
         planID = try c.decodeIfPresent(String.self, forKey: .planID)
         targetMachineID = try c.decodeIfPresent(String.self, forKey: .targetMachineID)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        maxRisk = try c.decodeIfPresent(String.self, forKey: .maxRisk)
+        tierLimit = try c.decodeIfPresent(String.self, forKey: .tierLimit)
+        prefers = try c.decodeIfPresent([String].self, forKey: .prefers)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
     }
 
     public static let kindReserve = "reserve"
     public static let kindPlanGo = "plan-go"
+    public static let kindRole = "role"
 
     /// 留白的合法区间。
     ///
@@ -283,6 +306,9 @@ public enum ConfigIntentIngest {
         if intent.kind == ConfigIntent.kindPlanGo {
             return applyPlanGo(intent)
         }
+        if intent.kind == ConfigIntent.kindRole {
+            return applyRole(intent)
+        }
         guard intent.kind == ConfigIntent.kindReserve else {
             return .rejected("不认识的意图类型「\(intent.kind)」"
                 + "——这台 Mac 的版本可能比手机旧")
@@ -318,6 +344,64 @@ public enum ConfigIntentIngest {
         }
         let from = before.map(fmt) ?? "默认"
         return .applied("\(p.displayName) 留白 \(from) → \(fmt(f))")
+    }
+
+    static func applyRole(_ intent: ConfigIntent) -> Outcome {
+        guard let platform = Platform(rawValue: intent.platform) else {
+            return .rejected("不认识的平台「\(intent.platform)」")
+        }
+        guard intent.title != nil || intent.maxRisk != nil || intent.tierLimit != nil
+                || intent.prefers != nil || intent.note != nil else {
+            return .rejected("role 意图没有任何岗位字段")
+        }
+
+        var role = AgentRoles.role(for: platform)
+        if let raw = intent.title {
+            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, value.count <= 30 else {
+                return .rejected("岗位名必须是 1–30 个字符")
+            }
+            role.title = value
+        }
+        if let raw = intent.maxRisk {
+            guard let value = TaskProfile.Risk(rawValue: raw) else {
+                return .rejected("不认识的风险上限「\(raw)」")
+            }
+            role.maxRisk = value
+        }
+        if let raw = intent.tierLimit {
+            if raw == "auto" {
+                role.maxTier = nil
+            } else if let value = TaskProfile.Tier(rawValue: raw) {
+                role.maxTier = value
+            } else {
+                return .rejected("不认识的难度上限「\(raw)」")
+            }
+        }
+        if let raw = intent.prefers {
+            let values = raw.compactMap { TaskProfile.Tier(rawValue: $0) }
+            guard values.count == raw.count else {
+                return .rejected("偏好档次里有不认识的值")
+            }
+            var seen = Set<String>()
+            role.prefers = values.filter { seen.insert($0.rawValue).inserted }.sorted()
+        }
+        if let raw = intent.note {
+            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard value.count <= 200 else {
+                return .rejected("岗位说明不能超过 200 个字符")
+            }
+            role.note = value
+        }
+
+        var all = AgentRoles.all()
+        all[platform] = role
+        do {
+            try AgentRoles.save(Array(all.values))
+        } catch {
+            return .retry("写角色配置没成功：\(error.localizedDescription)")
+        }
+        return .applied("已更新 \(platform.displayName) 的岗位规则")
     }
 
     static func fmt(_ f: Double) -> String {
