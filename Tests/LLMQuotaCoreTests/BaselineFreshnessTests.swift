@@ -104,6 +104,29 @@ final class BaselineFreshnessTests: XCTestCase {
             "合不进去的分支不能无限期挡住新活 —— 那是把仓库冻死，不是保护它")
     }
 
+    /// 视觉验收已经判退的分支不是“马上要落地的成果”。整改任务必须能开工，
+    /// 否则分支等整改、整改等分支落地，整个仓库形成死锁。
+    func testVisualQualityRejectedBranchDoesNotBlockRemediation() {
+        let branch = "agent/kimi/ddd44444"
+        git(["checkout", "-q", "-b", branch])
+        for i in 0..<4 { write("Render/F\(i).swift", "class F\(i) {}\n") }
+        git(["add", "-A"]); git(["commit", "-q", "-m", "待视觉验收成果"])
+        let head = GitWorkspace.git(["rev-parse", "--short", "HEAD"], in: repo)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        git(["checkout", "-q", "main"])
+
+        var visual = WorkTask(
+            id: "visual", prompt: VisualQualityGate.marker(branch: branch, head: head),
+            repo: repo)
+        visual.state = .done
+        visual.outputs = ["**结论**：未达标\n存在穿模和悬空"]
+
+        XCTAssertEqual(
+            BaselineFreshness.check(repo: repo, tasks: [doneTask("ddd44444"), visual]),
+            .fresh,
+            "视觉验收判退后必须允许整改任务启动，不能继续把仓库当成基线待合")
+    }
+
     /// 说明必须写出「为什么不能先干」。
     ///
     /// 只说「基线不新鲜」，以后改这段代码的人会以为这是个可以放宽的

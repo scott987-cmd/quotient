@@ -71,6 +71,12 @@ public enum BaselineFreshness {
                                           headAt: item.committedAt).rejected {
                 continue
             }
+            // 视觉闸判退和代码评审判退的语义相同：当前提交不会落地，
+            // 必须放行后续整改；否则分支等整改、整改等分支，形成死锁。
+            if VisualQualityGate.status(branch: item.branch, head: item.head,
+                                        tasks: tasks) == .rejected {
+                continue
+            }
             names.append(item.branch)
             total += item.files.count
         }
