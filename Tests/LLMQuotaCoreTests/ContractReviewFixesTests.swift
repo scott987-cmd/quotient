@@ -44,6 +44,17 @@ final class ContractReviewFixesTests: XCTestCase {
         }
     }
 
+    func test_长任务不能堵住确认提醒() {
+        let s = mainSwift
+        guard let start = s.range(of: "func cmdUpdate(_ rest: [String]) throws {") else {
+            return XCTFail("找不到独立于 worker 的每分钟更新入口")
+        }
+        let end = s.index(start.upperBound, offsetBy: 4200, limitedBy: s.endIndex) ?? s.endIndex
+        XCTAssertTrue(String(s[start.upperBound..<end])
+            .contains("Nudge.run(synchronizeBadge: false)"),
+            "提醒只挂在同步 work loop 上时，agent 连跑几十分钟期间不会检查待确认事项")
+    }
+
     // MARK: M6 角标和页面一个口径
 
     private func blocked(_ note: String, frozenBy: String? = nil) -> WorkTask {

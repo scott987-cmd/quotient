@@ -5814,6 +5814,12 @@ func cmdUpdate(_ rest: [String]) throws {
                     .joined(separator: "、")))
         }
     }
+
+    // updater 是独立的每分钟进程，不能只拿来查版本：worker 正在同步跑一个
+    // 几十分钟的 agent 时，工作循环走不到「提醒」阶段，期间新出现的验收/
+    // 提问就一直静默。借这个已有心跳补跑提醒，不另养第五个 launchd 服务。
+    // 横幅本身已经携带总角标；这里不额外发 badge-only，避免每分钟重复打 APNs。
+    if !checkOnly { _ = Nudge.run(synchronizeBadge: false) }
 }
 
 /// 踢一下所有常驻服务。返回被重启的 label。

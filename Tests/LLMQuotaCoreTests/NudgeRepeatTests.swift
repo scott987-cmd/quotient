@@ -24,10 +24,15 @@ final class NudgeRepeatTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nudge-repeat-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        Paths.appSupportOverride = root
         try? FileManager.default.removeItem(at: Nudge.path)
     }
     override func tearDown() {
         try? FileManager.default.removeItem(at: Nudge.path)
+        Paths.appSupportOverride = nil
         super.tearDown()
     }
 

@@ -339,7 +339,7 @@ public enum Nudge {
         return Array(repeating: total, count: items.count)
     }
 
-    public static func run(now: Date = Date()) -> Int {
+    public static func run(now: Date = Date(), synchronizeBadge: Bool = true) -> Int {
         let items = pending(now: now)
         let notificationBadges = notificationBadges(for: items)
         let totalBadge = notificationBadges.first ?? 0
@@ -348,7 +348,7 @@ public enum Nudge {
         // 角标是持久的：设成 94 之后就一直挂着，而新推送被限流挡住时
         // 没人去改它。人盯着 94 找不到对应的东西，这个数就成了噪音。
         // 静默推送不响不弹，只把数字改对。
-        Push.syncBadge(totalBadge)
+        if synchronizeBadge { Push.syncBadge(totalBadge) }
 
         var sent = 0
         for (item, appBadge) in zip(items, notificationBadges) {
