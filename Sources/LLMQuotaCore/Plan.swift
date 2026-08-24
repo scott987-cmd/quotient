@@ -686,6 +686,11 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
     /// 这张图一共几步。**按 graphID 数出来的**，不是记录里存的。
     public var stepTotal: Int?
     public var repoAlias: String?
+    public var progressPhase: String?
+    public var progressSummary: String?
+    public var progressNextStep: String?
+    public var progressUpdatedAt: Date?
+    public var progressEvidenceCount: Int?
 
     public init(
         id: String,
@@ -698,7 +703,12 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         graphID: String? = nil,
         stepIndex: Int? = nil,
         stepTotal: Int? = nil,
-        repoAlias: String? = nil
+        repoAlias: String? = nil,
+        progressPhase: String? = nil,
+        progressSummary: String? = nil,
+        progressNextStep: String? = nil,
+        progressUpdatedAt: Date? = nil,
+        progressEvidenceCount: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -711,6 +721,11 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         self.stepIndex = stepIndex
         self.stepTotal = stepTotal
         self.repoAlias = repoAlias
+        self.progressPhase = progressPhase
+        self.progressSummary = progressSummary
+        self.progressNextStep = progressNextStep
+        self.progressUpdatedAt = progressUpdatedAt
+        self.progressEvidenceCount = progressEvidenceCount
     }
 
     /// 手写解码，可选字段一律 `decodeIfPresent`。
@@ -735,6 +750,11 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         stepIndex = try c.decodeIfPresent(Int.self, forKey: .stepIndex)
         stepTotal = try c.decodeIfPresent(Int.self, forKey: .stepTotal)
         repoAlias = try c.decodeIfPresent(String.self, forKey: .repoAlias)
+        progressPhase = try c.decodeIfPresent(String.self, forKey: .progressPhase)
+        progressSummary = try c.decodeIfPresent(String.self, forKey: .progressSummary)
+        progressNextStep = try c.decodeIfPresent(String.self, forKey: .progressNextStep)
+        progressUpdatedAt = try c.decodeIfPresent(Date.self, forKey: .progressUpdatedAt)
+        progressEvidenceCount = try c.decodeIfPresent(Int.self, forKey: .progressEvidenceCount)
     }
 
     /// 按**字符**截断，超了就用省略号收尾（收尾之后总长仍然 ≤ 上限）。

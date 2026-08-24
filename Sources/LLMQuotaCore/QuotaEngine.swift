@@ -89,10 +89,13 @@ public struct QuotaEngine: Sendable {
         }
 
         // TaskStore.all() 每个 id 只留最新一条，正是这里要的。
+        let boardTasks = tasks ?? TaskStore.all()
         let board = TaskBoard.build(
-            from: tasks ?? TaskStore.all(),
+            from: boardTasks,
             machineName: machineName,
             repoAliases: repoAliases ?? RepoRegistry.all(),
+            progressByTaskID: tasks == nil
+                ? WorkProgressStore.latestByTaskID(taskIDs: Set(boardTasks.map(\.id))) : [:],
             now: now)
 
         return Dashboard(generatedAt: now, machines: machines, reports: reports,

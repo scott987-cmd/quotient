@@ -175,7 +175,10 @@ public enum TaskBoardStore {
         now: Date = Date()
     ) -> Bool {
         let built = TaskBoard.build(from: tasks, machineName: machineName,
-                                    repoAliases: RepoRegistry.all(), now: now)
+                                    repoAliases: RepoRegistry.all(),
+                                    progressByTaskID: WorkProgressStore.latestByTaskID(
+                                        taskIDs: Set(tasks.map(\.id))),
+                                    now: now)
         let planned = PlannedStore.all().map {
             MachineTaskBoard.PlannedBrief(
                 id: $0.id,

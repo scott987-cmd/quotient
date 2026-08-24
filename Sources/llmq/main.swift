@@ -857,6 +857,57 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.dim("  解冻 " + x.id + "  " + (x.note ?? "")))
         }
 
+    case "progress":
+        // Agent 在同一个会话里交里程碑：既给执行租约续期，也立刻发到手机。
+        // 不回写 WorkTask，避免 agent 子进程和 worker 并发覆盖任务主状态。
+        var optionArgs = rest
+        let explicitID: String?
+        if let first = optionArgs.first, !first.hasPrefix("--") {
+            explicitID = first
+            optionArgs.removeFirst()
+        } else {
+            explicitID = nil
+        }
+        func option(_ name: String) -> String? {
+            guard let i = optionArgs.firstIndex(of: name), i + 1 < optionArgs.count else {
+                return nil
+            }
+            return optionArgs[i + 1]
+        }
+        let progressEnv = ProcessInfo.processInfo.environment
+        guard let taskID = explicitID ?? progressEnv["LLMQ_TASK_ID"], !taskID.isEmpty else {
+            print("用法：llmq work progress [任务id] --phase <阶段> --summary <完成事实> "
+                  + "[--next <下一步>] [--evidence <路径>] [--request-minutes 20]")
+            exit(2)
+        }
+        guard let phase = option("--phase"), !phase.trimmingCharacters(in: .whitespaces).isEmpty,
+              let summary = option("--summary"),
+              !summary.trimmingCharacters(in: .whitespaces).isEmpty else {
+            print(Ansi.red("--phase 和 --summary 不能为空")); exit(2)
+        }
+        guard let progressTask = TaskStore.all().first(where: { $0.id == taskID }),
+              progressTask.state == .running else {
+            print(Ansi.red("任务 \(taskID) 不存在或已不在运行，拒绝写入伪进度")); exit(1)
+        }
+        var evidence: [String] = []
+        for i in optionArgs.indices where optionArgs[i] == "--evidence"
+            && i + 1 < optionArgs.count {
+            evidence.append(optionArgs[i + 1])
+        }
+        let requested = option("--request-minutes").flatMap(Int.init) ?? 20
+        let workspace = progressEnv["LLMQ_WORKSPACE"]
+            ?? FileManager.default.currentDirectoryPath
+        guard GitWorkspace.isRepo(workspace) else {
+            print(Ansi.red("进度必须从任务的 git 工作区汇报")); exit(1)
+        }
+        let item = try WorkProgressStore.record(
+            taskID: taskID, phase: phase, summary: summary,
+            nextStep: option("--next"), evidence: evidence,
+            requestedMinutes: requested, repo: workspace)
+        _ = Watchdog.run("progress.publish", timeout: 8) { TaskBoardStore.publishNow() }
+        print(Ansi.green("已汇报里程碑 #\(item.sequence) ")
+              + Ansi.dim("\(item.phase)：\(item.summary)"))
+
     case "done":
         // **人在系统外把活办了，系统得能知道。**
         //
@@ -1637,7 +1688,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|retry|discard|attempts|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|retry|discard|progress|attempts|log]")
         exit(2)
     }
 }
@@ -2329,6 +2380,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         // 老板（2026-08-20）：「尽量让一个任务在一个 agent 内完成工作」。
         effectivePrompt += EvidenceGate.inlineClause(repoPath: task.repo,
                                                      prompt: task.prompt)
+        effectivePrompt += WorkProgressContract.clause()
         // 图内节点要知道自己在整件事里的位置。
         //
         // 换了平台的 agent 对前面发生了什么一无所知 —— 这正是「上下文丢失」
@@ -2434,8 +2486,27 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             headBefore: headBefore, headAfter: headBefore,
             timedOut: false, sessionSupport: pick.runner.sessionSupport,
             sessionAction: .from(session)))
-        let r = Proc.run(cmd.launchPath, cmd.args, cwd: ws.path, env: cmd.env,
-                         timeout: attemptTimeout)
+        var executionEnv = cmd.env
+        executionEnv["LLMQ_TASK_ID"] = task.id
+        executionEnv["LLMQ_WORKSPACE"] = ws.path
+        executionEnv["LLMQ_INITIAL_LEASE_SECONDS"] = String(Int(attemptTimeout))
+        let leaseGate = ExecutionLeaseGate(
+            taskID: task.id,
+            baselineFingerprint: WorkProgressStore.fingerprint(repo: ws.path),
+            existing: WorkProgressStore.load(taskID: task.id))
+        let r = Proc.run(
+            cmd.launchPath, cmd.args, cwd: ws.path, env: executionEnv,
+            timeout: attemptTimeout,
+            deadlineExtension: { _ in
+                guard let renewed = leaseGate.renewal(
+                    progress: WorkProgressStore.load(taskID: task.id)) else { return nil }
+                let minutes = Int(renewed.seconds / 60)
+                print(Ansi.cyan("  续期 \(minutes) 分钟：")
+                      + Ansi.dim("\(renewed.progress.phase) · \(renewed.progress.summary)"))
+                return Proc.DeadlineExtension(
+                    seconds: renewed.seconds,
+                    reason: renewed.progress.summary)
+            })
         let elapsed = Date().timeIntervalSince(started)
         if r.exitCode != -1 {
             GraphSession.markLaunched(

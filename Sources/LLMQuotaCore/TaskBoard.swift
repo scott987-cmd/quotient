@@ -51,6 +51,7 @@ public enum TaskBoard {
         from tasks: [WorkTask],
         machineName: String,
         repoAliases: [RepoAlias] = [],
+        progressByTaskID: [String: WorkProgress] = [:],
         now: Date = Date()
     ) -> Result {
         // 一张图有几步：**按 graphID 数出来**，不是从记录里读。
@@ -76,7 +77,8 @@ public enum TaskBoard {
 
         let briefs = picked.prefix(maxTasks).map {
             brief(for: $0, machineName: machineName,
-                  stepTotals: stepTotals, aliasByPath: aliasByPath, now: now)
+                  stepTotals: stepTotals, aliasByPath: aliasByPath,
+                  progress: progressByTaskID[$0.id], now: now)
         }
         return Result(tasks: Array(briefs), truncated: truncated)
     }
@@ -88,6 +90,7 @@ public enum TaskBoard {
         machineName: String,
         stepTotals: [String: Int],
         aliasByPath: [String: String],
+        progress: WorkProgress?,
         now: Date
     ) -> TaskBrief {
         // queued 的任务身上可能还挂着**上一轮**的 startedAt（重排、接力过的）。
@@ -106,7 +109,12 @@ public enum TaskBoard {
             graphID: t.graphID,
             stepIndex: t.stepIndex,
             stepTotal: t.graphID.flatMap { stepTotals[$0] },
-            repoAlias: aliasByPath[standardized(t.repo)]
+            repoAlias: aliasByPath[standardized(t.repo)],
+            progressPhase: progress?.phase,
+            progressSummary: progress?.summary,
+            progressNextStep: progress?.nextStep,
+            progressUpdatedAt: progress?.updatedAt,
+            progressEvidenceCount: progress?.evidence.count
         )
     }
 

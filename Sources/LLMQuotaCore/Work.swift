@@ -1702,6 +1702,16 @@ public enum Proc {
         public var timedOut: Bool
     }
 
+    public struct DeadlineExtension: Sendable {
+        public var seconds: TimeInterval
+        public var reason: String
+
+        public init(seconds: TimeInterval, reason: String) {
+            self.seconds = seconds
+            self.reason = reason
+        }
+    }
+
     /// 跑一个子进程，带超时和进程组清理。
     ///
     /// 两个坑：管道不读干净会死锁（agent 输出量很大），
@@ -1709,7 +1719,8 @@ public enum Proc {
     @discardableResult
     public static func run(
         _ launchPath: String, _ args: [String],
-        cwd: String?, env extraEnv: [String: String], timeout: TimeInterval
+        cwd: String?, env extraEnv: [String: String], timeout: TimeInterval,
+        deadlineExtension: ((Date) -> DeadlineExtension?)? = nil
     ) -> Result {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: launchPath)
@@ -1755,8 +1766,20 @@ public enum Proc {
         errQ.async { errData = errPipe.fileHandleForReading.readDataToEndOfFile(); group.leave() }
 
         var timedOut = false
-        let deadline = Date().addingTimeInterval(timeout)
+        var deadline = Date().addingTimeInterval(timeout)
+        var nextExtensionCheck = Date()
         while p.isRunning && Date() < deadline {
+            let now = Date()
+            if now >= nextExtensionCheck {
+                nextExtensionCheck = now.addingTimeInterval(1)
+                if let ext = deadlineExtension?(deadline), ext.seconds > 0 {
+                    // 一次真实里程碑就是给当前会话追加一段执行租约。
+                    // 不能从 `now` 重算，否则提前汇报只会被吞掉，等临近截止时
+                    // 这条汇报又可能已经过了新鲜期。
+                    let proposed = deadline.addingTimeInterval(ext.seconds)
+                    if proposed > deadline { deadline = proposed }
+                }
+            }
             Thread.sleep(forTimeInterval: 0.2)
         }
         if p.isRunning {
