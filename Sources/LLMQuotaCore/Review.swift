@@ -498,7 +498,11 @@ public enum Review {
         let wantPath = URL(fileURLWithPath: repo).standardizedFileURL.path
         let needsEvidenceAndReview = RepoRegistry.all().contains {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
-                && $0.manualReview
+                && ($0.manualReview || !($0.qualityContract ?? "").isEmpty)
+        }
+        let needsVisualQuality = RepoRegistry.all().contains {
+            URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
+                && !($0.qualityContract ?? "").isEmpty
         }
         if let _ = dirtBlockingLanding(repo: repo) {
             return pending0(repo: repo, base: base, tasks: tasks).map {
@@ -519,9 +523,13 @@ public enum Review {
                 files: i.files, isStranded: stranded.contains(i.branch),
                 repoNeedsManualReview: needsEvidenceAndReview, risk: t.profile?.risk)
             if needsReview {
-                return MergeReview.approved(branch: i.branch, files: i.files, tasks: tasks,
-                                            head: i.head, headAt: i.committedAt)
+                guard MergeReview.approved(branch: i.branch, files: i.files, tasks: tasks,
+                                           head: i.head, headAt: i.committedAt)
+                else { return false }
             }
+            if needsVisualQuality, EvidenceGate.changesVisibleBehavior(i.files),
+               VisualQualityGate.status(branch: i.branch, head: i.head,
+                                        tasks: tasks) != .approved { return false }
             return true
         }
         var out: [Blocked] = []
@@ -546,6 +554,21 @@ public enum Review {
                 note("这个仓库要「看效果才合」，而这条还没交证据 —— "
                      + "已派回原平台跑一遍截图（EvidenceGate），交了图再判")
                 continue
+            }
+            if needsVisualQuality, EvidenceGate.changesVisibleBehavior(item.files) {
+                switch VisualQualityGate.status(
+                    branch: item.branch, head: item.head, tasks: tasks) {
+                case .approved: break
+                case .missing:
+                    note("质量契约要求真正看过录屏/截图 —— 尚未派多模态验收")
+                    continue
+                case .pending:
+                    note("多模态 agent 正在逐帧对照质量契约")
+                    continue
+                case .rejected:
+                    note("多模态质量验收判定未达标 —— 不自动合入，留给整改/人工处置")
+                    continue
+                }
             }
             let needsReview = requiresAgentReview(
                 files: item.files, isStranded: isStranded,
@@ -635,7 +658,11 @@ public enum Review {
         let wantPath = URL(fileURLWithPath: repo).standardizedFileURL.path
         let needsEvidenceAndReview = RepoRegistry.all().contains {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
-                && $0.manualReview
+                && ($0.manualReview || !($0.qualityContract ?? "").isEmpty)
+        }
+        let needsVisualQuality = RepoRegistry.all().contains {
+            URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
+                && !($0.qualityContract ?? "").isEmpty
         }
 
         var outcomes: [AutoLandOutcome] = []
@@ -675,10 +702,14 @@ public enum Review {
                 files: i.files, isStranded: strandedForQueue.contains(i.branch),
                 repoNeedsManualReview: needsEvidenceAndReview, risk: t.profile?.risk)
             if needsReview {
-                return MergeReview.approved(branch: i.branch, files: i.files,
-                                            tasks: tasks,
-                                            head: i.head, headAt: i.committedAt)
+                guard MergeReview.approved(branch: i.branch, files: i.files,
+                                           tasks: tasks,
+                                           head: i.head, headAt: i.committedAt)
+                else { return false }
             }
+            if needsVisualQuality, EvidenceGate.changesVisibleBehavior(i.files),
+               VisualQualityGate.status(branch: i.branch, head: i.head,
+                                        tasks: tasks) != .approved { return false }
             return true
         }
         for item in pending {
@@ -731,6 +762,16 @@ public enum Review {
             if needsEvidenceAndReview, item.evidence.isEmpty,
                EvidenceGate.changesVisibleBehavior(item.files) {
                 continue
+            }
+            // 项目级质量契约不是一段提示词装饰：可见改动必须由真正能看图/
+            // 录屏的执行器逐帧判过。代码审核票不能替代视觉质量票。
+            if needsVisualQuality, EvidenceGate.changesVisibleBehavior(item.files) {
+                let visual = VisualQualityGate.status(
+                    branch: item.branch, head: item.head, tasks: tasks)
+                if visual == .missing {
+                    _ = VisualQualityGate.dispatch(item: item, repo: repo, tasks: tasks)
+                }
+                guard visual == .approved else { continue }
             }
             // **走统一判据，别再内联一份。**
             //
@@ -897,7 +938,11 @@ public enum Review {
                 if let m = Milestone.record(repo: repo, branch: branch, mergeSHA: sha,
                                             files: files, subject: subject) {
                     // 先让看得见的那个平台过一眼，别让老板当唯一的眼睛。
-                    Milestone.dispatchVisualCheck(m, repoPath: repo)
+                    // 质量契约仓库在合入前已经看过，别为同一份录屏再烧一遍。
+                    if !VisualQualityGate.hasApproved(
+                        branch: branch, tasks: TaskStore.all()) {
+                        Milestone.dispatchVisualCheck(m, repoPath: repo)
+                    }
                 }
             }
             // 落地即排审查：给审查员（opencode/火山）生成一条【审查】任务
@@ -939,6 +984,7 @@ public enum Review {
             isSelfContained: true,
             rationale: "落地后自动生成的复查：只读 diff、只写一份报告")
         t.preferredPlatform = .volcark
+        t.origin = "post-land-review"
         t.note = "落地自动排的复查 · \(branch)"
         try? TaskStore.append(t)
     }

@@ -309,7 +309,9 @@ public enum AutoRefill {
             let r = try TaskIntake.enqueue(
                 prompt: prompt(repoName: alias, goal: goal, item: item),
                 repo: repo, classify: true, split: false, force: true,
-                origin: "auto-refill")
+                origin: "auto-refill",
+                preferredPlatform: RepoExecutionPolicy.implementationOwner(
+                    for: repo, prompt: prompt(repoName: alias, goal: goal, item: item)))
             if case .single = r {
                 return Outcome(repo: repo, enqueued: true,
                                note: "主线第 \(item.index) 块:\(item.text.prefix(30))")

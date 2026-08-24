@@ -99,7 +99,8 @@ public enum TaskKind {
     /// - `EvidenceGate.evidencePrompt`: 「【证据】把分支 <b> 的改动跑起来…」
     /// - `StaleBranch` 刷新: 「【刷新】把 main 合进分支 <b>，解决冲突。」
     public static func boundBranch(_ prompt: String) -> String? {
-        for marker in ["【审查·合入】分支 ", "【证据】把分支 ", "把 main 合进分支 "] {
+        for marker in ["【审查·合入】分支 ", "【看效果】分支 ",
+                       "【证据】把分支 ", "把 main 合进分支 "] {
             guard let r = prompt.range(of: marker) else { continue }
             let rest = prompt[r.upperBound...]
             let end = rest.firstIndex { $0 == " " || $0 == "，" || $0 == "\n" }

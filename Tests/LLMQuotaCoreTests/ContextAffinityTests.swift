@@ -352,4 +352,16 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertFalse(ContextAffinityPolicy.canProceedToNext(
             nextIsSameOwner: false, automaticHandoffCount: 1))
     }
+
+    func testOwnedTaskRecoverySaysContinueInsteadOfChangeAgent() {
+        var task = WorkTask(id: "flint", prompt: "优化持枪动作", repo: "/flint")
+        task.ownerPlatform = .kimi
+        task.ownerRunnerID = "kimi.code"
+        task.triedPlatforms = [.kimi]
+        let option = StuckAsk.recoveryOption(for: task)
+        XCTAssertEqual(option.platform, .kimi)
+        XCTAssertTrue(option.label.contains("Kimi"))
+        XCTAssertTrue(option.label.contains("保留会话和进度"))
+        XCTAssertFalse(option.label.contains("换人"))
+    }
 }

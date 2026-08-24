@@ -140,6 +140,9 @@ public enum TaskGraph {
             // 之后秒以下被抹平，同一批节点读回来时间戳完全相同，
             // 「第一步」会变成随机的哪一步。
             .sorted {
+                let ap = RepoExecutionPolicy.queuePriority($0)
+                let bp = RepoExecutionPolicy.queuePriority($1)
+                if ap != bp { return ap < bp }
                 if let a = $0.stepIndex, let b = $1.stepIndex, a != b { return a < b }
                 return $0.createdAt < $1.createdAt
             }

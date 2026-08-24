@@ -57,6 +57,45 @@ final class OneAgentOneTaskTests: XCTestCase {
         XCTAssertTrue(t.contains("截断"), "截断要明说，别让人以为读到的是全文")
     }
 
+    func testConfiguredQualityContractIsInjectedAsAcceptanceStandard() throws {
+        try "# 质量契约\n持枪时双手必须真实接触武器，不能穿模。"
+            .write(to: tmp.appendingPathComponent("QUALITY.md"),
+                   atomically: true, encoding: .utf8)
+        let f = tmp.appendingPathComponent("repos.json")
+        let entry: [String: Any] = [
+            "alias": "flint", "path": tmp.path,
+            "pathByMachine": [Paths.machineName(): tmp.path],
+            "qualityContract": "QUALITY.md",
+        ]
+        try JSONSerialization.data(withJSONObject: [entry]).write(to: f)
+        RepoRegistry.fileOverride = f
+
+        let b = ProductBrief.briefing(repo: tmp.path, registeredRepo: tmp.path)
+        XCTAssertTrue(b.contains("双手必须真实接触武器"))
+        XCTAssertTrue(b.contains("验收标准，不是参考建议"))
+        XCTAssertTrue(b.contains("构建通过只证明代码能跑"))
+    }
+
+    func testQualityContractFallsBackToRegisteredRepoBeforeStableWorktreeHasIt() throws {
+        let worktree = tmp.appendingPathComponent("stable-worktree")
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        try "# 首轮质量契约\n必须交实机录屏。"
+            .write(to: tmp.appendingPathComponent("QUALITY.md"),
+                   atomically: true, encoding: .utf8)
+        let f = tmp.appendingPathComponent("repos.json")
+        let entry: [String: Any] = [
+            "alias": "flint", "path": tmp.path,
+            "pathByMachine": [Paths.machineName(): tmp.path],
+            "qualityContract": "QUALITY.md",
+        ]
+        try JSONSerialization.data(withJSONObject: [entry]).write(to: f)
+        RepoRegistry.fileOverride = f
+
+        let b = ProductBrief.briefing(repo: worktree.path, registeredRepo: tmp.path)
+        XCTAssertTrue(b.contains("必须交实机录屏"),
+                      "新登记的契约尚未进入稳定 worktree 时也不能漏注入")
+    }
+
     // MARK: 证据条款（事前，同一个 agent 闭环）
 
     private func registry(manualReview: Bool) throws {

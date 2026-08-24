@@ -2035,8 +2035,20 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             continue
         }
         let scheduler = WorkScheduler()
+        // 仓库负责人是功能实现的硬边界，不是“多加几分”的偏好。
+        // 已经形成 task owner 的任务继续尊重自己的会话；只有新任务第一次
+        // 开工时按项目负责人收窄候选。审核/媒体/证据仍走专用能力泳道。
+        let repoImplementationOwner = cand.ownerRunnerID == nil
+            ? RepoExecutionPolicy.implementationOwner(for: cand.repo, prompt: cand.prompt)
+            : nil
+        if let repoImplementationOwner {
+            cand.preferredPlatform = repoImplementationOwner
+        }
+        let eligibleRunners = repoImplementationOwner.map { fixed in
+            RunnerRegistry.all.filter { $0.platform == fixed }
+        } ?? RunnerRegistry.all
         var d = scheduler.decide(
-            dashboard: dash, runners: RunnerRegistry.all,
+            dashboard: dash, runners: eligibleRunners,
             task: cand, history: history)
         var releaseIsManual = false
         if (cand.ownerRunnerID == nil) != (cand.ownerPlatform == nil) {
@@ -2180,11 +2192,16 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     /// 由 ingest 把答案并进任务时设上，见 WorkTask.resumeContext。
     let resumedAnswer: (AskAnswer, Ask)? = task.resumeContext
     let overallStart = Date()
-    // 单个任务在所有平台上的总时间预算。防止三个平台各超时 20 分钟拖成一小时。
-    let totalBudget: TimeInterval = 1800
     // 单个平台的上限。原来是 20 分钟，一个卡住的平台就把总预算吃光了，
     // 后面的候选根本轮不上。降到 10 分钟，三个平台都试得过来。
     let perAttemptTimeout: TimeInterval = 600
+    let refillFloor: TimeInterval = task.origin == "auto-refill" ? 90 * 60 : 0
+    let plannedAttemptTimeout = max(refillFloor,
+        ProcessInfo.processInfo.environment["LLMQ_ATTEMPT_TIMEOUT"]
+            .flatMap(Double.init) ?? task.profile?.timeout ?? perAttemptTimeout)
+    // 总预算至少容得下第一次完整尝试再做一次收尾决策。旧值固定 30 分钟，
+    // 任务的合法单次上限却是 45 分钟：第一次超时那一刻重试预算必然已经负数。
+    let totalBudget: TimeInterval = max(1800, plannedAttemptTimeout + 5 * 60)
 
     // 按额度充裕度依次尝试。认证/环境类失败换下一个平台，
     // agent 真跑砸了就停 —— 换平台重试只会重复烧额度。
@@ -2216,7 +2233,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         TaskBoardStore.publishNow()
         let retryLabel: String
         switch retryCause {
-        case .timeoutExperiment?: retryLabel = "（同 owner 超时实验重试）"
+        case .timeoutExperiment?: retryLabel = "（同 owner 连续恢复）"
         case .sessionRepair?: retryLabel = "（会话失效后 fresh 恢复）"
         case nil: retryLabel = ""
         }
@@ -2307,7 +2324,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         // 不注入的话这份知识只存在于老板脑子里，agent 只能临场猜。
         // 老板（2026-08-20）：「让不同的 agent 不知道自己在干啥」说的就是这个。
         // 接力任务也要：换了平台的 agent 更不知道铁律。
-        effectivePrompt += ProductBrief.briefing(repo: ws.path)
+        effectivePrompt += ProductBrief.briefing(repo: ws.path, registeredRepo: task.repo)
         // 证据条款（事前）：干活的 agent 在同一次执行里自己交证据，
         // 别等落地闸发现缺图再另派一个从零认路的 agent 去补 ——
         // 老板（2026-08-20）：「尽量让一个任务在一个 agent 内完成工作」。
@@ -2372,10 +2389,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         // fa4e5eeb 做头发收尾改了 14 个文件,45 分钟被掐死在半路(WIP 提交救回)。
         // 按档次算的 45 分钟上限是给「一个任务」设的,一整块理应更长。
         // 用 origin 判(结构化字段),不看提示词文本。
-        let refillFloor: TimeInterval = task.origin == "auto-refill" ? 90 * 60 : 0
-        let baseAttemptTimeout = max(refillFloor,
-            ProcessInfo.processInfo.environment["LLMQ_ATTEMPT_TIMEOUT"]
-                .flatMap(Double.init) ?? task.profile?.timeout ?? perAttemptTimeout)
+        let baseAttemptTimeout = plannedAttemptTimeout
         let retryMultiplier = ProcessInfo.processInfo.environment[
             "LLMQ_OWNER_RETRY_TIMEOUT_MULTIPLIER"].flatMap(Double.init) ?? 1.5
         let isTimeoutExperimentRetry: Bool
@@ -2642,8 +2656,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                     + Format.duration(cd.remaining) + "内不再派给它"))
             }
             // 失败的分支上什么都没提交，连分支一起删掉。
+            // 默认由同一 owner 带着原会话和 WIP 再收一次尾；需要故障演练时
+            // 可显式设 0 关闭。上下文亲和不该藏在实验开关后面。
             let ownerRetryEnabled = ProcessInfo.processInfo.environment[
-                "LLMQ_OWNER_TIMEOUT_RETRY"] == "1"
+                "LLMQ_OWNER_TIMEOUT_RETRY"] != "0"
             if sessionFailed, !sessionRepairUsed {
                 sessionRepairUsed = true
                 candidateQueue.insert(pick, at: idx + 1)
@@ -2658,7 +2674,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 candidateQueue.insert(pick, at: idx + 1)
                 retryCauseByIndex[idx + 1] = .timeoutExperiment
                 print(Ansi.yellow("  保留 owner 再试一次")
-                    + Ansi.dim("（实验开关已启用；之后仍保留换人兜底）"))
+                    + Ansi.dim("（沿用会话、工作区和已保存进度）"))
             }
             // 实验重试额外耗时不挤占原有跨 owner 的 30 分钟兜底预算。
             let spent = Date().timeIntervalSince(overallStart) - experimentalRetrySpent
@@ -3704,6 +3720,72 @@ func cmdRepo(_ args: [String]) throws {
         try RepoRegistry.save(all)
         return
 
+    case "owner":
+        var all = RepoRegistry.all()
+        let pos = args.dropFirst().filter { !$0.hasPrefix("--") }
+        guard let alias = pos.first else {
+            for r in all where r.implementationOwner != nil {
+                print("\(r.alias)：\(r.implementationOwner!.displayName)")
+            }
+            print(Ansi.dim("  设置：llmq repo owner <别名> <平台>   清除：末尾写 off"))
+            return
+        }
+        guard let i = all.firstIndex(where: { $0.alias == alias }) else {
+            print(Ansi.red("没有登记过别名 \(alias)")); exit(1)
+        }
+        guard pos.count >= 2 else {
+            let current = all[i].implementationOwner?.displayName ?? "未固定"
+            print("\(alias)：\(current)")
+            return
+        }
+        let value = pos[pos.index(after: pos.startIndex)]
+        if value == "off" {
+            all[i].implementationOwner = nil
+            try RepoRegistry.save(all)
+            print(Ansi.green("已取消 \(alias) 的固定实现负责人"))
+            return
+        }
+        guard let platform = Platform(rawValue: value) else {
+            print(Ansi.red("未知平台 \(value)"))
+            print(Ansi.dim("可选：" + Platform.allCases.map(\.rawValue).joined(separator: " ")))
+            exit(2)
+        }
+        all[i].implementationOwner = platform
+        try RepoRegistry.save(all)
+        print(Ansi.green("已固定 \(alias) 的功能实现负责人：") + platform.displayName
+            + Ansi.dim("（审核、媒体和看效果仍交给专用 agent）"))
+        return
+
+    case "quality":
+        var all = RepoRegistry.all()
+        let pos = args.dropFirst().filter { !$0.hasPrefix("--") }
+        guard let alias = pos.first,
+              let i = all.firstIndex(where: { $0.alias == alias }) else {
+            print("用法：llmq repo quality <别名> <相对路径|off>")
+            exit(2)
+        }
+        guard pos.count >= 2 else {
+            print("\(alias)：\(all[i].qualityContract ?? "未配置")")
+            return
+        }
+        let value = String(pos[pos.index(after: pos.startIndex)])
+        if value == "off" {
+            all[i].qualityContract = nil
+        } else {
+            guard !value.hasPrefix("/"), !value.contains("..") else {
+                print(Ansi.red("质量契约必须是仓库内的相对路径")); exit(2)
+            }
+            let file = URL(fileURLWithPath: all[i].localPath).appendingPathComponent(value).path
+            guard FileManager.default.fileExists(atPath: file) else {
+                print(Ansi.red("文件不存在：\(file)")); exit(1)
+            }
+            all[i].qualityContract = value
+        }
+        try RepoRegistry.save(all)
+        print(value == "off" ? Ansi.green("已清除 \(alias) 的质量契约")
+              : Ansi.green("已登记 \(alias) 的质量契约：") + value)
+        return
+
     case "verify":
         let pos = args.dropFirst().filter { !$0.hasPrefix("--") }
         guard pos.count >= 2 else {
@@ -3759,6 +3841,8 @@ func cmdRepo(_ args: [String]) throws {
             print(pad(r.alias, 16) + pad(r.isDefault ? Ansi.cyan("默认") : "", 8)
                 + Ansi.dim(r.localPath.replacingOccurrences(
                     of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
+                + (r.implementationOwner.map { Ansi.cyan("  负责人:" + $0.displayName) } ?? "")
+                + (r.qualityContract.map { Ansi.dim("  质量:" + $0) } ?? "")
                 + note)
         }
         if broken > 0 {
@@ -3766,7 +3850,7 @@ func cmdRepo(_ args: [String]) throws {
                 + "改路径：llmq repo add <别名> <新路径>"))
         }
     default:
-        print("用法：llmq repo [add|list]")
+        print("用法：llmq repo [add|list|focus|verify|owner|quality]")
         exit(2)
     }
 }

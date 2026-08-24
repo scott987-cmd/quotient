@@ -544,14 +544,24 @@ public enum AskIngest {
 /// 已试名单（换人再来），「放弃」走 abandon 丢弃。答复走的是和
 /// agent 提问完全同一条通道（AskIngest），不另起炉灶。
 public enum StuckAsk {
+    public static func recoveryOption(for task: WorkTask) -> (label: String, platform: Platform?) {
+        let fixed = task.ownerPlatform
+            ?? RepoExecutionPolicy.implementationOwner(for: task.repo, prompt: task.prompt)
+        if let fixed {
+            return ("让 \(fixed.displayName) 继续（保留会话和进度）", fixed)
+        }
+        return ("重试（换人再来）", nil)
+    }
+
     /// 每个任务只弹一次：已经挂着 pendingAsk 就不再重复发。
     @discardableResult
     public static func raise(task: WorkTask, reason: String) -> Bool {
         guard task.pendingAsk == nil else { return false }
         var t = task
+        let recovery = recoveryOption(for: t)
         let ask = Ask(
             taskID: t.id, machineID: Paths.machineID(), round: 1,
-            platform: t.preferredPlatform,
+            platform: recovery.platform ?? t.preferredPlatform,
             taskPrompt: String(t.prompt.prefix(200)),
             repoName: RepoRegistry.all().first {
                 NSString(string: $0.localPath).expandingTildeInPath
@@ -559,13 +569,14 @@ public enum StuckAsk {
             }?.alias ?? t.repo,
             questions: [Ask.Question(
                 text: "这个任务卡死了：\(String(reason.prefix(200)))。怎么处理？",
-                options: ["重试（换人再来）", "放弃这个任务"],
-                suggestion: "重试（换人再来）")],
+                options: [recovery.label, "放弃这个任务"],
+                suggestion: recovery.label)],
             progressNote: "系统代发：卡死等确认，不是 agent 在提问")
         t.pendingAsk = ask
         t.state = .blocked
-        // 「换人再来」的前提是把已试名单清掉 —— 不清的话重试还是那批人。
-        t.triedPlatforms = []
+        // 固定负责人继续时保留失败史；owner 本身有明确豁免，别的候选仍不能
+        // 借一次手机点击绕过历史。只有真正的「换人再来」才清空名单。
+        if recovery.platform == nil { t.triedPlatforms = [] }
         t.interruptedCount = nil
         guard (try? TaskStore.append(t)) != nil else { return false }
         try? AskStore.publish(ask)

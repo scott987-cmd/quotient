@@ -61,6 +61,19 @@ public struct RepoAlias: Codable, Sendable {
     /// 别的仓库空着就空着。开:`llmq repo autofill <别名> on`。
     public var autoRefill: Bool = false
 
+    /// 这个仓库的功能实现固定由谁连续负责。
+    ///
+    /// 只约束普通编码任务；媒体生成、看效果和合入审核仍走各自的能力泳道。
+    /// 这不是调度加分，而是硬边界：固定负责人暂时不可用时宁可等待，
+    /// 也不让另一个 agent 从零认识项目后继续改同一套角色和玩法。
+    public var implementationOwner: Platform?
+
+    /// 项目级质量契约（相对仓库根目录的 Markdown 路径）。
+    ///
+    /// AGENTS.md 说明产品铁律；这份文件说明“做到什么程度才算完成”。
+    /// 配置后会和产品事实一起注入实现、补证据和评审任务。
+    public var qualityContract: String?
+
     /// 本机上的实际路径。
     public var localPath: String {
         pathByMachine[Paths.machineName()] ?? path
@@ -86,6 +99,9 @@ public struct RepoAlias: Codable, Sendable {
                                               forKey: .pathByMachine) ?? [:]
         manualReview = try c.decodeIfPresent(Bool.self, forKey: .manualReview) ?? false
         autoRefill = try c.decodeIfPresent(Bool.self, forKey: .autoRefill) ?? false
+        implementationOwner = try c.decodeIfPresent(Platform.self,
+                                                     forKey: .implementationOwner)
+        qualityContract = try c.decodeIfPresent(String.self, forKey: .qualityContract)
     }
 }
 

@@ -141,21 +141,24 @@ public struct TaskProfile: Codable, Sendable {
     /// 计划完动作。实测 1201 秒被掐断，日志显示它当时还在写
     ///「继续翻牌直到出现诅咒和警觉」—— 活没问题，是墙太近。
     ///
-    /// 复杂档给 40 分钟：这类任务本来就稀少（分诊判复杂才给），
-    /// 而重跑一次的代价远高于多等二十分钟。简单和常规档维持 20 分钟，
-    /// 它们跑到那么久基本就是卡住了，早点换人比干等强。
+    /// 复杂档给 90 分钟：这类任务本来就稀少（分诊判复杂才给），
+    /// 而重跑一次的代价远高于给原负责人留足一次完整执行窗口。简单档维持
+    /// 20 分钟，常规档 30 分钟；任务自己的估时更长时，超时不能反过来更短。
     public var timeout: TimeInterval {
         // 上限按档次分层。**别把三倍预算掐回一倍出头** ——
         // 分诊估 15 分钟的常规任务，三倍是 45 分钟（估时天生乐观，
         // 三倍就是为此留的），而旧的 20 分钟硬顶只给到 1.3 倍，
         // 等于把留的余量又收回去了。实测被它掐死两次：
         // 一次实玩验收正翻牌翻到一半，一次视觉验收正在抓截图。
-        let capMinutes: Int
+        let defaultCapMinutes: Int
         switch tier {
-        case .trivial:  capMinutes = 20   // 改注释改文案，跑那么久就是卡住了
-        case .standard: capMinutes = 30
-        case .complex:  capMinutes = 45   // 整包任务住在这一档
+        case .trivial:  defaultCapMinutes = 20   // 改注释改文案，跑那么久就是卡住了
+        case .standard: defaultCapMinutes = 30
+        case .complex:  defaultCapMinutes = 90   // 实玩、动捕和整包任务住在这一档
         }
+        // 上限不能比分诊器自己的估时还短。真实回归：任务明写预计 60 分钟，
+        // 调度器却在 45 分钟硬杀，Kimi 的会话和半成品被迫进入救援流程。
+        let capMinutes = max(defaultCapMinutes, estimatedMinutes)
         return TimeInterval(max(180, min(estimatedMinutes * 3, capMinutes) * 60))
     }
 }

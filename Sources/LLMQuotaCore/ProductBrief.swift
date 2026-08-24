@@ -29,23 +29,50 @@ public enum ProductBrief {
     /// 别让一份写飞的文档吃掉任务本身的上下文。
     public static let maxCharacters = 8_000
 
+    static func clipped(_ raw: String, fileName: String) -> String {
+        if raw.count > maxCharacters {
+            return String(raw.prefix(maxCharacters))
+                + "\n\n（\(fileName) 太长被截断了 —— 请只保留稳定、可验收的硬标准）"
+        }
+        return raw
+    }
+
     public static func text(repo: String) -> String? {
         let url = URL(fileURLWithPath: NSString(string: repo).expandingTildeInPath)
             .appendingPathComponent(fileName)
         guard let raw = try? String(contentsOf: url, encoding: .utf8),
               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
-        if raw.count > maxCharacters {
-            return String(raw.prefix(maxCharacters))
-                + "\n\n（AGENTS.md 太长被截断了 —— 这个文件该是一页纸的铁律，考虑精简）"
+        return clipped(raw, fileName: fileName)
+    }
+
+    /// 质量契约优先从当前 worktree 读取，配置和兜底内容按主仓库路径查。
+    /// 这样已提交到分支的契约用分支版本；刚登记、还没进入稳定 worktree 的
+    /// 契约也不会在第一次派活时静默消失。
+    public static func qualityText(repo: String, registeredRepo: String? = nil) -> String? {
+        guard let name = RepoExecutionPolicy.repo(for: registeredRepo ?? repo)?
+            .qualityContract?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty, !name.hasPrefix("/"), !name.contains("..")
+        else { return nil }
+        let roots = [repo, registeredRepo].compactMap { $0 }.reduce(into: [String]()) {
+            if !$0.contains($1) { $0.append($1) }
         }
-        return raw
+        for root in roots {
+            let url = URL(fileURLWithPath: NSString(string: root).expandingTildeInPath)
+                .appendingPathComponent(name)
+            if let raw = try? String(contentsOf: url, encoding: .utf8),
+               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return clipped(raw, fileName: name)
+            }
+        }
+        return nil
     }
 
     /// 拼进提示词的那一段。**明确告诉 agent 这是背景约束、不是任务。**
-    public static func briefing(repo: String) -> String {
-        guard let facts = text(repo: repo) else { return "" }
-        return """
+    public static func briefing(repo: String, registeredRepo: String? = nil) -> String {
+        var sections: [String] = []
+        if let facts = text(repo: repo) {
+            sections.append("""
 
 
         ---
@@ -58,6 +85,24 @@ public enum ProductBrief {
         \(facts)
         ---
 
-        """
+        """)
+        }
+        if let quality = qualityText(repo: repo, registeredRepo: registeredRepo) {
+            sections.append("""
+
+
+        ---
+        ## 这个项目怎样才算做完（项目质量契约 —— 是验收标准，不是参考建议）
+
+        实现、取证和评审都必须逐条对照。构建通过只证明代码能跑，
+        不能替代下面的体验门槛；不满足时必须明确写“未达标”，不能把局部
+        功能存在描述成项目质量已经完成。
+
+        \(quality)
+        ---
+
+        """)
+        }
+        return sections.joined()
     }
 }

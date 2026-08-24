@@ -155,18 +155,18 @@ public enum EvidenceGate {
     /// 事后那条路（`dispatchEvidence`）保留，当漏网的兜底 —— 但正常情况
     /// 不该再走到它。
     ///
-    /// 条件必须和落地闸完全一致（manualReview 仓库 + 编码任务），
+    /// 条件必须和落地闸完全一致（manualReview 或质量契约仓库 + 编码任务），
     /// 否则会漂移出「条款要了、闸门不收」或反过来。
     public static func inlineClause(repoPath: String, prompt: String) -> String {
         // isCoding 的定义已经排除了媒体/评审/证据/刷新 —— 这里不再重复列举，
         // 列举第二遍就是「同一个概念两处判定」，那个形状今天已经埋过五次雷。
         guard TaskKind.isCoding(prompt) else { return "" }
         let want = URL(fileURLWithPath: repoPath).standardizedFileURL.path
-        let manual = RepoRegistry.all().contains {
+        let needsEvidence = RepoRegistry.all().contains {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == want
-                && $0.manualReview
+                && ($0.manualReview || !($0.qualityContract ?? "").isEmpty)
         }
-        guard manual else { return "" }
+        guard needsEvidence else { return "" }
         return """
 
 

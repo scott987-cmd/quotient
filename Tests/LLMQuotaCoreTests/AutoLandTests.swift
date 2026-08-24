@@ -248,4 +248,28 @@ extension AutoLandTests {
         XCTAssertTrue(GitWorkspace.git(["branch", "--list", "agent/qwen/t30"], in: repo)
             .stdout.contains("t30"), "分支必须原样留给终审")
     }
+
+    func testQualityContractDispatchesVisualGateBeforeLanding() {
+        git(["checkout", "-b", "agent/qwen/t31"])
+        write("Feature.swift", "// visible behavior\n")
+        write("docs/evidence/t31-playtest.mov", "fake-video-bytes")
+        git(["add", "."]); git(["commit", "-m", "t31 视觉改动与证据"])
+        git(["checkout", "main"])
+
+        var entry = RepoAlias(alias: "game", path: repo)
+        entry.qualityContract = "QUALITY.md"
+        try? RepoRegistry.save([entry])
+        let task = doneTask("t31")
+        let out = Review.autoLand(repo: repo, tasks: [task])
+
+        XCTAssertTrue(out.isEmpty, "没经过多模态逐帧验收前不能自动落地：\(out)")
+        XCTAssertTrue(GitWorkspace.git(
+            ["branch", "--list", "agent/qwen/t31"], in: repo).stdout.contains("t31"))
+        let visual = TaskStore.all().first { $0.origin == "visual-quality-review" }
+        XCTAssertNotNil(visual, "质量契约必须真的派出视觉验收，不能只留一句提示词；"
+            + "诊断=\(Review.whyNotLanding(repo: repo, tasks: [task]).map(\.reason)) "
+            + "任务=\(TaskStore.all().map { ($0.origin ?? "nil") + ":" + $0.prompt.prefix(20) })")
+        XCTAssertEqual(visual?.preferredPlatform, .minimax)
+        XCTAssertTrue(visual?.prompt.contains("agent/qwen/t31") == true)
+    }
 }

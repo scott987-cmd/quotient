@@ -1232,9 +1232,120 @@ public struct MiniMaxMediaRunner: AgentRunner {
     public var canSeeMedia: Bool { true }
     public init() {}
 
+    /// `【看效果】` 的文件清单是系统自己生成的，格式固定为“都在 <目录> 下”
+    /// 加若干 `- 文件名`。抽成纯函数，避免视觉任务再次被媒体 DSL 当成 0 项。
+    public static func visualFiles(in prompt: String) -> [String] {
+        let allowed = Review.evidenceDir.standardizedFileURL.path
+        var directory: String?
+        var out: [String] = []
+        for raw in prompt.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if let a = line.range(of: "都在 "), let b = line.range(of: " 下", range: a.upperBound..<line.endIndex) {
+                let candidate = URL(fileURLWithPath: String(line[a.upperBound..<b.lowerBound]))
+                    .standardizedFileURL.path
+                // 视觉任务会把文件发给外部模型。只允许系统自己抽取到共享
+                // evidence 目录的文件，手写提示词不能借这个入口读取任意本机图片。
+                directory = candidate == allowed ? candidate : nil
+                continue
+            }
+            guard line.hasPrefix("- ") else { continue }
+            let name = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+            let lower = name.lowercased()
+            guard [".png", ".jpg", ".jpeg", ".mov", ".mp4"]
+                .contains(where: lower.hasSuffix) else { continue }
+            let candidate: String?
+            if name.hasPrefix("/") { candidate = URL(fileURLWithPath: name).standardizedFileURL.path }
+            else if let directory {
+                candidate = URL(fileURLWithPath: directory).appendingPathComponent(name)
+                    .standardizedFileURL.path
+            } else { candidate = nil }
+            if let candidate,
+               URL(fileURLWithPath: candidate).deletingLastPathComponent()
+                .standardizedFileURL.path == allowed {
+                out.append(candidate)
+            }
+        }
+        return out
+    }
+
+    func visualReviewCommand(prompt: String, files: [String])
+        -> (launchPath: String, args: [String], env: [String: String]) {
+        let driver = #"""
+        export PATH="${LLMQ_MMX:h}:$HOME/.hermes/node/bin:$PATH"
+        run_mmx() {
+          if [ -n "$LLMQ_NODE" ]; then "$LLMQ_NODE" "$LLMQ_MMX" "$@"
+          else "$LLMQ_MMX" "$@"; fi
+        }
+        tmpd="${TMPDIR:-/tmp}/mmxeyes-$$"
+        /bin/mkdir -p "$tmpd" reviews
+        observations="$tmpd/observations.txt"
+        : > "$observations"
+        n=0
+        while IFS= read -r src; do
+          [ -s "$src" ] || { echo "缺少视觉证据: $src" >> "$observations"; continue; }
+          case "${src:l}" in
+            *.mov|*.mp4)
+              frames="$tmpd/frames-$n"
+              /bin/mkdir -p "$frames"
+              duration="$("$LLMQ_FFPROBE" -v error -show_entries format=duration \
+                -of default=noprint_wrappers=1:nokey=1 "$src" 2>/dev/null)"
+              secs="${duration%%.*}"
+              [[ "$secs" = <-> ]] || secs=1
+              (( secs < 1 )) && secs=1
+              points=(0 $((secs / 2)) $((secs > 1 ? secs - 1 : 0)))
+              fi=0
+              for second in "${points[@]}"; do
+                fi=$((fi+1))
+                "$LLMQ_FFMPEG" -loglevel error -ss "$second" -i "$src" \
+                  -vf "scale='min(1280,iw)':-2" -frames:v 1 "$frames/frame-$fi.jpg" || true
+              done
+              for image in "$frames"/*.jpg(N); do
+                n=$((n+1))
+                echo "\n## $src · 抽帧 $n" >> "$observations"
+                run_mmx vision describe --image "$image" --prompt "$LLMQ_FRAME_PROMPT" \
+                  --output text --non-interactive --quiet >> "$observations" 2>&1
+              done;;
+            *)
+              n=$((n+1))
+              echo "\n## $src" >> "$observations"
+              run_mmx vision describe --image "$src" --prompt "$LLMQ_FRAME_PROMPT" \
+                --output text --non-interactive --quiet >> "$observations" 2>&1;;
+          esac
+        done <<< "$LLMQ_VISUAL_FILES"
+        [ $n -gt 0 ] || { echo "没有读到任何可看的截图/录屏"; exit 1; }
+        seen="$(<"$observations")"
+        ask="你是游戏视觉质量验收人。下面先给验收任务与项目质量契约，再给图片/录屏抽帧的逐帧观察。只依据真正看到的画面判断，不用文件名猜。\n\n任务与契约：\n${LLMQ_VISUAL_PROMPT[1,12000]}\n\n逐帧观察：\n${seen[1,24000]}\n\n输出 Markdown：第一行必须严格写 **结论**：达标 或 **结论**：未达标（二选一）；然后写看到了什么、违反了哪条质量契约、对应哪个画面。任一明显穿模、悬空握持、T-pose、占位资产、流程断点或画面无法证明任务目标，都只能判未达标。"
+        final="$tmpd/final.md"
+        run_mmx text chat --message "$ask" --output text --non-interactive --quiet > "$final"
+        [ -s "$final" ] || { echo "视觉验收没有生成结论"; exit 1; }
+        branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+        tid="${branch##*/}"
+        out="reviews/EVAL-视觉-${tid:-new}.md"
+        /bin/cp "$final" "$out"
+        while IFS= read -r line; do
+          case "$line" in *结论*) echo "$line"; break;; esac
+        done < "$out"
+        echo "已逐帧查看 $n 张画面，报告：$out"
+        """#
+        var env = [
+            "LLMQ_VISUAL_PROMPT": prompt,
+            "LLMQ_FRAME_PROMPT": "只描述这张游戏画面中实际可见的内容。重点检查双手与武器接触、手腕方向、穿模/悬空、动作状态、角色材质、HUD 和明显卡顿迹象；看不到就明确说看不到，不要推测。",
+            "LLMQ_VISUAL_FILES": files.joined(separator: "\n"),
+            "LLMQ_FFMPEG": Proc.which("ffmpeg") ?? "/opt/homebrew/bin/ffmpeg",
+            "LLMQ_FFPROBE": Proc.which("ffprobe") ?? "/opt/homebrew/bin/ffprobe",
+        ]
+        if let mmx = binaryPath { env["LLMQ_MMX"] = mmx }
+        if let node = Proc.which("node") { env["LLMQ_NODE"] = node }
+        return ("/bin/zsh", ["-c", driver], env)
+    }
+
     public func command(
         prompt: String, cwd: String
     ) -> (launchPath: String, args: [String], env: [String: String]) {
+        if TaskKind.needsEyes(prompt) {
+            return visualReviewCommand(prompt: prompt,
+                                       files: Self.visualFiles(in: prompt))
+        }
         // 驱动内联成一段 zsh：解析 DSL、逐行调 mmx、统计成败。
         // 单独装一个脚本文件的话，发布/更新就多一个会漂移的部件。
         let driver = #"""
