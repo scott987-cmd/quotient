@@ -172,6 +172,28 @@ public final class ExecutionLeaseGate {
     }
 }
 
+/// Agent 忘记主动汇报时，用它自己落下的新提交兜底续期。
+///
+/// 提交比“进程还活着”强得多：它是可检查、可回滚、不会因同一份输出反复消费的
+/// 客观进展。这里只认新的 HEAD；未提交改动和重复心跳都不能续命。
+public final class CommitProgressLeaseGate {
+    private var lastAcceptedHead: String?
+    public let secondsPerCommit: TimeInterval
+
+    public init(baselineHead: String?, secondsPerCommit: TimeInterval = 20 * 60) {
+        self.lastAcceptedHead = baselineHead
+        self.secondsPerCommit = max(60, secondsPerCommit)
+    }
+
+    public func renewal(currentHead: String?)
+        -> (seconds: TimeInterval, head: String)? {
+        guard let currentHead, !currentHead.isEmpty,
+              currentHead != lastAcceptedHead else { return nil }
+        lastAcceptedHead = currentHead
+        return (secondsPerCommit, currentHead)
+    }
+}
+
 public enum WorkProgressContract {
     public static func clause() -> String {
         """

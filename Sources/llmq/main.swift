@@ -2494,18 +2494,44 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             taskID: task.id,
             baselineFingerprint: WorkProgressStore.fingerprint(repo: ws.path),
             existing: WorkProgressStore.load(taskID: task.id))
+        let commitLeaseGate = CommitProgressLeaseGate(baselineHead: headBefore)
         let r = Proc.run(
             cmd.launchPath, cmd.args, cwd: ws.path, env: executionEnv,
             timeout: attemptTimeout,
             deadlineExtension: { _ in
-                guard let renewed = leaseGate.renewal(
-                    progress: WorkProgressStore.load(taskID: task.id)) else { return nil }
-                let minutes = Int(renewed.seconds / 60)
-                print(Ansi.cyan("  续期 \(minutes) 分钟：")
-                      + Ansi.dim("\(renewed.progress.phase) · \(renewed.progress.summary)"))
-                return Proc.DeadlineExtension(
-                    seconds: renewed.seconds,
-                    reason: renewed.progress.summary)
+                if let renewed = leaseGate.renewal(
+                    progress: WorkProgressStore.load(taskID: task.id)) {
+                    let minutes = Int(renewed.seconds / 60)
+                    print(Ansi.cyan("  续期 \(minutes) 分钟：")
+                          + Ansi.dim("\(renewed.progress.phase) · \(renewed.progress.summary)"))
+                    return Proc.DeadlineExtension(
+                        seconds: renewed.seconds,
+                        reason: renewed.progress.summary)
+                }
+
+                // 不能把续期完全押在 Agent 会不会记得调用 `work progress` 上。
+                // Flint f8042579 连续落了 8 个小提交，服务端却因它没主动汇报，
+                // 仍在 600s + 900s 两道闹钟上杀了同一个 Kimi 会话。
+                // 新提交本身就是可核验里程碑；同一个 HEAD 只消费一次。
+                guard let automatic = commitLeaseGate.renewal(
+                    currentHead: GitWorkspace.headSHA(in: ws.path)) else { return nil }
+                let short = String(automatic.head.prefix(8))
+                let summary = "检测到新提交 \(short)，服务端自动保持当前会话"
+                if let item = try? WorkProgressStore.record(
+                    taskID: task.id, phase: "持续实现", summary: summary,
+                    nextStep: "继续当前任务", evidence: [], requestedMinutes: 20,
+                    repo: ws.path),
+                   let verified = leaseGate.renewal(progress: item) {
+                    TaskBoardStore.publishNow()
+                    print(Ansi.cyan("  自动续期 \(Int(verified.seconds / 60)) 分钟：")
+                          + Ansi.dim(summary))
+                    return Proc.DeadlineExtension(
+                        seconds: verified.seconds, reason: summary)
+                }
+                // 进度文件写入失败不应反过来杀掉已有真实提交；看板稍后采集会补上。
+                print(Ansi.cyan("  自动续期 \(Int(automatic.seconds / 60)) 分钟：")
+                      + Ansi.dim(summary))
+                return Proc.DeadlineExtension(seconds: automatic.seconds, reason: summary)
             })
         let elapsed = Date().timeIntervalSince(started)
         if r.exitCode != -1 {
