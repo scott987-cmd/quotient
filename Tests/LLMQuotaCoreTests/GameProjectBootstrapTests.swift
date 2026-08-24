@@ -25,8 +25,9 @@ final class GameProjectBootstrapTests: XCTestCase {
         let result = try GameProjectBootstrap.apply(
             alias: "next-game", path: repo.path, owner: .kimi)
 
-        for required in ["AGENTS.md", "QUALITY.md", "BENCHMARK.md", "PLAN.md",
-                         "STATUS.md", "docs/asset-log.md", "docs/evidence/README.md"] {
+        for required in [".llmq/project-contract.json", "AGENTS.md", "QUALITY.md",
+                         "BENCHMARK.md", "PLAN.md", "PRODUCTION.md", "STATUS.md",
+                         "docs/asset-log.md", "docs/evidence/README.md"] {
             XCTAssertTrue(result.created.contains(required), required)
             XCTAssertTrue(FileManager.default.fileExists(
                 atPath: repo.appendingPathComponent(required).path), required)
@@ -53,7 +54,7 @@ final class GameProjectBootstrapTests: XCTestCase {
 
         XCTAssertEqual(try String(contentsOf: repo.appendingPathComponent("AGENTS.md")), human)
         XCTAssertTrue(second.created.isEmpty)
-        XCTAssertEqual(second.preserved.count, 7)
+        XCTAssertEqual(second.preserved.count, 9)
         XCTAssertEqual(second.repo.implementationOwner, .claude,
                        "重复执行可以显式换负责人，但不能改人工文档")
     }

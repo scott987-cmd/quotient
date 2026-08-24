@@ -53,6 +53,26 @@ public enum GameProjectBootstrap {
     }
 
     static let templates: [String: String] = [
+        ".llmq/project-contract.json": """
+        {
+          "schema": 1,
+          "profile": "game",
+          "outcomeSummary": "待填写：玩家最终能直接感受到的核心结果",
+          "requiredOutcomes": [],
+          "hardConstraints": [],
+          "referenceRequired": true,
+          "experienceRequired": true,
+          "goldenSampleRequired": true,
+          "qualityFile": "QUALITY.md",
+          "referenceFile": "BENCHMARK.md",
+          "productionFile": "PRODUCTION.md",
+          "referenceFiles": [],
+          "referenceDimensions": [],
+          "routes": [],
+          "criteria": [],
+          "goldenSamples": []
+        }
+        """,
         "AGENTS.md": """
         # 游戏项目事实
 
@@ -141,6 +161,29 @@ public enum GameProjectBootstrap {
 
         在 QUALITY.md 的最小可玩闭环达标前，不扩充批量角色、地图或玩法模式。
         把下一块工作拆成可在目标设备上直接验收的任务，并写明证据形式。
+        """,
+        "PRODUCTION.md": """
+        # 生产路线
+
+        在批量派活前，先填写 `.llmq/project-contract.json` 中的路线，并在这里说明
+        每条路线的真实输入、工具、授权、质量上限、设备预算、已知风险和阶段验证。
+
+        ## 目标交付物
+
+        - 类型：待填写
+        - 最终质量：待填写
+
+        ## 候选路线
+
+        | 路线 | 输入与来源 | 工具/服务 | 需要的真实能力 | 能达到的质量 | 硬约束冲突 | 阶段验证 |
+        |---|---|---|---|---|---|---|
+        | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
+
+        ## 黄金样板
+
+        - 样板交付物：待填写
+        - 必过验收条款：待填写
+        - 样板未通过前禁止扩张的内容：待填写
         """,
         "STATUS.md": """
         # 状态

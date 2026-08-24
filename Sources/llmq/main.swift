@@ -3828,6 +3828,33 @@ func cmdRepo(_ args: [String]) throws {
             + "并登记真实构建命令。"))
         print(Ansi.dim("  llmq repo verify \(result.repo.alias) \"<构建 && 测试命令>\""))
         return
+
+    case "contract-init":
+        guard args.count >= 2 else {
+            print("用法：llmq repo contract-init <别名|路径> [--profile game|app|service|media|generic]")
+            print(Ansi.dim("  只补 .llmq/project-contract.json；已有契约绝不覆盖。"))
+            exit(2)
+        }
+        let target = args[1]
+        let repo = RepoRegistry.all().first(where: { $0.alias == target })?.localPath
+            ?? NSString(string: target).expandingTildeInPath
+        let profile: String
+        if let i = args.firstIndex(of: "--profile"), i + 1 < args.count {
+            profile = args[i + 1]
+        } else {
+            profile = "generic"
+        }
+        guard ["game", "app", "service", "media", "generic"].contains(profile) else {
+            print(Ansi.red("未知 Profile：\(profile)")); exit(2)
+        }
+        switch try ProjectContractBootstrap.apply(repo: repo, profile: profile) {
+        case .created(let path):
+            print(Ansi.green("已创建项目契约骨架：") + path)
+            print(Ansi.yellow("  现在运行 doctor，按报告补目标、路线、验收条款和黄金样板。"))
+        case .preserved(let path):
+            print(Ansi.dim("已有项目契约，未覆盖：") + path)
+        }
+        return
     // llmq repo verify <别名> "<命令>" [--timeout 秒]
     // llmq repo focus <别名> [off] —— 标「持续推进」的仓库,队列空了才续活。
     // 老板 2026-08-23:「我们应该专注于项目去派活」「不要瞎续活」。
@@ -3923,6 +3950,48 @@ func cmdRepo(_ args: [String]) throws {
               : Ansi.green("已登记 \(alias) 的质量契约：") + value)
         return
 
+    case "doctor":
+        guard args.count >= 2 else {
+            print("用法：llmq repo doctor <别名|路径> [--json]")
+            print(Ansi.dim("  在派批量任务前检查目标、参考物、生产路线、验收条款和黄金样板。"))
+            exit(2)
+        }
+        let target = args[1]
+        let repo = RepoRegistry.all().first(where: { $0.alias == target })?.localPath
+            ?? NSString(string: target).expandingTildeInPath
+        let report = ProjectDoctor.inspect(repo: repo)
+        if args.contains("--json") {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let data = try encoder.encode(report)
+            print(String(data: data, encoding: .utf8) ?? "{}")
+        } else {
+            print(Ansi.bold("项目契约检查") + Ansi.dim("  " + report.repo))
+            print("  契约  " + report.contractFile)
+            if report.issues.isEmpty {
+                print(Ansi.green("  ✓ 可以开始生产：目标、路线和验收覆盖完整"))
+            } else {
+                for issue in report.issues {
+                    let mark: String
+                    switch issue.severity {
+                    case .error: mark = Ansi.red("✗")
+                    case .warning: mark = Ansi.yellow("!")
+                    case .info: mark = Ansi.cyan("i")
+                    }
+                    let file = issue.file.map { Ansi.dim("  [\($0)]") } ?? ""
+                    print("  \(mark) \(issue.message)" + file)
+                    print(Ansi.dim("    " + issue.code))
+                }
+                let errors = report.issues.filter { $0.severity == .error }.count
+                let warnings = report.issues.filter { $0.severity == .warning }.count
+                print("\n  " + (report.canStartProduction
+                    ? Ansi.yellow("可继续试验，但有 \(warnings) 条警告")
+                    : Ansi.red("不能进入批量生产：\(errors) 个错误，\(warnings) 条警告")))
+            }
+        }
+        if !report.canStartProduction { exit(1) }
+        return
+
     case "verify":
         let pos = args.dropFirst().filter { !$0.hasPrefix("--") }
         guard pos.count >= 2 else {
@@ -3987,7 +4056,7 @@ func cmdRepo(_ args: [String]) throws {
                 + "改路径：llmq repo add <别名> <新路径>"))
         }
     default:
-        print("用法：llmq repo [add|bootstrap-game|list|focus|verify|owner|quality]")
+        print("用法：llmq repo [add|bootstrap-game|contract-init|doctor|list|focus|verify|owner|quality]")
         exit(2)
     }
 }
