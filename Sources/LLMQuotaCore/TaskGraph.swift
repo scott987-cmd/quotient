@@ -27,6 +27,44 @@ import Foundation
 ///    而产物要挂在边上，所以必须有边。
 public enum TaskGraph {
 
+    public struct Owner: Sendable, Equatable {
+        public var platform: Platform
+        public var runnerID: String
+        public var assignedAt: Date
+
+        public init(platform: Platform, runnerID: String, assignedAt: Date) {
+            self.platform = platform
+            self.runnerID = runnerID
+            self.assignedAt = assignedAt
+        }
+    }
+
+    /// 同一张图只在同能力泳道继承 owner。媒体、评审、编码之间仍通过磁盘产物交接，
+    /// 不伪装成能共享会话。
+    public static func inheritedOwner(for task: WorkTask, in all: [WorkTask]) -> Owner? {
+        guard let graphID = task.graphID else { return nil }
+        let lane = TaskCapabilityLane.classify(task.prompt)
+        return all.lazy
+            .filter {
+                $0.id != task.id && $0.graphID == graphID
+                    && TaskCapabilityLane.classify($0.prompt) == lane
+                    && $0.ownerPlatform != nil && $0.ownerRunnerID != nil
+            }
+            .sorted {
+                let a = $0.ownerAssignedAt ?? $0.createdAt
+                let b = $1.ownerAssignedAt ?? $1.createdAt
+                if a != b { return a > b }
+                return ($0.stepIndex ?? 0) > ($1.stepIndex ?? 0)
+            }
+            .first
+            .flatMap { item in
+                guard let platform = item.ownerPlatform,
+                      let runnerID = item.ownerRunnerID else { return nil }
+                return Owner(platform: platform, runnerID: runnerID,
+                             assignedAt: item.ownerAssignedAt ?? item.createdAt)
+            }
+    }
+
     // MARK: - 就绪
 
     /// 这个节点现在能不能开跑。

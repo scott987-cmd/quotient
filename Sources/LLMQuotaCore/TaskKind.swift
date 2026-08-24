@@ -1,5 +1,27 @@
 import Foundation
 
+public enum TaskCapabilityLane: String, Codable, Sendable {
+    case coding, media, review
+
+    public static func classify(_ prompt: String) -> TaskCapabilityLane {
+        if TaskKind.isMedia(prompt) || TaskKind.needsEyes(prompt) { return .media }
+        if TaskKind.isReview(prompt) { return .review }
+        return .coding
+    }
+
+    /// 与调度器的方向闸保持同一套语义，供 owner 迁移使用。
+    public static func accepts(_ runner: AgentRunner, lane: Self) -> Bool {
+        switch lane {
+        case .media:
+            return runner.mediaOnly && runner.canSeeMedia
+        case .review:
+            return !runner.mediaOnly
+        case .coding:
+            return !runner.mediaOnly && !runner.reviewOnly
+        }
+    }
+}
+
 /// 任务属于哪一类 —— **只准有这一处判定。**
 ///
 /// ## 为什么必须收成一处

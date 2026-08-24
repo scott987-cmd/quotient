@@ -137,6 +137,7 @@ public struct OpenCodeAdapter: UsageAdapter {
 /// 用 opencode 跑任务。
 public struct OpenCodeRunner: AgentRunner {
     public let platform: Platform
+    public var runnerID: String { "opencode.\(platform.rawValue).code" }
     public let binaryName = "opencode"
     /// 它能改文件。
     public let canEdit = true

@@ -1,0 +1,306 @@
+import XCTest
+@testable import LLMQuotaCore
+
+final class ContextAffinityTests: XCTestCase {
+    private var scratch: URL!
+
+    override func setUp() {
+        super.setUp()
+        scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("context-affinity-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        Paths.appSupportOverride = scratch
+        GraphSession.fileOverride = scratch.appendingPathComponent("sessions.json")
+        WorkAttemptStore.fileOverride = scratch.appendingPathComponent("attempts.jsonl")
+    }
+
+    override func tearDown() {
+        GraphSession.fileOverride = nil
+        WorkAttemptStore.fileOverride = nil
+        Paths.appSupportOverride = nil
+        try? FileManager.default.removeItem(at: scratch)
+        super.tearDown()
+    }
+
+    func testRunnerIdentityAndSessionSupportAreExplicit() {
+        let runners = RunnerRegistry.all
+        XCTAssertEqual(Set(runners.map(\.runnerID)).count, runners.count)
+        XCTAssertEqual(ClaudeRunner().sessionSupport, .stableID)
+        XCTAssertEqual(QwenRunner().sessionSupport, .projectLatest)
+        XCTAssertEqual(ZcodeRunner().sessionSupport, .reportedID)
+        XCTAssertEqual(KimiRunner().sessionSupport, .none)
+        XCTAssertEqual(CodexRunner().sessionSupport, .none)
+        XCTAssertNotEqual(MiniMaxMediaRunner().runnerID, MiniMaxReviewRunner().runnerID)
+    }
+
+    func testStableSessionsAreTaskScopedAndForgetIsExact() {
+        let a = GraphSession.Context(taskID: "task-a", graphID: nil,
+                                     capability: .coding, runnerID: "claude.code",
+                                     machineID: "machine")
+        let b = GraphSession.Context(taskID: "task-b", graphID: nil,
+                                     capability: .coding, runnerID: "claude.code",
+                                     machineID: "machine")
+        guard case .create(let aid) = GraphSession.mode(
+            context: a, support: .stableID, workspace: "/tmp/repo")
+        else { return XCTFail("task-a 首次应创建会话") }
+        guard case .create = GraphSession.mode(
+            context: b, support: .stableID, workspace: "/tmp/repo")
+        else { return XCTFail("同仓库另一任务不能串到 task-a") }
+        XCTAssertEqual(GraphSession.mode(
+            context: a, support: .stableID, workspace: "/tmp/repo"), .resume(aid))
+
+        GraphSession.forget(context: a)
+        guard case .create = GraphSession.mode(
+            context: a, support: .stableID, workspace: "/tmp/repo")
+        else { return XCTFail("删掉 task-a 后应新建") }
+        guard case .resume = GraphSession.mode(
+            context: b, support: .stableID, workspace: "/tmp/repo")
+        else { return XCTFail("精确删除不能误伤 task-b") }
+    }
+
+    func testUnsupportedRunnerNeverCreatesSessionState() {
+        let c = GraphSession.Context(taskID: "task", graphID: nil,
+                                     capability: .coding, runnerID: "kimi.code",
+                                     machineID: "machine")
+        XCTAssertEqual(GraphSession.mode(
+            context: c, support: .none, workspace: "/tmp/repo"), .fresh)
+        XCTAssertTrue(GraphSession.load().isEmpty)
+    }
+
+    func testProjectLatestRequiresMatchingWorkspaceAffinity() {
+        let a = GraphSession.Context(taskID: "task-a", graphID: nil,
+                                     capability: .coding, runnerID: "qwen.code",
+                                     machineID: "machine")
+        let b = GraphSession.Context(taskID: "task-b", graphID: nil,
+                                     capability: .coding, runnerID: "qwen.code",
+                                     machineID: "machine")
+        XCTAssertEqual(GraphSession.mode(
+            context: a, support: .projectLatest, workspace: "/tmp/shared"), .fresh)
+        GraphSession.markLaunched(context: a, support: .projectLatest,
+                                  workspace: "/tmp/shared")
+        XCTAssertEqual(GraphSession.mode(
+            context: a, support: .projectLatest, workspace: "/tmp/shared"), .projectResume)
+        XCTAssertEqual(GraphSession.mode(
+            context: b, support: .projectLatest, workspace: "/tmp/shared"), .fresh)
+    }
+
+    func testQwenUsesProjectResumeOnlyWhenRequested() {
+        let fresh = QwenRunner().command(prompt: "p", cwd: "/tmp", session: .fresh).args
+        let resume = QwenRunner().command(
+            prompt: "p", cwd: "/tmp", session: .projectResume).args
+        XCTAssertFalse(fresh.contains("-c"))
+        XCTAssertTrue(resume.contains("-c"))
+    }
+
+    func testReportedSessionIDIsNeverInvented() {
+        let context = GraphSession.Context(
+            taskID: "z", graphID: nil, capability: .coding,
+            runnerID: "zcode.code", machineID: "machine")
+        XCTAssertEqual(GraphSession.mode(
+            context: context, support: .reportedID, workspace: "/tmp/z"), .fresh)
+        XCTAssertNil(ZcodeRunner().discoveredSessionID(from: "ordinary output"))
+        XCTAssertNil(ZcodeRunner().discoveredSessionID(
+            from: "edited fixture value sess_not-a-real-report"))
+        let real = ZcodeRunner().discoveredSessionID(
+            from: "created session sess_abc-123; keep working")
+        XCTAssertEqual(real, "sess_abc-123")
+        GraphSession.rememberReportedID(context: context, id: real!)
+        XCTAssertEqual(GraphSession.mode(
+            context: context, support: .reportedID, workspace: "/tmp/z"),
+            .resume("sess_abc-123"))
+    }
+
+    func testSessionFailureDetectionDoesNotEraseOnOrdinaryFailure() {
+        XCTAssertTrue(GraphSession.isSessionFailure("conversation not found"))
+        XCTAssertTrue(GraphSession.isSessionFailure("invalid session id"))
+        XCTAssertFalse(GraphSession.isSessionFailure("build failed: symbol not found"))
+        XCTAssertFalse(GraphSession.isSessionFailure("request timed out"))
+    }
+
+    func testGraphCapabilityLaneInheritsItsOwnOwner() {
+        var coding = WorkTask(id: "g1s1", prompt: "改代码", repo: "/tmp/repo")
+        coding.graphID = "g1"
+        coding.ownerPlatform = .qwen
+        coding.ownerRunnerID = "qwen.code"
+        coding.ownerAssignedAt = Date(timeIntervalSince1970: 1)
+
+        var media = WorkTask(id: "g1s2", prompt: "【媒体】生成图片", repo: "/tmp/repo")
+        media.graphID = "g1"
+        media.ownerPlatform = .minimax
+        media.ownerRunnerID = "minimax.media"
+        media.ownerAssignedAt = Date(timeIntervalSince1970: 2)
+
+        var nextCoding = WorkTask(id: "g1s3", prompt: "接入图片", repo: "/tmp/repo")
+        nextCoding.graphID = "g1"
+        XCTAssertEqual(TaskGraph.inheritedOwner(for: nextCoding, in: [coding, media])?.runnerID,
+                       "qwen.code")
+
+        var nextMedia = WorkTask(id: "g1s4", prompt: "【媒体】补一张图", repo: "/tmp/repo")
+        nextMedia.graphID = "g1"
+        XCTAssertEqual(TaskGraph.inheritedOwner(for: nextMedia, in: [coding, media])?.runnerID,
+                       "minimax.media")
+    }
+
+    func testGraphCapabilityLanesHaveIsolatedSessions() {
+        let coding = GraphSession.Context(
+            taskID: "g1s1", graphID: "g1", capability: .coding,
+            runnerID: "claude.code", machineID: "machine")
+        let media = GraphSession.Context(
+            taskID: "g1s2", graphID: "g1", capability: .media,
+            runnerID: "claude.code", machineID: "machine")
+        XCTAssertNotEqual(coding.storageKey, media.storageKey)
+
+        guard case .create(let codingID) = GraphSession.mode(
+            context: coding, support: .stableID, workspace: "/tmp/g1")
+        else { return XCTFail("编码泳道首次运行应创建会话") }
+        guard case .create(let mediaID) = GraphSession.mode(
+            context: media, support: .stableID, workspace: "/tmp/g1")
+        else { return XCTFail("媒体泳道不能恢复编码泳道的会话") }
+        XCTAssertNotEqual(codingID, mediaID)
+        XCTAssertEqual(GraphSession.mode(
+            context: coding, support: .stableID, workspace: "/tmp/g1"),
+            .resume(codingID))
+        XCTAssertEqual(GraphSession.mode(
+            context: media, support: .stableID, workspace: "/tmp/g1"),
+            .resume(mediaID))
+    }
+
+    func testOwnerFieldsDecodeFromOldJSON() throws {
+        let raw = #"{"id":"old","prompt":"p","repo":"/tmp/r","state":"queued","createdAt":"2026-08-24T00:00:00Z"}"#
+        let task = try SnapshotCoding.decoder().decode(WorkTask.self, from: Data(raw.utf8))
+        XCTAssertNil(task.ownerPlatform)
+        XCTAssertNil(task.ownerRunnerID)
+        XCTAssertEqual(task.handoffCount, 0)
+        XCTAssertEqual(task.automaticHandoffCount, 0)
+    }
+
+    func testAttemptsPreserveIntermediateTimeout() throws {
+        let first = WorkAttempt(taskID: "t", runnerID: "qwen.code", platform: .qwen,
+                                startedAt: Date(timeIntervalSince1970: 1),
+                                endedAt: Date(timeIntervalSince1970: 2),
+                                outcome: .failed, failureKind: "timedOut", timedOut: true)
+        let second = WorkAttempt(taskID: "t", runnerID: "kimi.code", platform: .kimi,
+                                 startedAt: Date(timeIntervalSince1970: 3),
+                                 endedAt: Date(timeIntervalSince1970: 4),
+                                 outcome: .done, timedOut: false)
+        try WorkAttemptStore.append(first)
+        try WorkAttemptStore.append(second)
+
+        let all = WorkAttemptStore.all()
+        XCTAssertEqual(all.count, 2)
+        let storedFirst = try XCTUnwrap(all.first)
+        let storedSecond = try XCTUnwrap(all.dropFirst().first)
+        XCTAssertTrue(storedFirst.timedOut)
+        XCTAssertEqual(storedSecond.outcome, .done)
+        let metrics = WorkAttemptMetrics.summarize(all)
+        XCTAssertEqual(metrics.recovery.handoffAttempts, 1)
+        XCTAssertEqual(metrics.recovery.handoffSuccesses, 1)
+        XCTAssertEqual(metrics.recovery.sameOwnerAttempts, 0)
+    }
+
+    func testRunningAndTerminalEventsCountAsOneAttempt() throws {
+        let id = "attempt-1"
+        let running = WorkAttempt(
+            attemptID: id, taskID: "t", runnerID: "qwen.code", platform: .qwen,
+            startedAt: Date(timeIntervalSince1970: 1), outcome: .running,
+            timedOut: false)
+        var terminal = running
+        terminal.endedAt = Date(timeIntervalSince1970: 2)
+        terminal.outcome = .failed
+        terminal.failureKind = "interrupted"
+
+        try WorkAttemptStore.append(running)
+        XCTAssertEqual(WorkAttemptStore.unresolvedRunning(taskID: "t").map(\.attemptID), [id])
+        try WorkAttemptStore.append(terminal)
+        XCTAssertTrue(WorkAttemptStore.unresolvedRunning(taskID: "t").isEmpty)
+
+        let metrics = WorkAttemptMetrics.summarize(WorkAttemptStore.all())
+        XCTAssertEqual(metrics.groups.count, 1)
+        XCTAssertEqual(metrics.groups.first?.attempts, 1)
+        XCTAssertEqual(metrics.groups.first?.successes, 0)
+    }
+
+    func testOwnerCanRetryEvenWhenItsPlatformIsInTriedPlatforms() {
+        struct Stub: AgentRunner {
+            let platform: Platform = .qwen
+            let runnerID = "test.qwen.owner"
+            let binaryName = "echo"
+            func command(prompt: String, cwd: String)
+                -> (launchPath: String, args: [String], env: [String: String]) {
+                ("/bin/echo", [prompt], [:])
+            }
+        }
+        var task = WorkTask(id: "owned", prompt: "改代码", repo: "/tmp/repo")
+        task.ownerPlatform = .qwen
+        task.ownerRunnerID = "test.qwen.owner"
+        task.triedPlatforms = [.qwen]
+        let dashboard = Dashboard(generatedAt: Date(), machines: [], reports: [
+            PlatformReport(platform: .qwen, planName: "test", monthlyCost: nil,
+                           currency: "CNY", detected: true, machines: ["本机"],
+                           lastActivity: nil, statuses: [], last30dRequests: 0,
+                           last30dBillableTokens: 0, last7dRequests: 0, topModels: [])
+        ])
+        let decision = WorkScheduler().decide(
+            dashboard: dashboard, runners: [Stub()], task: task)
+        XCTAssertEqual(decision.pick?.runner.runnerID, "test.qwen.owner")
+    }
+
+    func testUnknownRunnerMigrationRefusesAmbiguousGuess() {
+        struct Stub: AgentRunner {
+            let runnerID: String
+            let platform: Platform = .minimax
+            let binaryName = "echo"
+            func command(prompt: String, cwd: String)
+                -> (launchPath: String, args: [String], env: [String: String]) {
+                ("/bin/echo", [prompt], [:])
+            }
+        }
+        let runners: [AgentRunner] = [Stub(runnerID: "new.a"), Stub(runnerID: "new.b")]
+        XCTAssertNil(RunnerRegistry.resolve(
+            ownerRunnerID: "retired.id", platform: .minimax,
+            prompt: "【评审】方案", runners: runners))
+        XCTAssertEqual(RunnerRegistry.resolve(
+            ownerRunnerID: "new.a", platform: .minimax,
+            prompt: "【评审】方案", runners: runners)?.runnerID, "new.a")
+        XCTAssertNil(RunnerRegistry.resolve(
+            ownerRunnerID: "new.a", platform: .qwen,
+            prompt: "【评审】方案", runners: runners),
+            "稳定 ID 与平台自相矛盾时不能跨平台猜")
+    }
+
+    func testManualAndAutomaticHandoffsHaveSeparateLimitsAndRollback() {
+        var task = WorkTask(id: "counts", prompt: "p", repo: "/tmp/r")
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "a", platform: .qwen, cause: .initial,
+            now: Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(task.handoffCount, 0)
+        XCTAssertEqual(task.automaticHandoffCount, 0)
+
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "b", platform: .kimi, cause: .manualDisable)
+        XCTAssertEqual(task.handoffCount, 1)
+        XCTAssertEqual(task.automaticHandoffCount, 0)
+
+        let beforeFailedLaunch = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "c", platform: .codex, cause: .automaticFailure)
+        XCTAssertEqual(task.handoffCount, 2)
+        XCTAssertEqual(task.automaticHandoffCount, 1)
+        ContextAffinityPolicy.restore(task: &task, snapshot: beforeFailedLaunch)
+        XCTAssertEqual(task.ownerRunnerID, "b")
+        XCTAssertEqual(task.handoffCount, 1)
+        XCTAssertEqual(task.automaticHandoffCount, 0)
+    }
+
+    func testTimeoutExperimentNeverConsumesTheFallbackSlot() {
+        XCTAssertFalse(ContextAffinityPolicy.shouldRetryOwnerAfterTimeout(
+            enabled: false, retryUsed: false,
+            currentRunnerID: "a", ownerRunnerID: "a"))
+        XCTAssertTrue(ContextAffinityPolicy.shouldRetryOwnerAfterTimeout(
+            enabled: true, retryUsed: false,
+            currentRunnerID: "a", ownerRunnerID: "a"))
+        XCTAssertTrue(ContextAffinityPolicy.canProceedToNext(
+            nextIsSameOwner: true, automaticHandoffCount: 1))
+        XCTAssertFalse(ContextAffinityPolicy.canProceedToNext(
+            nextIsSameOwner: false, automaticHandoffCount: 1))
+    }
+}

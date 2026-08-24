@@ -34,6 +34,16 @@ public struct WorkTask: Codable, Sendable {
     /// 否则回答之后它被第一道硬排除挡住，只能换个更弱的平台重头做。
     public var triedPlatforms: [Platform] = []
 
+    /// 任务形成上下文之后由哪个精确执行器继续负责。
+    /// `platform` 不够：MiniMax 同一平台同时有媒体和评审执行器。
+    public var ownerPlatform: Platform?
+    public var ownerRunnerID: String?
+    public var ownerAssignedAt: Date?
+    /// 所有真实上下文转移，包括人工停用。
+    public var handoffCount: Int = 0
+    /// 只有系统因故障自动发起的交接；人工停用不占这一个救火名额。
+    public var automaticHandoffCount: Int = 0
+
     /// 这个产出**落地**的时间 —— 合进目标分支了。
     ///
     /// 和 `state == .done` 是两件事，而且区别很关键：
@@ -167,6 +177,12 @@ public struct WorkTask: Codable, Sendable {
         note = try c.decodeIfPresent(String.self, forKey: .note)
         profile = try c.decodeIfPresent(TaskProfile.self, forKey: .profile)
         triedPlatforms = try c.decodeIfPresent([Platform].self, forKey: .triedPlatforms) ?? []
+        ownerPlatform = try c.decodeIfPresent(Platform.self, forKey: .ownerPlatform)
+        ownerRunnerID = try c.decodeIfPresent(String.self, forKey: .ownerRunnerID)
+        ownerAssignedAt = try c.decodeIfPresent(Date.self, forKey: .ownerAssignedAt)
+        handoffCount = try c.decodeIfPresent(Int.self, forKey: .handoffCount) ?? 0
+        automaticHandoffCount = try c.decodeIfPresent(Int.self,
+            forKey: .automaticHandoffCount) ?? 0
         origin = try c.decodeIfPresent(String.self, forKey: .origin)
         landedAt = try c.decodeIfPresent(Date.self, forKey: .landedAt)
         discardedAt = try c.decodeIfPresent(Date.self, forKey: .discardedAt)
@@ -446,7 +462,8 @@ public struct WorkScheduler: Sendable {
             }
 
             // 接力时别转回已经失败过的平台 —— 它刚在同一个任务上栽过。
-            if let task, task.triedPlatforms.contains(p) {
+            if let task, task.triedPlatforms.contains(p),
+               !(task.ownerRunnerID == runner.runnerID && task.ownerPlatform == p) {
                 rejected.append(Rejection(platform: p, reason: "本任务已在该平台失败过", kind: .permanent))
                 continue
             }
@@ -744,8 +761,21 @@ public struct WorkScheduler: Sendable {
 
 // MARK: - 执行器
 
+public enum SessionSupport: String, Codable, Sendable {
+    case none
+    /// 只能恢复当前工作目录最近一次会话，例如 Qwen `-c`。
+    case projectLatest
+    /// 可以显式创建/恢复指定 ID，例如 Claude。
+    case stableID
+    /// 首轮必须 fresh，CLI 在真实输出里报告 ID，后续才能精确恢复，例如 ZCode。
+    case reportedID
+}
+
 public protocol AgentRunner: Sendable {
     var platform: Platform { get }
+    /// 稳定代码身份，不随展示名变化。
+    var runnerID: String { get }
+    var sessionSupport: SessionSupport { get }
     var binaryName: String { get }
     /// 这个执行器在本机的可执行文件(或脚本)在哪;不可用返回 nil。
     ///
@@ -805,9 +835,16 @@ public protocol AgentRunner: Sendable {
     /// 带会话延续的版本。默认实现忽略 session —— 不支持的执行器不用改。
     func command(prompt: String, cwd: String, session: GraphSession.Mode)
         -> (launchPath: String, args: [String], env: [String: String])
+
+    /// 只有 `.reportedID` 执行器覆盖；不得从提示词或自造随机值猜会话 ID。
+    func discoveredSessionID(from output: String) -> String?
 }
 
 public extension AgentRunner {
+    /// 测试替身和外部扩展的兼容默认值。产品内置执行器必须显式声明稳定 ID；
+    /// 默认值只保证旧 conformer 不因协议扩展而源码不兼容。
+    var runnerID: String { "legacy.\(platform.rawValue).\(String(reflecting: Self.self))" }
+
     /// 默认忽略会话延续。**只有真支持的执行器才覆盖它** ——
     /// 给一个不认识 --resume 的 CLI 塞这个参数，它会直接报参数错误，
     /// 而那看起来像任务失败。
@@ -818,6 +855,7 @@ public extension AgentRunner {
 
     /// 绝大多数执行器都是能改文件的编码 agent。
     var canEdit: Bool { true }
+    var sessionSupport: SessionSupport { .none }
     /// 只接【媒体】任务的执行器（生成图片/音乐这类）。
     /// 编码任务派给它必然产出垃圾，媒体任务派给编码执行器则白跑 ——
     /// 两个方向都要闸。
@@ -826,10 +864,13 @@ public extension AgentRunner {
     var canSeeMedia: Bool { false }
     var binaryPath: String? { Proc.which(binaryName) }
     var isAvailable: Bool { binaryPath != nil }
+    func discoveredSessionID(from output: String) -> String? { nil }
 }
 
 public struct ClaudeRunner: AgentRunner {
     public let platform: Platform = .claude
+    public let runnerID = "claude.code"
+    public let sessionSupport: SessionSupport = .stableID
     public let binaryName = "claude"
     public init() {}
 
@@ -852,7 +893,7 @@ public struct ClaudeRunner: AgentRunner {
         var extra: [String] = []
         if let m = RunnerConfigStore.load().model(for: platform) { extra += ["--model", m] }
         switch session {
-        case .fresh: break
+        case .fresh, .projectResume: break
         case .create(let id): extra += ["--session-id", id]
         case .resume(let id): extra += ["--resume", id]
         }
@@ -884,6 +925,8 @@ public struct ClaudeRunner: AgentRunner {
 
 public struct QwenRunner: AgentRunner {
     public let platform: Platform = .qwen
+    public let runnerID = "qwen.code"
+    public let sessionSupport: SessionSupport = .projectLatest
     public let binaryName = "qwen"
     public init() {}
 
@@ -894,15 +937,16 @@ public struct QwenRunner: AgentRunner {
     }
 
     /// qwen 不让我们自选会话 id（`-r` 要的是它自己生成的那个），
-    /// 只能用 `-c`＝「恢复**当前项目**的最近会话」。
-    /// 这在图里成立、在普通任务里不成立：图内节点共用一个 worktree，
-    /// 路径稳定；而普通任务各有各的 worktree，恢复出来的会话
-    /// 工作目录已经不存在了。
+    /// 只能用 `-c`＝「恢复**当前项目**的最近会话」。只有工作区的 affinity
+    /// 记录仍指向当前任务/能力泳道时才会传入 `.projectResume`。
     public func command(
         prompt: String, cwd: String, session: GraphSession.Mode
     ) -> (launchPath: String, args: [String], env: [String: String]) {
         var args = ["-p", prompt, "--approval-mode", "yolo"]
-        if case .resume = session { args.insert("-c", at: 0) }
+        switch session {
+        case .projectResume, .resume: args.insert("-c", at: 0)
+        case .fresh, .create: break
+        }
         // 模型偏好来自账号级配置，不写死在代码里 —— 同一个 CLI 能选十几个模型，
         // 选哪个取决于买了什么档，跟代码无关。
         if let m = RunnerConfigStore.load().model(for: platform) {
@@ -922,6 +966,7 @@ public struct QwenRunner: AgentRunner {
 
 public struct GeminiRunner: AgentRunner {
     public let platform: Platform = .gemini
+    public let runnerID = "gemini.code"
     public let binaryName = "gemini"
     public init() {}
 
@@ -969,6 +1014,8 @@ public struct GeminiRunner: AgentRunner {
 /// `--resume <sess_...>` 续接会话 —— 和我们这套的需求一一对上。
 public struct ZcodeRunner: AgentRunner {
     public let platform: Platform = .glm
+    public let runnerID = "zcode.code"
+    public let sessionSupport: SessionSupport = .reportedID
     public let binaryName = "zcode"
     public init() {}
 
@@ -1078,10 +1125,23 @@ public struct ZcodeRunner: AgentRunner {
         }
         return (Self.nodePath ?? "/usr/bin/env", args, env)
     }
+
+    public func discoveredSessionID(from output: String) -> String? {
+        for line in output.split(separator: "\n").reversed() {
+            let lower = line.lowercased()
+            guard lower.contains("session") || lower.contains("会话") else { continue }
+            guard let range = line.range(
+                of: #"\bsess_[A-Za-z0-9_-]+\b"#, options: .regularExpression)
+            else { continue }
+            return String(line[range])
+        }
+        return nil
+    }
 }
 
 public struct KimiRunner: AgentRunner {
     public let platform: Platform = .kimi
+    public let runnerID = "kimi.code"
     public let binaryName = "kimi"
     public init() {}
 
@@ -1103,6 +1163,7 @@ public struct KimiRunner: AgentRunner {
 /// `canEdit = false` 就是用来表达这个区别的 —— 调度器不会把编码任务派给它。
 public struct MiniMaxRunner: AgentRunner {
     public let platform: Platform = .minimax
+    public let runnerID = "minimax.text"
     public let binaryName = "mmx"
     public var canEdit: Bool { false }
     public init() {}
@@ -1145,6 +1206,7 @@ public struct MiniMaxRunner: AgentRunner {
 /// 模型会画出训练数据里的画师签名）这一步留给人，工具不越权。
 public struct MiniMaxMediaRunner: AgentRunner {
     public let platform: Platform = .minimax
+    public let runnerID = "minimax.media"
     public let binaryName = "mmx"
     public var canEdit: Bool { true }     // 它写文件（资产），这是真的编辑
     public var mediaOnly: Bool { true }
@@ -1376,6 +1438,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
 /// 不用 --dangerously-bypass：它连沙箱一起关，没必要冒这个险。
 public struct CodexRunner: AgentRunner {
     public let platform: Platform = .codex
+    public let runnerID = "codex.code"
     public let binaryName = "codex"
     public let canEdit = true
     public init() {}
@@ -1410,6 +1473,27 @@ public enum RunnerRegistry {
     public static let reasoning: [AgentRunner] = [
         MiniMaxRunner(), ClaudeRunner(), QwenRunner(), KimiRunner(), OpenCodeRunner()
     ]
+
+    /// 恢复持久化 owner。先认稳定 ID；旧 ID 不认识时，只在同平台、同能力泳道
+    /// 唯一命中时迁移，绝不把歧义静默猜成另一个执行器。
+    public static func resolve(
+        ownerRunnerID: String,
+        platform: Platform,
+        prompt: String,
+        runners: [AgentRunner] = all
+    ) -> AgentRunner? {
+        if let exact = runners.first(where: { $0.runnerID == ownerRunnerID }) {
+            guard exact.platform == platform,
+                  TaskCapabilityLane.accepts(exact, lane: TaskCapabilityLane.classify(prompt))
+            else { return nil }
+            return exact
+        }
+        let lane = TaskCapabilityLane.classify(prompt)
+        let matches = runners.filter {
+            $0.platform == platform && TaskCapabilityLane.accepts($0, lane: lane)
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
 }
 
 // MARK: - 进程
@@ -2392,6 +2476,7 @@ public enum Elsewhere {
 /// MiniMax 只负责判断。报告写进 `reviews/`，走正常的提交流程。
 public struct MiniMaxReviewRunner: AgentRunner {
     public let platform: Platform = .minimax
+    public let runnerID = "minimax.review"
     public let binaryName = "mmx"
     /// 它写文件（评审报告），走正常的 worktree → 提交 → 审查流程。
     public var canEdit: Bool { true }
