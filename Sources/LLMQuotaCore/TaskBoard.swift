@@ -98,6 +98,18 @@ public enum TaskBoard {
         // 排队就是没在跑，这两个字段一起按下。
         let running = t.state != .queued
         let started = running ? t.startedAt : nil
+        let productionPhase = t.production?.stage.displayName
+        let visiblePhase: String?
+        if let productionPhase, let livePhase = progress?.phase, !livePhase.isEmpty {
+            visiblePhase = productionPhase + " · " + livePhase
+        } else {
+            visiblePhase = progress?.phase ?? productionPhase
+        }
+        let productionSummary = t.production.map {
+            $0.stage == .goldenSample
+                ? "样板 \($0.goldenSampleID) · \($0.deliverableKind)"
+                : "扩张自样板 \($0.goldenSampleID) · \($0.deliverableKind)"
+        }
         return TaskBrief(
             id: t.id,
             title: TaskBrief.title(for: t),
@@ -110,11 +122,14 @@ public enum TaskBoard {
             stepIndex: t.stepIndex,
             stepTotal: t.graphID.flatMap { stepTotals[$0] },
             repoAlias: aliasByPath[standardized(t.repo)],
-            progressPhase: progress?.phase,
-            progressSummary: progress?.summary,
-            progressNextStep: progress?.nextStep,
+            progressPhase: visiblePhase,
+            progressSummary: progress?.summary ?? productionSummary,
+            progressNextStep: t.production?.blockedReason ?? progress?.nextStep,
             progressUpdatedAt: progress?.updatedAt,
-            progressEvidenceCount: progress?.evidence.count
+            progressEvidenceCount: progress?.evidence.count,
+            productionStage: t.production?.stage.rawValue,
+            deliverableKind: t.production?.deliverableKind,
+            productionBlockedReason: t.production?.blockedReason
         )
     }
 

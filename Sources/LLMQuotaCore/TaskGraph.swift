@@ -74,6 +74,8 @@ public enum TaskGraph {
     /// 落地是整张图完成之后的事。
     public static func isReady(_ t: WorkTask, in all: [WorkTask]) -> Bool {
         guard t.state == .queued else { return false }
+        // 即使某条旧路径把 fan-out 手工改回 queued，派发前仍要重新核样板。
+        guard GoldenSampleGate.blockReason(for: t, in: all) == nil else { return false }
         guard !t.dependsOn.isEmpty else { return true }
         let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         return t.dependsOn.allSatisfy { upstreamCleared(byID[$0]) }
@@ -324,6 +326,12 @@ public enum TaskGraph {
                     byID[t.id] = x; touched[t.id] = x; changed = true
                 }
             }
+        }
+        // 生产质量闸和图依赖共用同一条“每轮对账”入口，避免新增一种 blocked
+        // 却漏掉 retry / done / worker 启动等恢复路径。
+        for task in GoldenSampleGate.reconcile(Array(byID.values)) {
+            byID[task.id] = task
+            touched[task.id] = task
         }
         return touched.values.sorted {
             ($0.stepIndex ?? 0, $0.createdAt) < ($1.stepIndex ?? 0, $1.createdAt)

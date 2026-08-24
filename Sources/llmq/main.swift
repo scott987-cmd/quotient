@@ -740,7 +740,8 @@ func cmdWork(_ args: [String]) throws {
 
     case "add":
         guard let prompt = rest.first(where: { !$0.hasPrefix("--") }) else {
-            print("用法：llmq work add \"<任务描述>\" [--repo <路径>]")
+            print("用法：llmq work add \"<任务描述>\" [--repo <路径>] "
+                + "[--deliverable-kind <类型> (--golden-sample <ID>|--fan-out-from <任务ID>)]")
             exit(2)
         }
         var repo = FileManager.default.currentDirectoryPath
@@ -797,13 +798,47 @@ func cmdWork(_ args: [String]) throws {
                 exit(2)
             }
         }
+        func option(_ name: String) -> String? {
+            guard let i = rest.firstIndex(of: name), i + 1 < rest.count else { return nil }
+            return rest[i + 1]
+        }
+        let deliverableKind = option("--deliverable-kind")
+        let goldenSampleID = option("--golden-sample")
+        let fanOutSource = option("--fan-out-from")
+        var production: ProductionContext?
+        if deliverableKind != nil || goldenSampleID != nil || fanOutSource != nil {
+            guard let kind = deliverableKind, !kind.isEmpty else {
+                print(Ansi.red("生产任务必须提供 --deliverable-kind <类型>")); exit(2)
+            }
+            guard (goldenSampleID == nil) != (fanOutSource == nil) else {
+                print(Ansi.red("--golden-sample 和 --fan-out-from 必须且只能选一个")); exit(2)
+            }
+            if let sampleID = goldenSampleID {
+                production = ProductionContext(
+                    stage: .goldenSample, deliverableKind: kind,
+                    goldenSampleID: sampleID)
+            } else if let sourcePrefix = fanOutSource {
+                let matches = TaskStore.all().filter {
+                    $0.id == sourcePrefix || $0.id.hasPrefix(sourcePrefix)
+                }
+                guard matches.count == 1, let source = matches.first else {
+                    print(Ansi.red(matches.isEmpty
+                        ? "找不到黄金样板任务 \(sourcePrefix)"
+                        : "任务前缀 \(sourcePrefix) 不唯一")); exit(2)
+                }
+                production = ProductionContext(
+                    stage: .fanOut, deliverableKind: kind,
+                    goldenSampleID: "", fanOutFromTaskID: source.id)
+            }
+        }
         let outcome = try TaskIntake.enqueue(
             prompt: prompt, repo: repo,
             classify: !args.contains("--no-classify"),
             split: !args.contains("--no-split"),
             force: true,   // 上面已经查过重（带打印），这里别查第二遍
             origin: nil,
-            preferredPlatform: preferred)
+            preferredPlatform: preferred,
+            production: production)
         switch outcome {
         case .graph(let nodes):
             print(Ansi.green("已拆成 \(nodes.count) 步 ")
@@ -816,11 +851,49 @@ func cmdWork(_ args: [String]) throws {
                       + Ansi.dim(n.profile.map { "  [\($0.risk.displayName)]" } ?? ""))
             }
         case .single(let t):
-            print(Ansi.green("已入队 ") + t.id + Ansi.dim("  仓库 " + repo))
+            if t.state == .blocked, let reason = t.production?.blockedReason {
+                print(Ansi.yellow("已登记，暂不扩张 ") + t.id
+                    + Ansi.dim("  " + reason))
+            } else {
+                print(Ansi.green("已入队 ") + t.id + Ansi.dim("  仓库 " + repo))
+            }
+            if let p = t.production {
+                print(Ansi.dim("  生产阶段 " + p.stage.displayName + " · "
+                    + p.deliverableKind + " · 样板 " + p.goldenSampleID))
+            }
             printProfile(t.profile)
         case .duplicate:
             break   // force: true 之下不会出现
         }
+
+    case "approve-sample":
+        guard let id = rest.first else {
+            print("用法：llmq work approve-sample <任务id> [说明]"); exit(2)
+        }
+        let all = TaskStore.all()
+        let matches = all.filter { $0.id == id || $0.id.hasPrefix(id) }
+        guard matches.count == 1, var sample = matches.first else {
+            print(Ansi.red(matches.isEmpty ? "找不到任务 " + id : "任务前缀不唯一")); exit(1)
+        }
+        guard var context = sample.production, context.stage == .goldenSample else {
+            print(Ansi.red("这不是黄金样板任务")); exit(1)
+        }
+        guard sample.state == .done else {
+            print(Ansi.red("黄金样板尚未完成，不能提前批准")); exit(1)
+        }
+        context.approvedAt = Date()
+        let approvalText = rest.dropFirst().joined(separator: " ")
+        context.approvalNote = approvalText.isEmpty
+            ? "人工确认黄金样板达标" : approvalText
+        sample.production = context
+        try TaskStore.append(sample)
+        let updates = TaskGraph.reconcile(TaskStore.all())
+        for task in updates { try? TaskStore.append(task) }
+        _ = TaskBoardStore.publishNow()
+        print(Ansi.green("已批准黄金样板 ") + sample.id
+            + Ansi.dim(sample.landedAt == nil
+                ? "  尚未合入主线，fan-out 会继续等待落地"
+                : "  已重新核对批量任务"))
 
     case "retry":
         // **failed 必须有一条回得去的路。**
@@ -1702,7 +1775,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|retry|discard|progress|attempts|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|approve-sample|retry|discard|progress|attempts|log]")
         exit(2)
     }
 }
@@ -3352,6 +3425,15 @@ func cmdWorkLoop(_ args: [String]) throws {
         for r in intents {
             let mark = r.accepted ? Ansi.green("  ✓ ") : Ansi.yellow("  ⚠︎ ")
             print(mark + "配置 " + Ansi.dim(String(r.id.prefix(8))) + "  " + r.note)
+        }
+
+        // 黄金样板落地/质量票可能由后台落地线程完成，不一定经过 runOneTask
+        // 的收尾路径。每轮对账一次，样板一通过就自动放行 fan-out，并立刻
+        // 重发手机任务板；反过来，未通过的扩张也不会以 queued 伪装成快开工。
+        phase("黄金样板准入", 10) {
+            let updates = TaskGraph.reconcile(TaskStore.all())
+            for task in updates { try? TaskStore.append(task) }
+            if !updates.isEmpty { _ = TaskBoardStore.publishNow() }
         }
 
         // 落地环节（详见 Review.autoLand 的条件说明）。

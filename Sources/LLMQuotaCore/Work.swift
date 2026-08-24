@@ -119,6 +119,9 @@ public struct WorkTask: Codable, Sendable {
     /// 不分开的话，解冻逻辑会把一个**人正在审的**高危任务偷偷放回队列。
     public var frozenBy: String?
 
+    /// 黄金样板生产关系。nil = 旧任务/普通任务，不受阶段 1 的批量扩张闸影响。
+    public var production: ProductionContext?
+
     /// 跑到一半被打断过几次（worker 重启、进程被杀）。
     ///
     /// **打断和失败是两回事**，但原来的孤儿回收把两者合并成 `failed`，
@@ -204,6 +207,7 @@ public struct WorkTask: Codable, Sendable {
         outputs = try c.decodeIfPresent([String].self, forKey: .outputs) ?? []
         runnerPID = try c.decodeIfPresent(Int32.self, forKey: .runnerPID)
         frozenBy = try c.decodeIfPresent(String.self, forKey: .frozenBy)
+        production = try c.decodeIfPresent(ProductionContext.self, forKey: .production)
         stepIndex = try c.decodeIfPresent(Int.self, forKey: .stepIndex)
         interruptedCount = try c.decodeIfPresent(Int.self, forKey: .interruptedCount)
     }

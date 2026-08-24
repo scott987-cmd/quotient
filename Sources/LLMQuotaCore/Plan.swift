@@ -691,6 +691,10 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
     public var progressNextStep: String?
     public var progressUpdatedAt: Date?
     public var progressEvidenceCount: Int?
+    /// 新客户端可直接渲染；旧客户端仍会看到下方 progress* 的兼容投影。
+    public var productionStage: String?
+    public var deliverableKind: String?
+    public var productionBlockedReason: String?
 
     public init(
         id: String,
@@ -708,7 +712,10 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         progressSummary: String? = nil,
         progressNextStep: String? = nil,
         progressUpdatedAt: Date? = nil,
-        progressEvidenceCount: Int? = nil
+        progressEvidenceCount: Int? = nil,
+        productionStage: String? = nil,
+        deliverableKind: String? = nil,
+        productionBlockedReason: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -726,6 +733,9 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         self.progressNextStep = progressNextStep
         self.progressUpdatedAt = progressUpdatedAt
         self.progressEvidenceCount = progressEvidenceCount
+        self.productionStage = productionStage
+        self.deliverableKind = deliverableKind
+        self.productionBlockedReason = productionBlockedReason
     }
 
     /// 手写解码，可选字段一律 `decodeIfPresent`。
@@ -755,6 +765,10 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         progressNextStep = try c.decodeIfPresent(String.self, forKey: .progressNextStep)
         progressUpdatedAt = try c.decodeIfPresent(Date.self, forKey: .progressUpdatedAt)
         progressEvidenceCount = try c.decodeIfPresent(Int.self, forKey: .progressEvidenceCount)
+        productionStage = try c.decodeIfPresent(String.self, forKey: .productionStage)
+        deliverableKind = try c.decodeIfPresent(String.self, forKey: .deliverableKind)
+        productionBlockedReason = try c.decodeIfPresent(
+            String.self, forKey: .productionBlockedReason)
     }
 
     /// 按**字符**截断，超了就用省略号收尾（收尾之后总长仍然 ≤ 上限）。

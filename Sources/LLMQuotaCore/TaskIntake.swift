@@ -29,16 +29,28 @@ public enum TaskIntake {
         prompt: String, repo: String,
         classify: Bool = true, split: Bool = true, force: Bool = false,
         origin: String? = nil,
-        preferredPlatform: Platform? = nil
+        preferredPlatform: Platform? = nil,
+        production requestedProduction: ProductionContext? = nil
     ) throws -> Outcome {
+        let existing = TaskStore.all()
         if !force {
-            let dups = DuplicateGuard.matches(prompt: prompt, repo: repo, in: TaskStore.all())
+            let dups = DuplicateGuard.matches(prompt: prompt, repo: repo, in: existing)
             if !dups.isEmpty { return .duplicate(dups) }
         }
 
         var t = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(),
                          prompt: prompt, repo: repo)
         t.origin = origin
+        if let requestedProduction {
+            t.production = try GoldenSampleGate.prepare(
+                requestedProduction, repo: repo, tasks: existing)
+            if t.production?.stage == .fanOut,
+               let reason = GoldenSampleGate.blockReason(for: t, in: existing + [t]) {
+                t.state = .blocked
+                t.production?.blockedReason = reason
+                t.note = "黄金样板闸：" + reason
+            }
+        }
         // 点名平台是**优先**不是命令：过不了岗位/风险/方向闸照样换人。
         t.preferredPlatform = preferredPlatform
             ?? RepoExecutionPolicy.implementationOwner(for: repo, prompt: prompt)
@@ -80,7 +92,8 @@ public enum TaskIntake {
         // 被拆成 7 步开发子任务（「模拟器实跑取证」「终审汇总与合入」）——
         // 拆解器把评审当成了开发计划。评审的产出是一份判断，不是一串动作。
         let isMedia = TaskKind.isMedia(prompt)
-        if split, !isMedia, !reviewTask, TaskDecomposer.shouldDecompose(t),
+        if split, requestedProduction == nil, !isMedia, !reviewTask,
+           TaskDecomposer.shouldDecompose(t),
            var nodes = TaskDecomposer.plan(t, dashboard: LLMQuota.dashboard()),
            nodes.count > 1 {
             // 逐节点分诊：整包判高危会让所有角色都够不着，
