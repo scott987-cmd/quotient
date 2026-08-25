@@ -5,6 +5,24 @@ import Foundation
 /// 代码审核回答“会不会坏”，这一层回答“画面上是否真的达到项目标准”。
 /// 只对配置了 qualityContract、且改动会影响可见行为的仓库生效。
 public enum VisualQualityGate {
+    private static let remediationMarker = "【视觉整改："
+
+    /// 历史否决不能永久堆进任务正文。每次整改只需要“原始任务 + 最新一票”；
+    /// 更早的票已经被后续实现取代，重复发送只会扩大上下文并诱导 Agent 重做。
+    public static func compactRemediationPrompt(_ prompt: String) -> String {
+        guard let first = prompt.range(of: remediationMarker),
+              let latest = prompt.range(of: remediationMarker, options: .backwards),
+              first.lowerBound != latest.lowerBound else { return prompt }
+        let base = prompt[..<first.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = prompt[latest.lowerBound...]
+        return base + "\n\n" + current
+    }
+
+    private static func remediationBasePrompt(_ prompt: String) -> String {
+        guard let first = prompt.range(of: remediationMarker) else { return prompt }
+        return prompt[..<first.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     public enum Status: Equatable, Sendable {
         case missing, pending, approved, rejected
     }
@@ -146,6 +164,7 @@ public enum VisualQualityGate {
             }
 
             if !falseCompletion {
+                source.prompt = remediationBasePrompt(source.prompt)
                 source.prompt += """
 
 

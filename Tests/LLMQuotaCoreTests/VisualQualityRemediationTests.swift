@@ -2,6 +2,17 @@ import XCTest
 @testable import LLMQuotaCore
 
 final class VisualQualityRemediationTests: XCTestCase {
+    func testPromptKeepsOnlyLatestVisualRemediation() {
+        let prompt = "原始任务\n\n【视觉整改：old】\n旧问题"
+            + "\n\n【视觉整改：new】\n新问题"
+        let compact = VisualQualityGate.compactRemediationPrompt(prompt)
+        XCTAssertTrue(compact.contains("原始任务"))
+        XCTAssertFalse(compact.contains("old"))
+        XCTAssertFalse(compact.contains("旧问题"))
+        XCTAssertTrue(compact.contains("【视觉整改：new】"))
+        XCTAssertTrue(compact.contains("新问题"))
+    }
+
     func testLatestVerdictWinsInsteadOfFirstArrayEntry() {
         let branch = "agent/kimi/sample"
         let head = "abc123"

@@ -7,6 +7,7 @@ import Foundation
 /// 个 JSON 的多写者问题，也不需要为了 MCP 再开放一个网络端口。
 public struct CollaborationEvent: Codable, Sendable, Equatable {
     public static let maxArtifacts = 50
+    public static let maxBriefingSummaryCharacters = 400
 
     /// 内部生产者把完整变更清单投影成协议允许的大小；存储层仍会拒绝外部
     /// 直接塞进来的超限事件，不能靠静默截断掩盖坏输入。
@@ -269,7 +270,9 @@ public enum CollaborationStore {
         for event in events {
             let target = event.recipientRunnerID.map { " → \($0)" } ?? ""
             let pending = event.kind.needsResponse && !resolved.contains(event.id) ? " [待回应]" : ""
-            var line = "- [\(event.id)] \(event.kind.rawValue) · \(event.senderRunnerID)\(target)\(pending)：\(event.summary)"
+            let summary = String(event.summary.prefix(
+                CollaborationEvent.maxBriefingSummaryCharacters))
+            var line = "- [\(event.id)] \(event.kind.rawValue) · \(event.senderRunnerID)\(target)\(pending)：\(summary)"
             if let branch = event.branch { line += "；分支 \(branch)" }
             if let sha = event.commitSHA { line += "；提交 \(sha)" }
             if !event.artifacts.isEmpty { line += "；材料 " + event.artifacts.prefix(5).joined(separator: "、") }

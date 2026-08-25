@@ -2568,7 +2568,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
 
         // 接力说明只追加文件清单和中断原因，**不贴 diff** ——
         // 工作区就在 agent 眼前，让它自己看比塞进提示词便宜得多。
-        var effectivePrompt = task.prompt + ((handoff ?? task.handoff)?.briefing() ?? "")
+        var effectivePrompt = VisualQualityGate.compactRemediationPrompt(task.prompt)
+            + ((handoff ?? task.handoff)?.briefing() ?? "")
         // 仓库地图：每个任务都是全新 worktree，agent 一律从零认路。
         // 更硬的是 MiniMax 这种只能文本进出的执行器 —— 不塞进提示词它就看不见，
         // Greed 那六份评审全写「材料不足」就是这么来的。

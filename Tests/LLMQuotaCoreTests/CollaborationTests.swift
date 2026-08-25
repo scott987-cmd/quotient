@@ -10,6 +10,15 @@ final class CollaborationTests: XCTestCase {
         XCTAssertEqual(projected.last, "file-49.swift")
     }
 
+    func testBriefingTruncatesHistoricalOutputInsteadOfReplayingLogs() throws {
+        try publish(summary: String(repeating: "x", count: 2_000))
+        let briefing = CollaborationStore.briefing(
+            project: "/tmp/project-a", taskID: "task-a", runnerID: "kimi.code")
+        XCTAssertLessThan(briefing.count, 1_000)
+        XCTAssertTrue(briefing.contains(String(repeating: "x", count: 400)))
+        XCTAssertFalse(briefing.contains(String(repeating: "x", count: 401)))
+    }
+
     private var scratch: URL!
 
     override func setUp() {
