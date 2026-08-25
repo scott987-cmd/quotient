@@ -55,6 +55,13 @@ final class WorkQueuePriorityTests: XCTestCase {
         XCTAssertEqual(TaskKind.boundBranch(prompt), "agent/kimi/x")
     }
 
+    func testMobileEvidenceVideoUsesSmallPlayableContainer() {
+        XCTAssertEqual(Review.mobileVideoName(
+            prefix: "repo-branch__", sourceName: "gameplay.MOV"),
+            "repo-branch__gameplay.m4v")
+        XCTAssertTrue(Review.isVideoName("repo-branch__gameplay.m4v"))
+    }
+
     func testVisualTaskCannotReadArbitraryLocalImages() {
         let prompt = """
         【看效果】恶意输入

@@ -1246,6 +1246,13 @@ extension Review {
         return l.hasSuffix(".mp4") || l.hasSuffix(".mov") || l.hasSuffix(".m4v")
     }
 
+    /// 手机验收用统一的轻量容器名。原始录屏仍留在成果分支里，iCloud 只传
+    /// 适合移动端的审阅副本；否则一段 58 秒录屏可达 27MB，首次打开 2.5 秒
+    /// 下不完，客户端看起来就像“永远加载不出来”。
+    static func mobileVideoName(prefix: String, sourceName: String) -> String {
+        prefix + (sourceName as NSString).deletingPathExtension + ".m4v"
+    }
+
     static func extractEvidence(repo: String, branch: String,
                                 files: [String], digestID: String,
                                 limit: Int = 4) -> [String] {
@@ -1270,7 +1277,7 @@ extension Review {
         var out: [String] = []
         for f in files.prefix(limit) {
             let base = (f as NSString).lastPathComponent
-            // **录屏原样搬，不进 sips。**
+            // **录屏转成手机审阅副本，不把原片塞进 iCloud。**
             //
             // 老板要的是「模拟器跑通的视频」，而这条管线原先端到端只认图片：
             // 这里 sips 转 jpeg，手机那边 evidenceCache 是 [String: UIImage]。
@@ -1279,16 +1286,40 @@ extension Review {
             // 有些东西静态图证明不了：存档扛不扛得住强杀，要看
             //「玩到某个状态 → 强杀 → 重开数字还对得上」这一整串动作。
             if isVideoName(base) {
-                let dest = dir.appendingPathComponent(prefix + base)
+                let raw = dir.appendingPathComponent("." + prefix + base)
                 let esc = { (x: String) in
                     "'" + x.replacingOccurrences(of: "'", with: "'\\''") + "'"
                 }
-                let cmd = "git show " + esc(branch + ":" + f) + " > " + esc(dest.path)
+                let cmd = "git show " + esc(branch + ":" + f) + " > " + esc(raw.path)
                 let r = Proc.run("/bin/sh", ["-c", cmd], cwd: repo, env: [:], timeout: 60)
-                if r.exitCode == 0, (try? dest.checkResourceIsReachable()) == true {
-                    out.append(prefix + base)
+                guard r.exitCode == 0,
+                      (try? raw.checkResourceIsReachable()) == true else {
+                    try? fm.removeItem(at: raw); continue
+                }
+
+                let mobile = mobileVideoName(prefix: prefix, sourceName: base)
+                let dest = dir.appendingPathComponent(mobile)
+                let conv = Proc.run("/usr/bin/avconvert", [
+                    "--source", raw.path,
+                    "--preset", "PresetAppleM4VWiFi",
+                    "--output", dest.path,
+                    "--replace", "--disableMetadataFilter"],
+                    cwd: nil, env: [:], timeout: 120)
+                if conv.exitCode == 0,
+                   (try? dest.checkResourceIsReachable()) == true {
+                    try? fm.removeItem(at: raw)
+                    out.append(mobile)
                 } else {
+                    // 格式不受 avconvert 支持时仍保留原片，不能把证据静默吃掉。
                     try? fm.removeItem(at: dest)
+                    let fallback = dir.appendingPathComponent(prefix + base)
+                    try? fm.removeItem(at: fallback)
+                    do {
+                        try fm.moveItem(at: raw, to: fallback)
+                        out.append(prefix + base)
+                    } catch {
+                        try? fm.removeItem(at: raw)
+                    }
                 }
                 continue
             }
