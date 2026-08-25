@@ -75,7 +75,13 @@ public enum TaskKind {
 
     public static func isReview(_ prompt: String) -> Bool {
         prompt.hasPrefix("【评审") || prompt.hasPrefix("【审查")
-            || prompt.hasPrefix("【看效果】") || isTesting(prompt)
+            || prompt.hasPrefix("【看效果】") || isArchitectReview(prompt)
+            || isTesting(prompt)
+    }
+
+    /// MiniMax 给出负面主观判断后，由本机架构师做的二次复核。
+    public static func isArchitectReview(_ prompt: String) -> Bool {
+        prompt.hasPrefix("【架构复核】")
     }
 
     /// 机器执行验证、MiniMax 分析日志和覆盖缺口的测试任务。

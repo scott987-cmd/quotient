@@ -327,7 +327,13 @@ public enum MergeReview {
             }
             if done.rejected {
                 out.append(Outcome(branch: c.branch, action: "已否决",
-                                   note: "评审 agent 判不合入，不再派"))
+                                   note: "MiniMax 的否决已由架构师复核确认，不再派"))
+                continue
+            }
+            if ArchitectReview.hasUnresolvedMergeRejection(
+                branch: c.branch, head: c.head, headAt: c.headAt, tasks: tasks) {
+                out.append(Outcome(branch: c.branch, action: "等架构复核",
+                                   note: "MiniMax 给出负面结论，架构师尚未裁定"))
                 continue
             }
             if exhausted(attempts: done.attempts, needed: c.needed) {
@@ -456,7 +462,18 @@ public enum MergeReview {
                 if VerdictQuality.isInconclusive(full) {
                     inconclusive += 1
                 } else {
-                    rejected = true
+                    // 旧任务保持原语义，避免升级时把历史否决全部翻成新任务。
+                    // 新任务的主观否决只有经架构师确认才生效；被推翻则视作
+                    // 一票认可，但不能绕过高危改动原本的双票门槛。
+                    if t.prompt.contains(ArchitectReview.contractMarker) {
+                        switch ArchitectReview.decision(for: t, tasks: tasks) {
+                        case .uphold: rejected = true
+                        case .overturn: approvals += 1
+                        case .missing, .pending: break
+                        }
+                    } else {
+                        rejected = true
+                    }
                 }
             case nil: break   // 结论读不出来 —— 不算票，也不算否
             }

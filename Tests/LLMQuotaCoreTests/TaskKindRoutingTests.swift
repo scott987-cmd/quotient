@@ -35,6 +35,8 @@ final class TaskKindRoutingTests: XCTestCase {
         }
         XCTAssertEqual(task.preferredPlatform, .minimax)
         XCTAssertEqual(task.profile?.tier, .standard)
+        XCTAssertTrue(task.prompt.contains(ArchitectReview.contractMarker),
+                      "新主观评审必须带复核契约，历史任务才不会被回灌")
     }
 
     func testTestingIntakePrefersMiniMaxAndStaysOneTask() throws {
@@ -55,6 +57,8 @@ final class TaskKindRoutingTests: XCTestCase {
         XCTAssertTrue(TaskKind.isReview(task.prompt))
         XCTAssertEqual(task.preferredPlatform, .minimax)
         XCTAssertEqual(task.profile?.tier, .standard)
+        XCTAssertFalse(task.prompt.contains(ArchitectReview.contractMarker),
+                       "真实测试退出码不能交给架构师二次猜测")
     }
 
     func testMiniMaxTestingFindsVerifyCommandFromWorktree() throws {

@@ -32,6 +32,12 @@ public enum TaskIntake {
         preferredPlatform: Platform? = nil,
         production requestedProduction: ProductionContext? = nil
     ) throws -> Outcome {
+        var prompt = prompt
+        if TaskKind.isReview(prompt), !TaskKind.isTesting(prompt),
+           !TaskKind.isArchitectReview(prompt),
+           !prompt.contains(ArchitectReview.contractMarker) {
+            prompt += "\n\n" + ArchitectReview.contractMarker
+        }
         let existing = TaskStore.all()
         if !force {
             let dups = DuplicateGuard.matches(prompt: prompt, repo: repo, in: existing)
@@ -54,7 +60,8 @@ public enum TaskIntake {
         }
         // 点名平台是**优先**不是命令：过不了岗位/风险/方向闸照样换人。
         t.preferredPlatform = preferredPlatform
-            ?? (reviewTask ? .minimax
+            ?? (TaskKind.isArchitectReview(prompt) ? .codex
+                : reviewTask ? .minimax
                 : RepoExecutionPolicy.implementationOwner(for: repo, prompt: prompt))
         // 【媒体】任务档次写死 standard/safe，不进分诊：
         // 分诊的「复杂档」衡量的是推理难度，而媒体驱动只是逐行执行清单 ——

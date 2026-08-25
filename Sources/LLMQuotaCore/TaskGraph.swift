@@ -327,8 +327,13 @@ public enum TaskGraph {
                 }
             }
         }
-        // 合入后审查的确定缺陷不是“有空再做”的储备活：报告一落地就生成
-        // 同 owner 的项目续作，保证问题真正进入执行队列。
+        // MiniMax 的通过结论直接生效；负面主观结论先生成一条架构复核。
+        // 必须排在下面两个整改器前面，让同一轮对账就看见“正在复核”。
+        for task in ArchitectReview.reconcile(Array(byID.values)) {
+            byID[task.id] = task
+            touched[task.id] = task
+        }
+        // 合入后审查的确定缺陷经架构师确认后，生成同 owner 的项目续作。
         for task in PostLandRepair.reconcile(Array(byID.values)) {
             byID[task.id] = task
             touched[task.id] = task

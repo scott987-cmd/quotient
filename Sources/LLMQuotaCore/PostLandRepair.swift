@@ -22,9 +22,12 @@ public enum PostLandRepair {
             let origin = "post-land-repair:" + review.id
             guard !knownOrigins.contains(origin),
                   let text = reportText(review) else { continue }
-            let findings = text.components(separatedBy: "\n")
-                .compactMap(ReservePool.findingNote)
+            let findings = findings(in: text)
             guard !findings.isEmpty else { continue }
+            if review.prompt.contains(ArchitectReview.contractMarker),
+               ArchitectReview.decision(for: review, tasks: tasks) != .uphold {
+                continue
+            }
 
             let sourceBranch = reviewedBranch(in: review.prompt)
             let sourceID = sourceBranch.map {
@@ -84,6 +87,14 @@ public enum PostLandRepair {
         let tail = prompt[start.lowerBound...]
         guard let end = tail.range(of: ".md") else { return nil }
         return String(tail[..<end.upperBound])
+    }
+
+    static func findings(in text: String) -> [String] {
+        text.components(separatedBy: "\n").compactMap(ReservePool.findingNote)
+    }
+
+    static func reportText(for review: WorkTask) -> String? {
+        loadReport(review)
     }
 
     private static func loadReport(_ review: WorkTask) -> String? {

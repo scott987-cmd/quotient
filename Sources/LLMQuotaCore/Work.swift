@@ -434,6 +434,7 @@ public struct WorkScheduler: Sendable {
 
         let isMediaTask = TaskKind.isMedia(task?.prompt ?? "")
         let isReviewTask = TaskKind.isReview(task?.prompt ?? "")
+        let isArchitectReviewTask = TaskKind.isArchitectReview(task?.prompt ?? "")
         let needsEyes = TaskKind.needsEyes(task?.prompt ?? "")
         for runner in runners {
             let p = runner.platform
@@ -459,7 +460,15 @@ public struct WorkScheduler: Sendable {
             // 以前第二条故意留了兜底，结果 MiniMax 暂时不可用时会偷偷烧
             // Claude/Kimi 的额度。现在宁可排队等 MiniMax 恢复，也不跨岗。
             // 【看效果】在上面的媒体闸单独处理，不走这里。
-            if !needsEyes, runner.reviewOnly != isReviewTask {
+            if isArchitectReviewTask,
+               p != .codex || runner.runnerID != CodexRunner().runnerID {
+                rejected.append(Rejection(
+                    platform: p, reason: "负面评审只交给架构师复核",
+                    kind: .permanent))
+                continue
+            }
+            if !needsEyes, !isArchitectReviewTask,
+               runner.reviewOnly != isReviewTask {
                 rejected.append(Rejection(
                     platform: p,
                     reason: runner.reviewOnly ? "只接【评审/测试】任务"
@@ -540,7 +549,7 @@ public struct WorkScheduler: Sendable {
             // 派活给它等于饿死那个决定「该干什么」的环节。
             // **指挥不进候选枚举。** 它不是「接不了」，它是发活的那个。
             // 记在 Decision.dispatcher 上，诊断里单独一行。
-            if AgentRoles.isDispatcher(p) {
+            if AgentRoles.isDispatcher(p), !isArchitectReviewTask {
                 dispatcherPlatform = p
                 continue
             }

@@ -13,7 +13,7 @@ public enum VisualQualityGate {
         "【看效果】分支 \(branch) 提交 \(head)"
     }
 
-    private static func verdict(_ task: WorkTask) -> Status? {
+    static func verdict(_ task: WorkTask) -> Status? {
         let text = (task.outputs + [task.note ?? ""]).joined(separator: "\n")
         guard let line = text.components(separatedBy: .newlines)
             .first(where: { $0.contains("结论") }) else { return nil }
@@ -26,7 +26,7 @@ public enum VisualQualityGate {
         task.endedAt ?? task.createdAt
     }
 
-    private static func resolvedStatus(_ matching: [WorkTask]) -> Status {
+    private static func resolvedStatus(_ matching: [WorkTask], tasks: [WorkTask]) -> Status {
         // 新一轮正在看时，旧票不能先放行。TaskStore.all() 已把同 ID 的状态
         // 快照折成最后一条，这里处理的是不同验收任务。
         if matching.contains(where: { $0.state == .queued || $0.state == .running }) {
@@ -34,23 +34,32 @@ public enum VisualQualityGate {
         }
         // 票会重跑。必须取最新完成的一票，不能按数组顺序返回第一票：旧否决
         // + 新批准时，旧实现会永远返回旧否决；hasApproved 却又返回 true。
-        return matching
-            .filter { $0.state == .done && verdict($0) != nil }
-            .max { verdictDate($0) < verdictDate($1) }
-            .flatMap(verdict) ?? .missing
+        let completed = matching.filter { $0.state == .done && verdict($0) != nil }
+        guard let latest = completed.max(by: {
+            verdictDate($0) < verdictDate($1)
+        }) else { return .missing }
+        guard verdict(latest) == .rejected,
+              latest.prompt.contains(ArchitectReview.contractMarker) else {
+            return verdict(latest) ?? .missing
+        }
+        switch ArchitectReview.decision(for: latest, tasks: tasks) {
+        case .uphold: return .rejected
+        case .overturn: return .approved
+        case .missing, .pending: return .pending
+        }
     }
 
     public static func status(branch: String, head: String,
                               tasks: [WorkTask]) -> Status {
         let prefix = marker(branch: branch, head: head)
-        return resolvedStatus(tasks.filter { $0.prompt.hasPrefix(prefix) })
+        return resolvedStatus(tasks.filter { $0.prompt.hasPrefix(prefix) }, tasks: tasks)
     }
 
     /// 分支跨多个提交的最新视觉结论。黄金样板落地后分支可能已被删除，
     /// 此时只能用这条分支的最新票判断，不能让任意一张历史批准票放行。
     public static func latestStatus(branch: String, tasks: [WorkTask]) -> Status {
         let prefix = "【看效果】分支 \(branch) 提交 "
-        return resolvedStatus(tasks.filter { $0.prompt.hasPrefix(prefix) })
+        return resolvedStatus(tasks.filter { $0.prompt.hasPrefix(prefix) }, tasks: tasks)
     }
 
     public static func hasApproved(branch: String, tasks: [WorkTask]) -> Bool {
@@ -101,6 +110,8 @@ public enum VisualQualityGate {
         let rejected = tasks.filter {
             $0.origin == "visual-quality-review" && $0.state == .done
                 && verdict($0) == .rejected
+                && (!$0.prompt.contains(ArchitectReview.contractMarker)
+                    || ArchitectReview.decision(for: $0, tasks: tasks) == .uphold)
         }.sorted { verdictDate($0) < verdictDate($1) }
         var updates: [String: WorkTask] = [:]
 
@@ -199,7 +210,7 @@ public enum VisualQualityGate {
         }
     }
 
-    private static func rejectionDetail(_ review: WorkTask) -> String {
+    static func rejectionDetail(_ review: WorkTask) -> String {
         // MiniMax 的短输出通常只给报告路径，真正逐帧发现都在报告文件里。
         // 把正文直接塞回原会话，避免实现 Agent 还要猜报告是否已合入 main。
         if let line = review.outputs.first(where: { $0.contains("报告：") }),
