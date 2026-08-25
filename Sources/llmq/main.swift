@@ -984,7 +984,8 @@ func cmdWork(_ args: [String]) throws {
             lane: lane, senderRunnerID: "orchestrator", senderPlatform: source,
             recipientRunnerID: runner.runnerID, kind: .handoff,
             summary: reason, details: files.isEmpty ? nil : "已有成果：\(files.count) 个文件",
-            branch: targetBranch, commitSHA: targetHead, artifacts: files))
+            branch: targetBranch, commitSHA: targetHead,
+            artifacts: CollaborationEvent.boundedArtifacts(files)))
         _ = TaskBoardStore.publishNow()
         OfficeLog.record(OfficeEvent(
             kind: .handoff, taskID: t.id, platform: source, toPlatform: target,
@@ -2967,7 +2968,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 senderRunnerID: pick.runner.runnerID, senderPlatform: pick.platform,
                 kind: .handoff, summary: failure.describe,
                 details: touched.isEmpty ? nil : "已改：" + touched.joined(separator: "、"),
-                branch: ws.branch, commitSHA: wip, artifacts: touched))
+                branch: ws.branch, commitSHA: wip,
+                artifacts: CollaborationEvent.boundedArtifacts(touched)))
 
             let failureName: String
             switch failure {

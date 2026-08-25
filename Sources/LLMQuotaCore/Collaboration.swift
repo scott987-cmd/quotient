@@ -6,6 +6,14 @@ import Foundation
 /// `<machineID>.jsonl`，读时合并所有机器的日志；这样不会出现两台机器覆盖同一
 /// 个 JSON 的多写者问题，也不需要为了 MCP 再开放一个网络端口。
 public struct CollaborationEvent: Codable, Sendable, Equatable {
+    public static let maxArtifacts = 50
+
+    /// 内部生产者把完整变更清单投影成协议允许的大小；存储层仍会拒绝外部
+    /// 直接塞进来的超限事件，不能靠静默截断掩盖坏输入。
+    public static func boundedArtifacts(_ artifacts: [String]) -> [String] {
+        Array(artifacts.prefix(maxArtifacts))
+    }
+
     public enum Kind: String, Codable, Sendable, CaseIterable {
         case started, question, answer, decision, finding, checkpoint, result, handoff, ack
 
@@ -157,7 +165,7 @@ public enum CollaborationStore {
               (event.recipientRunnerID?.count ?? 0) <= 256,
               event.summary.count <= 2_000,
               (event.details?.count ?? 0) <= 20_000,
-              event.artifacts.count <= 50,
+              event.artifacts.count <= CollaborationEvent.maxArtifacts,
               event.artifacts.allSatisfy({ $0.count <= 4_096 }) else {
             throw error(5, "协作事件过大（summary 2000、details 20000、artifacts 50）")
         }

@@ -2,6 +2,14 @@ import XCTest
 @testable import LLMQuotaCore
 
 final class CollaborationTests: XCTestCase {
+    func testInternalArtifactProjectionFitsProtocolWithoutChangingOrder() {
+        let files = (0..<52).map { "file-\($0).swift" }
+        let projected = CollaborationEvent.boundedArtifacts(files)
+        XCTAssertEqual(projected.count, CollaborationEvent.maxArtifacts)
+        XCTAssertEqual(projected.first, "file-0.swift")
+        XCTAssertEqual(projected.last, "file-49.swift")
+    }
+
     private var scratch: URL!
 
     override func setUp() {
