@@ -453,13 +453,18 @@ public struct WorkScheduler: Sendable {
                 continue
             }
 
-            // 审查任务同理双向闸。**但只在这个平台有别的选择时才拦** ——
-            // 审查执行器只接【审查】，而【审查】任务本身也能被普通编码
-            // 执行器干（它们能读 diff 也能写报告），所以这里只挡
-            // 「审查执行器接非审查任务」这一半。
-            if runner.reviewOnly, !isReviewTask || needsEyes {
+            // 审查/测试分析是 MiniMax 的固定岗位，双向隔离：
+            // - 评审执行器不接编码；
+            // - 开发执行器也不接评审。
+            // 以前第二条故意留了兜底，结果 MiniMax 暂时不可用时会偷偷烧
+            // Claude/Kimi 的额度。现在宁可排队等 MiniMax 恢复，也不跨岗。
+            // 【看效果】在上面的媒体闸单独处理，不走这里。
+            if !needsEyes, runner.reviewOnly != isReviewTask {
                 rejected.append(Rejection(
-                    platform: p, reason: "只接【评审】任务", kind: .permanent))
+                    platform: p,
+                    reason: runner.reviewOnly ? "只接【评审/测试】任务"
+                        : "评审/测试固定交给 MiniMax",
+                    kind: .permanent))
                 continue
             }
 
@@ -2627,21 +2632,11 @@ public enum Elsewhere {
     }
 }
 
-/// MiniMax 的**评审**执行器：方案评审 + 项目验收。
+/// MiniMax 的**评审**执行器：代码审查、方案评审、项目验收和测试材料分析。
 ///
-/// # 为什么是这两件，不是代码审查
-///
-/// 第一版做的是代码 diff 审查，老板当场纠正了方向：
-/// 「代码合入你来 review 就可以了，我要看的是整个项目评审通过的效果，
-/// 其次是技术方案的评审」。
-///
-/// 这个纠正是对的，而且正好对上 MiniMax 的能力边界。`mmx text chat`
-/// 不能读文件、不能跑命令 —— 逐行审代码本来就是它最不擅长的（它看不到
-/// 上下文，只能看到我们塞进 prompt 的那一段）。而**方案评审**和
-/// **项目验收**是纯推理：材料给全，判断力就是全部所需。
-///
-/// 更实际的一点：代码审查已经有 volcark 在做，而方案和项目这两层
-/// **一直没人做** —— 项目做完了没人对照当初的目标问一句「这算达标了吗」。
+/// `mmx text chat` 没有仓库终端权限，因此 Swift/shell 驱动负责提取完整 diff、
+/// 状态和测试材料，MiniMax 负责判断。测试是否通过仍以本地命令退出码为准，
+/// 不让模型用一段总结冒充执行结果；测试失败后的代码修复交回实现 Agent。
 ///
 /// # 两种任务
 ///
@@ -2701,6 +2696,7 @@ public struct MiniMaxReviewRunner: AgentRunner {
         fi
 
         case "$LLMQ_PROMPT" in
+          【测试*) kind=测试 ;;
           *合入*) kind=合入 ;;
           *方案*) kind=方案 ;;
           *) kind=项目 ;;
@@ -2711,12 +2707,32 @@ public struct MiniMaxReviewRunner: AgentRunner {
         # 主干」，不给它看改动等于让它凭任务描述空想。
         # RepoMap.swift 记着的那六份「材料不足 —— 评审正文没给我看」就是这么来的。
         if [ "$kind" = 合入 ]; then
+          # 事后复查看的是已经落进 main 的 merge commit，来源分支通常已删；
+          # 合入前审核才读取仍然存在的 branch。两者不能共用 branch diff。
+          stamp=""
+          case "$LLMQ_PROMPT" in
+            *"合并 "*)
+              rest="${LLMQ_PROMPT#*合并 }"
+              cand="${rest[1,12]}"
+              for (( i = 1; i <= ${#cand}; i++ )); do
+                case "${cand[i]}" in
+                  [0-9a-f]) stamp="${stamp}${cand[i]}" ;;
+                  *) break ;;
+                esac
+              done
+              ;;
+          esac
+          if [ ${#stamp} -ge 7 ] && git cat-file -e "$stamp^{commit}" 2>/dev/null; then
+            git show --stat --format=fuller "$stamp" > "$tmpd/dstat.txt" 2>/dev/null
+            git diff "$stamp^1" "$stamp" > "$tmpd/dfull.txt" 2>/dev/null
+          else
           # 分支名是提示词里 agent/ 开头那一段
-          rest="${LLMQ_PROMPT#*分支 }"
-          br="${rest%% *}"
-          br="${br%%$'\n'*}"
-          git diff --stat "main...$br" > "$tmpd/dstat.txt" 2>/dev/null
-          git diff "main...$br" > "$tmpd/dfull.txt" 2>/dev/null
+            rest="${LLMQ_PROMPT#*分支 }"
+            br="${rest%% *}"
+            br="${br%%$'\n'*}"
+            git diff --stat "main...$br" > "$tmpd/dstat.txt" 2>/dev/null
+            git diff "main...$br" > "$tmpd/dfull.txt" 2>/dev/null
+          fi
           dfull="$(<$tmpd/dfull.txt)"
           material="## 改动概览
         $(<$tmpd/dstat.txt)
@@ -2764,6 +2780,38 @@ public struct MiniMaxReviewRunner: AgentRunner {
         - 看不懂 ≠ 不合入。看不懂就在"判断依据"里说清哪一段看不懂，
           结论按看得懂的部分给。
         - **不要因为改动量大就倾向不合入**，也不要因为看着整齐就放行。
+        PROMPT_END
+        elif [ "$kind" = "测试" ]; then
+          test_material="机器没有配置仓库验证命令；只能检查现有测试材料，不能声称执行通过。"
+          if [ -n "$LLMQ_VERIFY_COMMAND" ]; then
+            /bin/sh -c "$LLMQ_VERIFY_COMMAND" > "$tmpd/test-out.txt" 2> "$tmpd/test-err.txt"
+            test_rc=$?
+            test_out="$(<$tmpd/test-out.txt)
+        $(<$tmpd/test-err.txt)"
+            if [ ${#test_out} -gt 12000 ]; then
+              test_out="${test_out[-12000,-1]}"
+            fi
+            test_material="验证命令：$LLMQ_VERIFY_COMMAND
+        真实退出码：$test_rc
+        输出末尾：
+        $test_out"
+          fi
+          read -r -d '' ask <<PROMPT_END
+        你是测试负责人。机器已经负责执行命令，退出码是唯一的通过/失败事实；
+        你负责分析失败原因、覆盖缺口、脆弱测试和测试是否被改成迎合实现。
+
+        # 测试目标
+        $LLMQ_PROMPT
+
+        # 机器执行证据
+        $test_material
+
+        # 仓库现状
+        $material
+
+        只输出 Markdown 测试报告：结论必须明确写“通过 / 未通过 / 无法执行”之一；
+        然后列出执行证据、失败分析、覆盖缺口和建议补测项。不要修改功能代码，
+        不要把模型判断写成“测试已运行”。
         PROMPT_END
         elif [ "$kind" = "方案" ]; then
           read -r -d '' ask <<PROMPT_END
@@ -2895,6 +2943,20 @@ public struct MiniMaxReviewRunner: AgentRunner {
         done < "$out"
         """#
         var env: [String: String] = ["LLMQ_PROMPT": prompt]
+        // cwd 通常是 agent 的 worktree，不是 RepoRegistry 里登记的主仓路径。
+        // 从 git common-dir 反查主仓；否则所有【测试】任务都会误报“没配置命令”。
+        let common = GitWorkspace.git(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"], in: cwd)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let registeredRepo = common.isEmpty
+            ? CollaborationStore.normalizeProject(cwd)
+            : URL(fileURLWithPath: common).deletingLastPathComponent().path
+        if let verify = RepoRegistry.all().first(where: {
+            CollaborationStore.normalizeProject($0.localPath)
+                == CollaborationStore.normalizeProject(registeredRepo)
+        })?.verifyCommand, !verify.isEmpty {
+            env["LLMQ_VERIFY_COMMAND"] = verify
+        }
         if let mmx = binaryPath { env["LLMQ_MMX"] = mmx }
         if let node = Proc.which("node") { env["LLMQ_NODE"] = node }
         return ("/bin/zsh", ["-c", driver], env)

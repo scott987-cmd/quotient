@@ -15,6 +15,9 @@ public enum TaskCapabilityLane: String, Codable, Sendable {
         case .media:
             return runner.mediaOnly && runner.canSeeMedia
         case .review:
+            // 这里描述“能力”而不是调度岗位：能读写仓库的开发执行器也具备
+            // 评审能力，旧 owner 的稳定 ID 仍要能恢复。实际派活是否只给
+            // MiniMax，由 WorkScheduler 的双向岗位闸决定。
             return !runner.mediaOnly
         case .coding:
             return !runner.mediaOnly && !runner.reviewOnly
@@ -72,7 +75,13 @@ public enum TaskKind {
 
     public static func isReview(_ prompt: String) -> Bool {
         prompt.hasPrefix("【评审") || prompt.hasPrefix("【审查")
-            || prompt.hasPrefix("【看效果】")
+            || prompt.hasPrefix("【看效果】") || isTesting(prompt)
+    }
+
+    /// 机器执行验证、MiniMax 分析日志和覆盖缺口的测试任务。
+    /// 只认明确前缀，避免普通编码需求里提到“补测试”就被错误改派。
+    public static func isTesting(_ prompt: String) -> Bool {
+        prompt.hasPrefix("【测试")
     }
 
     /// 要 agent 跑起来截图取证那一类。

@@ -3602,6 +3602,14 @@ final class OrphanReclaimTests: XCTestCase {
 
 final class ReserveFractionTests: XCTestCase {
 
+    func testVolcarkDefaultsToComplexCodingRole() throws {
+        let role = try XCTUnwrap(AgentRoles.defaults().first { $0.platform == .volcark })
+        XCTAssertEqual(role.title, "主力开发")
+        XCTAssertEqual(role.maxRisk, .normal)
+        XCTAssertEqual(role.maxTier, .complex)
+        XCTAssertEqual(role.prefers, [.standard, .complex])
+    }
+
     private func withRoles(_ roles: [AgentRole], _ body: () -> Void) {
         let f = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("roles-\(UUID().uuidString).json")

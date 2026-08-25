@@ -256,18 +256,18 @@ public enum AgentRoles {
                       maxTier: .complex, prefers: [.standard],
                       note: "qwen3.8-max，正经写代码没问题。当初那次失控重试的根因是"
                           + "审批拦住了编辑，加 --approval-mode yolo 之后已修复。"),
-            AgentRole(platform: .minimax, title: "媒体与分诊", maxRisk: .safe,
-                      prefers: [],
+            AgentRole(platform: .minimax, title: "测试与评审", maxRisk: .safe,
+                      maxTier: .standard, prefers: [.standard],
                       note: "mmx 的本事是图片/视频/音乐/语音/图片理解/联网搜索，"
-                          + "没有文件访问也不认识仓库。编码任务它接不了，"
-                          + "现在只用它跑分诊。媒体那块产能这个调度器还够不着。"),
+                          + "没有仓库终端权限，不能冒充执行测试或修代码。机器负责按退出码"
+                          + "实跑测试；MiniMax 负责测试日志分析、代码/方案/项目评审和视觉验收。",
+                      reserveFraction: 0),
             AgentRole(platform: .deepseek, title: "备用", maxRisk: .safe, prefers: []),
-            AgentRole(platform: .volcark, title: "审查员", maxRisk: .safe,
-                      prefers: [.trivial],
-                      note: "opencode 跑的，经本地 LiteLLM 网关转到火山方舟。"
-                          + "岗位职责：每份合进 main 的 agent 产出都会自动生成"
-                          + "一条【审查】任务，由它读 diff 写报告 —— 自动落地"
-                          + "省下的人审，靠这道事后复查补回来。"),
+            AgentRole(platform: .volcark, title: "主力开发", maxRisk: .normal,
+                      maxTier: .complex, prefers: [.standard, .complex],
+                      note: "OpenCode 经本地网关使用火山 Coding Plan 的 GLM 5.3。"
+                          + "具备仓库读写、工具调用和复杂编程能力，专注承担独立实现；"
+                          + "测试分析与评审统一交给 MiniMax。"),
             AgentRole(platform: .gemini, title: "备用", maxRisk: .safe, prefers: []),
         ]
     }

@@ -19,6 +19,77 @@ import XCTest
 /// 「同一个概念多处判定」这个形状当天已经害了五次。
 final class TaskKindRoutingTests: XCTestCase {
 
+    func testReviewIntakePrefersMiniMaxByDefault() throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("review-intake-\(UUID().uuidString)")
+        Paths.appSupportOverride = scratch
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: scratch)
+        }
+        let outcome = try TaskIntake.enqueue(
+            prompt: "【审查】复查合并 abc", repo: "/tmp/project",
+            classify: false, split: false, force: true)
+        guard case .single(let task) = outcome else {
+            return XCTFail("评审任务应作为单任务入队")
+        }
+        XCTAssertEqual(task.preferredPlatform, .minimax)
+        XCTAssertEqual(task.profile?.tier, .standard)
+    }
+
+    func testTestingIntakePrefersMiniMaxAndStaysOneTask() throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-intake-\(UUID().uuidString)")
+        Paths.appSupportOverride = scratch
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: scratch)
+        }
+        let outcome = try TaskIntake.enqueue(
+            prompt: "【测试】运行全量回归并分析覆盖缺口", repo: "/tmp/project",
+            classify: false, split: true, force: true)
+        guard case .single(let task) = outcome else {
+            return XCTFail("测试任务应整体交给 MiniMax，不应拆成开发图")
+        }
+        XCTAssertTrue(TaskKind.isTesting(task.prompt))
+        XCTAssertTrue(TaskKind.isReview(task.prompt))
+        XCTAssertEqual(task.preferredPlatform, .minimax)
+        XCTAssertEqual(task.profile?.tier, .standard)
+    }
+
+    func testMiniMaxTestingFindsVerifyCommandFromWorktree() throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("minimax-test-runner-\(UUID().uuidString)")
+        Paths.appSupportOverride = scratch.appendingPathComponent("support")
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: scratch)
+        }
+        let repo = scratch.appendingPathComponent("repo").path
+        let worktree = scratch.appendingPathComponent("worktree").path
+        try FileManager.default.createDirectory(atPath: repo,
+                                                withIntermediateDirectories: true)
+        func git(_ args: [String], in path: String = repo) {
+            _ = GitWorkspace.git(args, in: path)
+        }
+        git(["init", "-q", "--initial-branch=main"])
+        git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q",
+             "--allow-empty", "-m", "base"])
+        git(["branch", "test-worktree"])
+        git(["worktree", "add", "-q", worktree, "test-worktree"])
+        var entry = RepoAlias(alias: "runner", path: repo)
+        entry.verifyCommand = "swift test"
+        try RepoRegistry.save([entry])
+
+        let command = MiniMaxReviewRunner().command(
+            prompt: "【测试】运行全量回归", cwd: worktree)
+        XCTAssertEqual(command.env["LLMQ_VERIFY_COMMAND"], "swift test",
+                       "worktree 必须继承主仓登记的验证命令")
+        XCTAssertTrue(command.args.joined().contains("真实退出码"))
+        XCTAssertTrue(command.args.joined().contains("git diff \"$stamp^1\" \"$stamp\""),
+                       "事后审查必须从 merge commit 读取完整改动")
+    }
+
     /// **两种写法都得认。** 这套系统里人写「评审」、机器写「审查」，
     /// 只认一种就等于闸没关。
     func testBothReviewSpellingsAreRecognised() {
@@ -27,6 +98,7 @@ final class TaskKindRoutingTests: XCTestCase {
             "【评审·方案】给 Maw 加深度机制",
             "【审查·合入】分支 agent/kimi/x 的改动能不能合进 main",
             "【审查】复查刚合入 main 的合并 7f79ac8",
+            "【测试】运行全量回归并分析失败日志",
         ]
         for p in reviewPrompts {
             XCTAssertTrue(TaskKind.isReview(p), "没认出是评审：\(p)")
@@ -90,6 +162,24 @@ final class TaskKindRoutingTests: XCTestCase {
         XCTAssertTrue(reviewRejected || d.candidates.allSatisfy { $0.platform != .minimax },
                       "编码任务要么明确拒掉评审执行器，要么根本不该把它列成候选 —— "
                       + "否则它会把这活写成一份报告：\(d.rejected)")
+    }
+
+    func testReviewAndTestingRejectDevelopmentRunners() {
+        for prompt in ["【审查】复查合并 abc", "【测试】运行全量回归"] {
+            var task = WorkTask(id: UUID().uuidString, prompt: prompt, repo: "/tmp/x")
+            task.state = .queued
+            task.profile = TaskProfile(
+                tier: .standard, risk: .safe, estimatedMinutes: 8,
+                isSelfContained: true, rationale: "测试")
+            task.preferredPlatform = .minimax
+            let decision = WorkScheduler().decide(
+                dashboard: LLMQuota.dashboard(), runners: RunnerRegistry.all,
+                task: task, history: [])
+            XCTAssertTrue(decision.candidates.allSatisfy {
+                $0.runner.runnerID == "minimax.review"
+            },
+                          "评审和测试不得回退消耗开发 Agent：\(decision.candidates)")
+        }
     }
     // MARK: 基线闸：解锁的钥匙不能被锁在外面
 

@@ -66,6 +66,7 @@ final class OutputExistsTests: XCTestCase {
             "模拟器实跑验收：实听无声 + 重开保持。产出：`Sources/Greed/Shell/SettingsView.swift`",
             "端到端验收：杀进程续档 + 暂停退出 + 音频代码取证，出报告",
             "【评审·合入】分支 agent/a/x 能不能合",
+            "【测试】运行回归并分析 `Sources/Greed/Shell/SettingsView.swift`",
             "【证据】把分支跑起来截图",
             "【刷新】把 main 合进分支",
         ]

@@ -300,6 +300,40 @@ public enum Review {
         public var transient: Bool
     }
 
+    /// 把机器真实执行验证的结果记进跨 Agent 协作账。
+    ///
+    /// MiniMax 不替退出码作主：它负责读这份证据，判断测试覆盖、异常模式和
+    /// 是否存在“为了通过而改坏测试”。这样测试结论能在手机和后续评审里继续
+    /// 流转，也不会把一段模型总结冒充成真正执行过的测试。
+    static func recordVerificationEvidence(repo: String, branch: String,
+                                           command: String, result: Proc.Result,
+                                           outcome: String) {
+        let head = GitWorkspace.git(["rev-parse", "--short", branch], in: repo)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = (result.stdout + "\n" + result.stderr)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let output = raw.isEmpty ? "（命令没有输出）" : String(raw.suffix(12_000))
+        let detail = """
+        验证命令：\(String(command.prefix(1_000)))
+        退出码：\(result.exitCode)
+        是否超时：\(result.timedOut ? "是" : "否")
+
+        输出末尾：
+        \(output)
+        """
+        let event = CollaborationEvent(
+            project: repo,
+            taskID: String(branch.split(separator: "/").last ?? ""),
+            lane: .review,
+            senderRunnerID: "orchestrator.verify",
+            kind: .checkpoint,
+            summary: "机器验证\(outcome)（退出码 \(result.exitCode)）",
+            details: detail,
+            branch: branch,
+            commitSHA: head.isEmpty ? nil : head)
+        _ = try? CollaborationStore.publish(event)
+    }
+
     public static func verifyMerge(repo: String, branch: String, base: String,
                                    command: String, timeout: Int = 900) -> VerifyFailure? {
         let tmp = NSTemporaryDirectory() + "llmq-verify-\(UUID().uuidString.prefix(8))"
@@ -335,8 +369,12 @@ public enum Review {
         let kind = ExitClassify.classify(exitCode: r.exitCode, timedOut: r.timedOut)
         switch kind {
         case .passed:
+            recordVerificationEvidence(repo: repo, branch: branch, command: command,
+                                       result: r, outcome: "通过")
             return nil
         case .killed, .timedOut:
+            recordVerificationEvidence(repo: repo, branch: branch, command: command,
+                                       result: r, outcome: "中断")
             // 交回给调用方当「这轮先别合」处理，而不是「这份产出不行」。
             // **transient 必须是结构化标志。** 控制流 review §6 实锤:这句
             // 「（下一轮会重试）」只是文字,autoLand 拿到后照样 setAutoLandVeto,
@@ -345,6 +383,8 @@ public enum Review {
             return VerifyFailure(message: ExitClassify.describe(kind) + "（下一轮会重试）",
                                  transient: true)
         case .failed:
+            recordVerificationEvidence(repo: repo, branch: branch, command: command,
+                                       result: r, outcome: "失败")
             let out = (r.stderr + "\n" + r.stdout)
                 .split(separator: "\n")
                 .filter { $0.lowercased().contains("error") || $0.contains("failed") }
@@ -980,7 +1020,7 @@ public enum Review {
                     }
                 }
             }
-            // 落地即排审查：给审查员（opencode/火山）生成一条【审查】任务
+            // 落地即排审查：给 MiniMax 生成一条【审查】任务
             // 复查这次合并 —— 自动落地放宽了「谁按回车」，
             // 这道事后复查把省下的人审那双眼睛补回来。
             enqueuePostLandReview(repo: repo, branch: branch)
@@ -1002,6 +1042,27 @@ public enum Review {
         let sha = GitWorkspace.git(["rev-parse", "--short", "main"], in: repo)
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sha.isEmpty else { return }
+        let normalizedRepo = CollaborationStore.normalizeProject(repo)
+        let verification = CollaborationStore.all().last {
+            $0.project == normalizedRepo
+                && $0.branch == branch
+                && $0.senderRunnerID == "orchestrator.verify"
+                && $0.summary.contains("通过")
+        }
+        let verificationMaterial: String
+        if let verification {
+            verificationMaterial = """
+
+            机器测试证据（退出码是通过/失败的唯一事实来源）：
+            \(verification.summary)
+            \(verification.details ?? "（没有命令输出）")
+            """
+        } else {
+            verificationMaterial = """
+
+            机器测试证据：仓库没有配置验证命令，不能声称测试通过；请把这点作为覆盖缺口写入报告。
+            """
+        }
         var t = WorkTask(
             id: String(UUID().uuidString.prefix(8)).lowercased(),
             prompt: """
@@ -1012,6 +1073,7 @@ public enum Review {
             产出：把结论写进 reviews/REVIEW-\(sha).md —— 每条发现 = \
             文件:行号 + 问题一句话 + 严重度(高/中/低)；没有发现问题也要写\
             「审查通过」加一段为什么可信的摘要。
+            \(verificationMaterial)
             边界：只新增这一个文件，不改任何现有代码。
             """,
             repo: repo)
@@ -1019,7 +1081,7 @@ public enum Review {
             tier: .trivial, risk: .safe, estimatedMinutes: 8,
             isSelfContained: true,
             rationale: "落地后自动生成的复查：只读 diff、只写一份报告")
-        t.preferredPlatform = .volcark
+        t.preferredPlatform = .minimax
         t.origin = "post-land-review"
         t.note = "落地自动排的复查 · \(branch)"
         try? TaskStore.append(t)

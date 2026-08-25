@@ -41,6 +41,7 @@ public enum TaskIntake {
         var t = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(),
                          prompt: prompt, repo: repo)
         t.origin = origin
+        let reviewTask = TaskKind.isReview(prompt)
         if let requestedProduction {
             t.production = try GoldenSampleGate.prepare(
                 requestedProduction, repo: repo, tasks: existing)
@@ -53,7 +54,8 @@ public enum TaskIntake {
         }
         // 点名平台是**优先**不是命令：过不了岗位/风险/方向闸照样换人。
         t.preferredPlatform = preferredPlatform
-            ?? RepoExecutionPolicy.implementationOwner(for: repo, prompt: prompt)
+            ?? (reviewTask ? .minimax
+                : RepoExecutionPolicy.implementationOwner(for: repo, prompt: prompt))
         // 【媒体】任务档次写死 standard/safe，不进分诊：
         // 分诊的「复杂档」衡量的是推理难度，而媒体驱动只是逐行执行清单 ——
         // 13 张图被判成复杂档后，MiniMax（只验证到常规档）反而接不了
@@ -61,7 +63,6 @@ public enum TaskIntake {
         // 【评审】同理：它是一个整体的推理动作，档次由内容长短决定不了。
         // 判成复杂档之后 MiniMax（只验证到常规档）就接不了自己唯一
         // 该接的活了 —— 和媒体任务当初翻的是同一辆车。
-        let reviewTask = TaskKind.isReview(prompt)
         if reviewTask {
             t.profile = TaskProfile(
                 tier: .standard, risk: .safe, estimatedMinutes: 8,

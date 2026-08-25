@@ -19,6 +19,8 @@ final class AutoLandTests: XCTestCase {
         try? FileManager.default.createDirectory(
             at: sandbox, withIntermediateDirectories: true)
         Paths.appSupportOverride = sandbox
+        CollaborationStore.directoryOverride = sandbox
+            .appendingPathComponent("collaboration")
 
         repo = sandbox.appendingPathComponent("repo").path
         try? FileManager.default.createDirectory(
@@ -32,6 +34,7 @@ final class AutoLandTests: XCTestCase {
 
     override func tearDown() {
         Paths.appSupportOverride = nil
+        CollaborationStore.directoryOverride = nil
         try? FileManager.default.removeItem(at: sandbox)
         super.tearDown()
     }
@@ -212,13 +215,19 @@ final class AutoLandTests: XCTestCase {
 extension AutoLandTests {
     func testLandingEnqueuesReviewTask() {
         makeBranch("t20")
+        var entry = RepoAlias(alias: "test", path: repo)
+        entry.verifyCommand = "printf '87 tests passed\\n'"
+        try? RepoRegistry.save([entry])
         let out = Review.autoLand(repo: repo, tasks: [doneTask("t20")])
         XCTAssertTrue(out.first?.landed == true, "\(out)")
         let reviews = TaskStore.all().filter { $0.prompt.hasPrefix("【审查】") }
         XCTAssertEqual(reviews.count, 1, "落地一单必须排一条审查")
         XCTAssertEqual(reviews.first?.profile?.risk, .safe, "审查是 safe 档的活")
-        XCTAssertEqual(reviews.first?.preferredPlatform, .volcark,
-                       "审查点名给审查员（opencode/火山）")
+        XCTAssertEqual(reviews.first?.preferredPlatform, .minimax,
+                       "审查点名给额度充足的 MiniMax")
+        XCTAssertTrue(reviews.first?.prompt.contains("真实测试") == true
+            || reviews.first?.prompt.contains("87 tests passed") == true,
+            "MiniMax 必须拿到机器真实执行的测试证据")
     }
 
     /// 审查产出自己落地时不再生成审查 —— 否则审查→落地→审查无限循环。
