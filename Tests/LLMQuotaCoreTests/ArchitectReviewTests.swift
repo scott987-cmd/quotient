@@ -35,16 +35,27 @@ final class ArchitectReviewTests: XCTestCase {
                       "上线前的历史否决不能一次性回灌")
     }
 
-    func testNegativeReviewCreatesOneCodexArchitectReview() throws {
+    func testNegativeReviewCreatesOneClaudeArchitectReview() throws {
         let review = mergeReview(id: "review1", verdict: "不合入")
         let made = ArchitectReview.reconcile([review])
         let task = try XCTUnwrap(made.only)
         XCTAssertEqual(task.origin, "architect-review:review1")
-        XCTAssertEqual(task.preferredPlatform, .codex)
+        XCTAssertEqual(task.preferredPlatform, .claude)
         XCTAssertTrue(TaskKind.isArchitectReview(task.prompt))
         XCTAssertTrue(task.prompt.contains("维持拒绝"))
         XCTAssertTrue(ArchitectReview.reconcile([review, task]).isEmpty,
                       "同一个负面结论只能生成一次架构复核")
+    }
+
+    func testManualArchitectReviewIntakePrefersClaude() throws {
+        let outcome = try TaskIntake.enqueue(
+            prompt: "【架构复核】检查状态机并发风险", repo: "/tmp/x",
+            classify: false, split: false, force: true)
+        guard case .single(let task) = outcome else {
+            return XCTFail("架构复核应作为单任务入队")
+        }
+        XCTAssertEqual(task.preferredPlatform, .claude,
+                       "手工创建的架构复核也不能回落到 Codex")
     }
 
     func testMergeRejectionWaitsForArchitectThenUsesDecision() throws {
@@ -134,11 +145,11 @@ final class ArchitectReviewTests: XCTestCase {
         XCTAssertEqual(reopened.state, .queued)
     }
 
-    func testArchitectReviewCanUseDispatcherCodexButNoOtherRunner() throws {
+    func testArchitectReviewUsesClaudeDispatcherAndNoOtherRunner() throws {
         var roles = AgentRoles.defaults()
-        roles.removeAll { $0.platform == .codex }
+        roles.removeAll { $0.platform == .claude }
         roles.append(AgentRole(
-            platform: .codex, title: "架构师", maxRisk: .sensitive,
+            platform: .claude, title: "架构师", maxRisk: .sensitive,
             maxTier: .complex, dispatcherOn: [Paths.machineName()]))
         try AgentRoles.save(roles)
 
@@ -148,13 +159,14 @@ final class ArchitectReviewTests: XCTestCase {
             tier: .standard, risk: .safe, estimatedMinutes: 8,
             isSelfContained: true, rationale: "复核")
         let decision = WorkScheduler().decide(
-            dashboard: dashboard([.codex, .minimax]),
-            runners: [StubRunner(platform: .codex, runnerID: "codex.code"),
+            dashboard: dashboard([.claude, .codex, .minimax]),
+            runners: [StubRunner(platform: .claude, runnerID: "claude.code"),
+                      StubRunner(platform: .codex, runnerID: "codex.code"),
                       StubRunner(platform: .minimax, runnerID: "minimax.review",
                                  reviewOnly: true)],
             task: task)
-        XCTAssertEqual(decision.candidates.map(\.platform), [.codex],
-                       "架构师虽是指挥，也必须能亲自承接负面复核")
+        XCTAssertEqual(decision.candidates.map(\.platform), [.claude],
+                       "架构复核只能由 Claude 承接，不能继续消耗 Codex")
     }
 
     private func mergeReview(id: String, verdict: String) -> WorkTask {

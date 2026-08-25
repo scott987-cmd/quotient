@@ -119,6 +119,10 @@ public enum VisualQualityGate {
             guard let target = target(of: review),
                   var source = sourceTask(branch: target.branch, repo: review.repo,
                                           tasks: tasks) else { continue }
+            // 对账只能把上一轮已经结束的实现重新入队，不能改写正在执行、
+            // 已经排队或正在等人的任务。否则 worker 手里真实 running，质量闭环
+            // 却会拿历史否决票再写一条 queued，手机看到假状态，下一轮还可能重派。
+            guard source.state == .done || source.state == .failed else { continue }
             // 同一黄金样板已经有更新的实现续作时，旧否决已被后续任务接住。
             // 部署新机制时不能把所有历史旧票一起翻成新任务。
             if superseded(review: review, source: source, tasks: tasks) { continue }
@@ -128,6 +132,14 @@ public enum VisualQualityGate {
             let falseCompletion = source.visualRemediationReviewID == review.id
                 && source.state == .done && source.landedAt == nil
                 && source.note?.contains("产出早已落地") == true
+            // visualRemediationReviewID 不只是“同一票幂等键”，还代表这条实现
+            // 已经处理到哪一张票。处理过较新的否决后，任何更旧的票都不能倒灌。
+            if !falseCompletion,
+               let handledID = source.visualRemediationReviewID,
+               let handled = tasks.first(where: { $0.id == handledID }),
+               verdictDate(review) <= verdictDate(handled) {
+                continue
+            }
             if source.visualRemediationReviewID == review.id && !falseCompletion { continue }
             if let newer = updates[source.id], newer.visualRemediationReviewID == review.id {
                 continue

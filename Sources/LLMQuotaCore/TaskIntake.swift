@@ -60,7 +60,7 @@ public enum TaskIntake {
         }
         // 点名平台是**优先**不是命令：过不了岗位/风险/方向闸照样换人。
         t.preferredPlatform = preferredPlatform
-            ?? (TaskKind.isArchitectReview(prompt) ? .codex
+            ?? (TaskKind.isArchitectReview(prompt) ? .claude
                 : reviewTask ? .minimax
                 : RepoExecutionPolicy.implementationOwner(for: repo, prompt: prompt))
         // 【媒体】任务档次写死 standard/safe，不进分诊：

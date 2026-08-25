@@ -92,6 +92,32 @@ final class VisualQualityRemediationTests: XCTestCase {
             "部署闭环机制不能把已经被后续续作接住的历史否决重新翻出来")
     }
 
+    func testHistoricalRejectionCannotOverwriteActiveOrNewerRemediation() {
+        let branch = "agent/openrouter/grip"
+        let old = visual(id: "old-review", branch: branch, head: "aaa",
+                         verdict: "未达标", endedAt: Date(timeIntervalSince1970: 10))
+        let fresh = visual(id: "fresh-review", branch: branch, head: "bbb",
+                           verdict: "未达标", endedAt: Date(timeIntervalSince1970: 20))
+        var source = WorkTask(id: "grip", prompt: "继续整改握枪", repo: "/flint")
+        source.branch = branch
+        source.ownerPlatform = .openrouter
+        source.ownerRunnerID = "opencode.openrouter.code"
+        source.visualRemediationReviewID = fresh.id
+
+        source.state = .running
+        source.runnerPID = 123
+        XCTAssertTrue(VisualQualityGate.reconcileRemediation(
+            [source, old, fresh]).isEmpty,
+            "历史否决不能把真实运行中的任务覆盖回排队")
+
+        source.state = .done
+        source.runnerPID = nil
+        source.note = "完成本轮整改"
+        XCTAssertTrue(VisualQualityGate.reconcileRemediation(
+            [source, old, fresh]).isEmpty,
+            "已经处理较新否决后，旧票不能在收工时再次倒灌")
+    }
+
     private func visual(id: String, branch: String, head: String,
                         verdict: String, endedAt: Date) -> WorkTask {
         var task = WorkTask(

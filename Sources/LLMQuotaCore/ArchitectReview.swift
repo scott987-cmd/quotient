@@ -35,7 +35,7 @@ public enum ArchitectReview {
                 id: "a" + String(review.id.prefix(7)).lowercased(),
                 prompt: prompt(for: review), repo: review.repo)
             task.origin = origin
-            task.preferredPlatform = .codex
+            task.preferredPlatform = .claude
             task.profile = TaskProfile(
                 tier: .standard, risk: .safe, estimatedMinutes: 8,
                 isSelfContained: true,

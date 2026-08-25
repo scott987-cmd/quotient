@@ -461,7 +461,7 @@ public struct WorkScheduler: Sendable {
             // Claude/Kimi 的额度。现在宁可排队等 MiniMax 恢复，也不跨岗。
             // 【看效果】在上面的媒体闸单独处理，不走这里。
             if isArchitectReviewTask,
-               p != .codex || runner.runnerID != CodexRunner().runnerID {
+               p != .claude || runner.runnerID != ClaudeRunner().runnerID {
                 rejected.append(Rejection(
                     platform: p, reason: "负面评审只交给架构师复核",
                     kind: .permanent))
