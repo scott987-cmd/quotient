@@ -1006,6 +1006,7 @@ public enum Review {
             id: String(UUID().uuidString.prefix(8)).lowercased(),
             prompt: """
             【审查】复查刚合入 main 的合并 \(sha)（来源分支 \(branch)）。
+            \(PostLandRepair.contractMarker) 具体发现会自动交回原 owner 的项目会话整改。
             步骤：用 `git show \(sha)` 读完整 diff（首行提交带 -m 说明），\
             检查逻辑错误、安全隐患、与现有代码的矛盾、改了定义漏了调用点。
             产出：把结论写进 reviews/REVIEW-\(sha).md —— 每条发现 = \

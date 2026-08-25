@@ -327,6 +327,12 @@ public enum TaskGraph {
                 }
             }
         }
+        // 合入后审查的确定缺陷不是“有空再做”的储备活：报告一落地就生成
+        // 同 owner 的项目续作，保证问题真正进入执行队列。
+        for task in PostLandRepair.reconcile(Array(byID.values)) {
+            byID[task.id] = task
+            touched[task.id] = task
+        }
         // 视觉否决先把原实现任务重开，再让黄金样板闸看见它已经回到 queued；
         // 顺序反过来会有一轮短暂把 fan-out 误放出去。
         for task in VisualQualityGate.reconcileRemediation(Array(byID.values)) {

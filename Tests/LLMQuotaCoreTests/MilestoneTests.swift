@@ -57,4 +57,51 @@ final class MilestoneTests: XCTestCase {
         XCTAssertEqual(Milestone.unreviewed().map(\.mergeSHA), ["bbb"],
                        "看过的不再打扰")
     }
+
+    func testRejectedMilestoneQueuesSameOwnerProjectRemediationOnce() throws {
+        let item = Milestone.Item(repo: "/flint", repoName: "Flint",
+                                  branch: "agent/kimi/source1", mergeSHA: "abc1234",
+                                  subject: "持枪姿势", landedAt: Date(),
+                                  evidenceFiles: ["pose.png"], verdict: nil)
+        Milestone.save([item])
+        var source = WorkTask(id: "source1", prompt: "实现姿势", repo: "/flint")
+        source.state = .done
+        source.platform = .kimi
+        source.ownerPlatform = .kimi
+        source.ownerRunnerID = "kimi.code"
+
+        XCTAssertTrue(Milestone.decide(repo: "/flint", mergeSHA: "abc1234",
+                                       approved: false, note: "左手没有握住前护木",
+                                       tasks: [source]))
+        let repair = try XCTUnwrap(TaskStore.all().last)
+        XCTAssertEqual(repair.id, "mabc1234",
+                       "两台机器同时收动作时要落成同一个逻辑任务 ID")
+        XCTAssertEqual(repair.origin, "milestone-remediation:abc1234")
+        XCTAssertEqual(repair.ownerPlatform, .kimi)
+        XCTAssertEqual(repair.ownerRunnerID, "kimi.code")
+        XCTAssertTrue(repair.prompt.contains("左手没有握住前护木"))
+        XCTAssertEqual(Milestone.unreviewed().count, 0)
+
+        XCTAssertTrue(Milestone.decide(repo: "/flint", mergeSHA: "abc1234",
+                                       approved: false, note: "重复点击",
+                                       tasks: TaskStore.all() + [source]))
+        XCTAssertEqual(TaskStore.all().filter {
+            $0.origin == "milestone-remediation:abc1234"
+        }.count, 1, "同一成果的重复动作不能造两条整改")
+    }
+
+    func testReviewPageShowsLandedMilestoneWithExecutableDecisionActions() {
+        Milestone.save([Milestone.Item(
+            repo: "/flint", repoName: "Flint", branch: "agent/kimi/t1",
+            mergeSHA: "abc1234", subject: "人物样板", landedAt: Date(),
+            evidenceFiles: ["operator.png", "gameplay.m4v"], verdict: nil)])
+        let page = ViewFeed.reviewPage()
+        let cards = page.sections.flatMap { $0.cards ?? [] }
+        let card = cards.first { $0.id == "/flint|abc1234" }
+        XCTAssertEqual(card?.images, ["operator.png", "gameplay.m4v"])
+        XCTAssertEqual(card?.actions.map(\.id), [
+            "milestone:approve:/flint|abc1234",
+            "milestone:reject:/flint|abc1234",
+        ])
+    }
 }

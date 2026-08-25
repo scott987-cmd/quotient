@@ -6739,6 +6739,13 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
         guard parts.count == 3 else { return false }
         return Playbook.approve(parts[2]) != nil
 
+    case ("milestone", "approve"), ("milestone", "reject"):
+        guard parts.count == 3 else { return false }
+        let bits = parts[2].split(separator: "|", maxSplits: 1).map(String.init)
+        guard bits.count == 2 else { return false }
+        return Milestone.decide(repo: bits[0], mergeSHA: bits[1],
+                                approved: parts[1] == "approve", note: inv.note)
+
     default:
         return nil
     }

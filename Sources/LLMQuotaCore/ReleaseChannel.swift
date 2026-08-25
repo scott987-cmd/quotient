@@ -42,7 +42,7 @@ public enum ReleaseChannel {
 
     // MARK: - 清单
 
-    public struct Manifest: Codable, Sendable {
+    public struct Manifest: Codable, Sendable, Equatable {
         /// tar 包的 SHA-256。**同时也是这个版本的身份** ——
         /// 不另外维护版本号：版本号要靠人记得改，哈希不会忘。
         public var sha256: String
@@ -58,6 +58,38 @@ public enum ReleaseChannel {
             self.publishedAt = publishedAt
             self.publishedBy = publishedBy
             self.notes = notes
+        }
+    }
+
+    /// 新版把“被签名的原始清单 + 签名 + 签名证书”嵌进同一个 JSON。
+    /// 顶层仍保留 Manifest 的五个字段，让旧版 updater 能继续解码；旧版使用
+    /// `current.sig`，新版只信这个单文件信封，避免 iCloud 分开同步两个文件时
+    /// 短暂把正常发布误报成篡改。
+    private struct SignedEnvelope: Codable {
+        var sha256: String
+        var file: String
+        var publishedAt: Date
+        var publishedBy: String
+        var notes: String
+        var signedPayload: Data
+        var embeddedSignature: Data
+        var signerCertificate: Data
+
+        init(manifest: Manifest, signedPayload: Data, embeddedSignature: Data,
+             signerCertificate: Data) {
+            sha256 = manifest.sha256
+            file = manifest.file
+            publishedAt = manifest.publishedAt
+            publishedBy = manifest.publishedBy
+            notes = manifest.notes
+            self.signedPayload = signedPayload
+            self.embeddedSignature = embeddedSignature
+            self.signerCertificate = signerCertificate
+        }
+
+        var manifest: Manifest {
+            Manifest(sha256: sha256, file: file, publishedAt: publishedAt,
+                     publishedBy: publishedBy, notes: notes)
         }
     }
 
@@ -145,9 +177,15 @@ public enum ReleaseChannel {
 
         let manifest = Manifest(sha256: sha, file: name, publishedAt: Date(),
                                 publishedBy: node, notes: notes)
+        let manifestData = try SnapshotCoding.prettyEncoder().encode(manifest)
+        let embeddedSignature = try sign(manifestData)
+        let certificate = try Data(contentsOf: signerCert)
+        let envelope = SignedEnvelope(
+            manifest: manifest, signedPayload: manifestData,
+            embeddedSignature: embeddedSignature, signerCertificate: certificate)
         let mURL = dir.appendingPathComponent("current.json")
         guard ICloudSafe.write(
-            try SnapshotCoding.prettyEncoder().encode(manifest), to: mURL, timeout: 20)
+            try SnapshotCoding.prettyEncoder().encode(envelope), to: mURL, timeout: 20)
         else {
             throw NSError(domain: "ReleaseChannel", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "写发布清单超时（iCloud 没响应）"])
@@ -208,12 +246,45 @@ public enum ReleaseChannel {
         let sigURL = dir.appendingPathComponent("current.sig")
         let certURL = dir.appendingPathComponent("\(signerName).crt")
 
-        guard let data = try? Data(contentsOf: mURL),
-              let manifest = try? SnapshotCoding.decoder().decode(Manifest.self, from: data)
-        else { return .rejected("清单读不出来") }
+        guard let data = try? Data(contentsOf: mURL) else {
+            return .rejected("清单读不出来")
+        }
+        let decoder = SnapshotCoding.decoder()
+        let envelope = try? decoder.decode(SignedEnvelope.self, from: data)
+        guard let manifest = envelope?.manifest
+            ?? (try? decoder.decode(Manifest.self, from: data)) else {
+            return .rejected("清单读不出来")
+        }
 
-        if let installed = installedSHA, installed == manifest.sha256 {
-            return .upToDate(manifest.sha256)
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("llmq-relverify-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let verificationCert: URL
+        let verificationSignature: URL
+        let verificationPayload: URL
+        if let envelope {
+            guard let signed = try? decoder.decode(Manifest.self,
+                                                   from: envelope.signedPayload),
+                  signed == manifest else {
+                return .rejected("清单字段和签名内容不一致 —— 清单被改过")
+            }
+            verificationCert = tmp.appendingPathComponent("release-signer.crt")
+            verificationSignature = tmp.appendingPathComponent("manifest.sig")
+            verificationPayload = tmp.appendingPathComponent("manifest.json")
+            do {
+                try envelope.signerCertificate.write(to: verificationCert)
+                try envelope.embeddedSignature.write(to: verificationSignature)
+                try envelope.signedPayload.write(to: verificationPayload)
+            } catch {
+                return .rejected("签名信封解不开")
+            }
+        } else {
+            // 兼容集群里还没升级到单文件信封的历史发布。
+            verificationCert = certURL
+            verificationSignature = sigURL
+            verificationPayload = mURL
         }
 
         // ① 证书必须由本集群的 CA 签发
@@ -228,7 +299,7 @@ public enum ReleaseChannel {
         //
         // 注意「先检查可读性」这个自然的修法**也是错的**：实测 launchd 下
         // `[ -r file ]` 返回真，真去 fopen 才 EPERM。只能靠真实读取的结果分。
-        let probe = Proc.run("/bin/cat", [certURL.path],
+        let probe = Proc.run("/bin/cat", [verificationCert.path],
                              cwd: NSTemporaryDirectory(), env: [:], timeout: 10)
         if probe.exitCode != 0 || probe.stdout.isEmpty {
             let why = probe.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -236,14 +307,14 @@ public enum ReleaseChannel {
                 || why.lowercased().contains("permission denied")
             return .rejected(denied
                 ? "**读不到**发布证书（\(certURL.lastPathComponent)）—— 不是被篡改，"
-                  + "是这个进程没权限读 iCloud 上那个文件。"
+                  + "是这个进程没权限读发布证书。"
                   + "launchd 起的进程没有终端的授权上下文，"
                   + "而这条报错会让人去查「谁动了我的 iCloud」。原始错误：\(why.prefix(120))"
                 : "发布证书读不出来：\(why.isEmpty ? "文件是空的" : String(why.prefix(120)))")
         }
 
         let chain = Proc.run("/usr/bin/openssl",
-            ["verify", "-CAfile", ClusterCA.caCert.path, certURL.path],
+            ["verify", "-CAfile", ClusterCA.caCert.path, verificationCert.path],
             cwd: dir.path, env: [:], timeout: 20)
         guard chain.exitCode == 0 else {
             let detail = (chain.stderr + chain.stdout)
@@ -256,24 +327,20 @@ public enum ReleaseChannel {
         //    不检查这一条，任何一张节点证书都能签发布 ——
         //    等于一张被偷的从机证书可以给全集群推代码。
         let subj = Proc.run("/usr/bin/openssl",
-            ["x509", "-in", certURL.path, "-noout", "-subject"],
+            ["x509", "-in", verificationCert.path, "-noout", "-subject"],
             cwd: dir.path, env: [:], timeout: 20)
         guard subj.stdout.contains("CN=\(signerName)") else {
             return .rejected("签名者不是 \(signerName)，是 \(subj.stdout.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
 
         // ③ 签名要对
-        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("llmq-relverify-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
         // `-pubkey` 把公钥打到 **stdout**，`-out` 在这里是无效的 ——
         // 加了 -out 反而什么文件都不会生成，而 openssl 退出码仍然是 0。
         // 那样验签会永远失败，而且失败信息长得像"被篡改了"，
         // 排查方向完全错。所以这里自己接 stdout 写文件。
         let pub = tmp.appendingPathComponent("pub.pem")
         let extract = Proc.run("/usr/bin/openssl",
-            ["x509", "-in", certURL.path, "-pubkey", "-noout"],
+            ["x509", "-in", verificationCert.path, "-pubkey", "-noout"],
             cwd: tmp.path, env: [:], timeout: 20)
         guard extract.exitCode == 0,
               extract.stdout.contains("BEGIN PUBLIC KEY"),
@@ -286,10 +353,16 @@ public enum ReleaseChannel {
 
         let v = Proc.run("/usr/bin/openssl", [
             "dgst", "-sha256", "-verify", pub.path,
-            "-signature", sigURL.path, mURL.path,
+            "-signature", verificationSignature.path, verificationPayload.path,
         ], cwd: tmp.path, env: [:], timeout: 20)
         guard v.exitCode == 0 else {
             return .rejected("清单签名验不过 —— 清单被改过")
+        }
+
+        // 已安装也必须先验完清单。旧逻辑在哈希相同处提前返回，发布机自己
+        // 永远发现不了刚写出的坏签名，只有另一台机器会报错。
+        if let installed = installedSHA, installed == manifest.sha256 {
+            return .upToDate(manifest.sha256)
         }
 
         // ④ 包的哈希要和清单里写的一致
@@ -448,5 +521,23 @@ public enum ReleaseChannel {
             throw ClusterCA.err("算哈希失败")
         }
         return String(first)
+    }
+
+    private static func sign(_ data: Data) throws -> Data {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("llmq-relsign-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let payload = tmp.appendingPathComponent("manifest.json")
+        let signature = tmp.appendingPathComponent("manifest.sig")
+        try data.write(to: payload)
+        let result = Proc.run("/usr/bin/openssl", [
+            "dgst", "-sha256", "-sign", signerKey.path,
+            "-out", signature.path, payload.path,
+        ], cwd: tmp.path, env: [:], timeout: 30)
+        guard result.exitCode == 0 else {
+            throw ClusterCA.err("签名失败：\(result.stderr)")
+        }
+        return try Data(contentsOf: signature)
     }
 }

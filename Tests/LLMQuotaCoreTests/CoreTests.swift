@@ -1387,6 +1387,26 @@ final class ReleaseChannelTests: XCTestCase {
         return try ReleaseChannel.publish(tarball: payload, notes: notes, by: "mac-mini")
     }
 
+    private func replaceEmbeddedSigner(key: URL, certificate: URL) throws {
+        let mURL = iCloud.appendingPathComponent("current.json")
+        var obj = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: mURL)) as! [String: Any]
+        let encoded = try XCTUnwrap(obj["signedPayload"] as? String)
+        let payload = try XCTUnwrap(Data(base64Encoded: encoded))
+        let work = tmp.appendingPathComponent("embedded-sign-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let payloadURL = work.appendingPathComponent("manifest.json")
+        let signatureURL = work.appendingPathComponent("manifest.sig")
+        try payload.write(to: payloadURL)
+        XCTAssertEqual(Proc.run("/usr/bin/openssl", [
+            "dgst", "-sha256", "-sign", key.path,
+            "-out", signatureURL.path, payloadURL.path,
+        ], cwd: work.path, env: [:], timeout: 30).exitCode, 0)
+        obj["embeddedSignature"] = try Data(contentsOf: signatureURL).base64EncodedString()
+        obj["signerCertificate"] = try Data(contentsOf: certificate).base64EncodedString()
+        try JSONSerialization.data(withJSONObject: obj).write(to: mURL)
+    }
+
     // MARK: 该通的要通
 
     func testFreshPublishIsAccepted() throws {
@@ -1402,6 +1422,50 @@ final class ReleaseChannelTests: XCTestCase {
         ReleaseChannel.markInstalled(m.sha256)
         guard case .upToDate = ReleaseChannel.check() else {
             return XCTFail("装过的版本还被当成有更新 —— 会无限重装")
+        }
+    }
+
+    func testSingleFileEnvelopeDoesNotDependOnSidecarSyncTiming() throws {
+        let m = try publishFake()
+        try FileManager.default.removeItem(at: iCloud.appendingPathComponent("current.sig"))
+        try FileManager.default.removeItem(
+            at: iCloud.appendingPathComponent("release-signer.crt"))
+        guard case .available(let got, _) = ReleaseChannel.check() else {
+            return XCTFail("单文件信封完整时不该等另外两个 iCloud 文件：\(ReleaseChannel.check())")
+        }
+        XCTAssertEqual(got.sha256, m.sha256)
+    }
+
+    func testInstalledMarkerDoesNotBypassManifestVerification() throws {
+        let m = try publishFake()
+        ReleaseChannel.markInstalled(m.sha256)
+        let mURL = iCloud.appendingPathComponent("current.json")
+        var obj = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: mURL)) as! [String: Any]
+        obj["notes"] = "发布机自己也必须发现这处篡改"
+        try JSONSerialization.data(withJSONObject: obj).write(to: mURL)
+        guard case .rejected = ReleaseChannel.check() else {
+            return XCTFail("installed-release 相同不能跳过签名验证")
+        }
+    }
+
+    func testLegacyTwoFileManifestStillWorksDuringRollingUpgrade() throws {
+        _ = try publishFake()
+        let mURL = iCloud.appendingPathComponent("current.json")
+        var obj = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: mURL)) as! [String: Any]
+        obj.removeValue(forKey: "signedPayload")
+        obj.removeValue(forKey: "embeddedSignature")
+        obj.removeValue(forKey: "signerCertificate")
+        try JSONSerialization.data(withJSONObject: obj).write(to: mURL)
+        let sig = iCloud.appendingPathComponent("current.sig")
+        XCTAssertEqual(Proc.run("/usr/bin/openssl", [
+            "dgst", "-sha256", "-sign",
+            ClusterCA.dirOverride!.appendingPathComponent("release-signer.key").path,
+            "-out", sig.path, mURL.path,
+        ], cwd: tmp.path, env: [:], timeout: 30).exitCode, 0)
+        guard case .available = ReleaseChannel.check() else {
+            return XCTFail("滚动升级时必须还能读取旧清单：\(ReleaseChannel.check())")
         }
     }
 
@@ -1453,16 +1517,7 @@ final class ReleaseChannelTests: XCTestCase {
         let rogueCert = rogueDir.appendingPathComponent("release-signer.crt")
         ClusterCA.dirOverride = real
 
-        let mURL = iCloud.appendingPathComponent("current.json")
-        let sigURL = iCloud.appendingPathComponent("current.sig")
-        try? FileManager.default.removeItem(at: sigURL)
-        XCTAssertEqual(Proc.run("/usr/bin/openssl", [
-            "dgst", "-sha256", "-sign", rogueKey.path, "-out", sigURL.path, mURL.path,
-        ], cwd: tmp.path, env: [:], timeout: 30).exitCode, 0)
-        try? FileManager.default.removeItem(
-            at: iCloud.appendingPathComponent("release-signer.crt"))
-        try FileManager.default.copyItem(
-            at: rogueCert, to: iCloud.appendingPathComponent("release-signer.crt"))
+        try replaceEmbeddedSigner(key: rogueKey, certificate: rogueCert)
 
         guard case .rejected(let why) = ReleaseChannel.check() else {
             return XCTFail("别的 CA 签的发布证书通过了 —— 任何人都能给集群推代码")
@@ -1489,20 +1544,13 @@ final class ReleaseChannelTests: XCTestCase {
             "-out", work.appendingPathComponent("node.pem").path,
         ], cwd: work.path, env: [:], timeout: 30).exitCode, 0)
 
-        let mURL = iCloud.appendingPathComponent("current.json")
-        let sigURL = iCloud.appendingPathComponent("current.sig")
-        try? FileManager.default.removeItem(at: sigURL)
-        XCTAssertEqual(Proc.run("/usr/bin/openssl", [
-            "dgst", "-sha256", "-sign", work.appendingPathComponent("node.pem").path,
-            "-out", sigURL.path, mURL.path,
-        ], cwd: work.path, env: [:], timeout: 30).exitCode, 0)
-        // 把节点证书放上去冒充发布证书
-        try? FileManager.default.removeItem(
-            at: iCloud.appendingPathComponent("release-signer.crt"))
+        let nodeCert = work.appendingPathComponent("node.crt")
         XCTAssertEqual(Proc.run("/usr/bin/openssl", [
             "pkcs12", "-in", p12.path, "-clcerts", "-nokeys", "-passin", "pass:\(pw)",
-            "-out", iCloud.appendingPathComponent("release-signer.crt").path,
+            "-out", nodeCert.path,
         ], cwd: work.path, env: [:], timeout: 30).exitCode, 0)
+        try replaceEmbeddedSigner(key: work.appendingPathComponent("node.pem"),
+                                  certificate: nodeCert)
 
         guard case .rejected(let why) = ReleaseChannel.check() else {
             return XCTFail("节点证书签的发布通过了 —— 一张被偷的从机证书就能推代码")

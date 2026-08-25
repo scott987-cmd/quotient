@@ -654,15 +654,38 @@ extension ViewFeed {
 
     public static func reviewPage(now: Date = Date()) -> Page {
         let items = Review.publishDigests()
-        guard !items.isEmpty else {
+        let milestones = Milestone.unreviewed()
+        guard !items.isEmpty || !milestones.isEmpty else {
             return Page(page: "review", sections: [
                 Section(kind: "text", title: "没有等验收的产出", tone: .good,
                         text: "agent 交的活都已经合入或丢弃了。")
             ], now: now)
         }
+        var sections: [Section] = []
+        if !milestones.isEmpty {
+            sections.append(Section(
+                kind: "cards", title: "已落地成果（\(milestones.count)）",
+                note: "看实际截图或录屏；不满意会自动交回原 Agent 项目会话整改",
+                cards: milestones.sorted { $0.landedAt > $1.landedAt }.map { item in
+                    Card(id: item.id,
+                         title: item.subject,
+                         body: item.repoName + " · 已合入 main，等你看实际效果",
+                         detail: "来源分支：\(item.branch)\n提交：\(item.mergeSHA)",
+                         tone: .neutral, icon: "play.rectangle",
+                         trailing: "\(item.evidenceFiles.count) 份证据",
+                         images: item.evidenceFiles,
+                         actions: [
+                            Action(id: "milestone:approve:" + item.repo + "|" + item.mergeSHA,
+                                   label: "满意", style: "primary"),
+                            Action(id: "milestone:reject:" + item.repo + "|" + item.mergeSHA,
+                                   label: "不满意，交回整改", style: "destructive",
+                                   needsNote: true),
+                         ])
+                }))
+        }
         // 按仓库分组，每组一个区块 —— 分组规则也在服务端。
         let byRepo = Dictionary(grouping: items, by: \.repoName)
-        return Page(page: "review", sections: byRepo.keys.sorted().map { name in
+        sections.append(contentsOf: byRepo.keys.sorted().map { name in
             let group = byRepo[name] ?? []
             return Section(
                 kind: "cards", title: name + "（\(group.count)）",
@@ -685,7 +708,8 @@ extension ViewFeed {
                              + [Action(id: "review:discard:" + d.repo + "|" + d.branch,
                                        label: "丢弃", style: "destructive", needsNote: true)])
                 })
-        }, now: now)
+        })
+        return Page(page: "review", sections: sections, now: now)
     }
 
     /// 项目清单页。
