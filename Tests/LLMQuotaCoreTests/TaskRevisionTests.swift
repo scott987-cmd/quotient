@@ -41,7 +41,7 @@ final class TaskRevisionTests: XCTestCase {
 
     /// 核心场景：旧快照后写，必须被拒。
     func test_旧快照后写_被拒且状态不倒流() throws {
-        var t = make("b")
+        let t = make("b")
         try TaskStore.append(t)
         let stale = TaskStore.all().first!        // 旧 worker 手里这份
 
@@ -67,6 +67,46 @@ final class TaskRevisionTests: XCTestCase {
         XCTAssertEqual(TaskStore.all().first?.state, .running, "状态不许倒流")
         XCTAssertEqual(TaskStore.all().first?.runnerPID, 21981, "PID 也不许被幽灵覆盖")
         XCTAssertEqual(TaskStore.staleRejections.count, 1, "被拒这件事必须留痕，不能没声音")
+    }
+
+    func test_同进程的两个独立快照_旧的也必须被拒() throws {
+        try TaskStore.append(make("same-process"))
+        var fresh = TaskStore.all().first!
+        var stale = TaskStore.all().first!
+
+        fresh.state = .running
+        fresh.runnerPID = 42
+        try TaskStore.append(fresh)
+
+        stale.state = .failed
+        XCTAssertThrowsError(try TaskStore.append(stale)) { error in
+            XCTAssertTrue(error is StaleWrite)
+        }
+        XCTAssertEqual(TaskStore.all().first?.state, .running)
+        XCTAssertEqual(TaskStore.all().first?.runnerPID, 42)
+    }
+
+    func test_读取按最高rev折叠_不让后写的低版本获胜() throws {
+        var newest = make("reader")
+        newest.rev = 7
+        newest.state = .running
+        newest.runnerPID = 77
+        var stale = newest
+        stale.rev = 3
+        stale.state = .queued
+        stale.runnerPID = nil
+
+        let encoder = SnapshotCoding.encoder()
+        let data = try [newest, stale].reduce(into: Data()) { out, task in
+            out.append(try encoder.encode(task))
+            out.append(UInt8(ascii: "\n"))
+        }
+        try data.write(to: dir.appendingPathComponent("tasks.jsonl"))
+
+        let loaded = try XCTUnwrap(TaskStore.all().first)
+        XCTAssertEqual(loaded.rev, 7)
+        XCTAssertEqual(loaded.state, .running)
+        XCTAssertEqual(loaded.runnerPID, 77)
     }
 
     /// 同一进程一轮里对同一个 task 变量连写多次是正常操作，不能被误判成过期。

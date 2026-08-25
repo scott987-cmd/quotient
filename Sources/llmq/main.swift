@@ -6191,10 +6191,44 @@ func noteIdle(_ verdict: IdleReason.Verdict, quiet: Bool) -> RunOutcome {
 /// 循环末尾的换二进制判断都用它 —— 以前是三份各写各的,`?? false` 和 `?? true`
 /// 并存,PID 还没落盘那一小段窗口里就被踢死过(2026-08-22 凌晨一个刚跑 32 秒的任务)。
 /// **没记 PID 的 running 也算在飞**:宁可多等一轮。
+/// 现在有没有 agent 真的在干活。
+///
+/// **不能只问账本。** 判据原来是 `state == .running && PID 活着`，
+/// 两个条件都来自 `tasks.jsonl` —— 而这本账会被过期快照写坏：
+///
+/// 2026-08-25 实锤：任务 6a4a3d11 在 13:35 被一次过期写入按回 `queued`
+/// 并留下已死的 PID；20:52 左右 worker 又给它起了 agent，账本一个字没记。
+/// 21:56 发版时这道闸照着账本看，认定「没人在跑」，于是踢了 worker ——
+/// 那个 agent 变成孤儿又跑了 88 分钟，与新 worker 在同一个 worktree 里互踩，
+/// 一小时产出作废。**知道秤坏了还照着秤下刀。**
+///
+/// 现在多一条不依赖账本的证据：worktrees 目录里有没有活着的 agent 进程。
+/// 两条任一成立就算「有人在干活」——宁可晚几分钟生效，也不要再踢死一个。
 func inFlightAgent() -> WorkTask? {
-    TaskStore.all().first {
+    let byLedger = TaskStore.all().first {
         $0.state == .running && ($0.runnerPID.map { kill($0, 0) == 0 } ?? true)
     }
+    if let byLedger { return byLedger }
+    // 账本说没人，再亲眼看一遍工作区。
+    let root = Paths.appSupport.appendingPathComponent("worktrees", isDirectory: true)
+    guard let dirs = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
+        return nil
+    }
+    let me = getpid()
+    for d in dirs {
+        let path = root.appendingPathComponent(d).path
+        let busy = GitWorkspace.occupantsProbe(path).filter { $0 != me }
+        guard !busy.isEmpty else { continue }
+        // 有进程活在工作区里，但账本里没有对应的 running 任务 ——
+        // 这本身就是账本在说谎，得说出来，不能默默放行。
+        var ghost = WorkTask(id: "工作区 " + d, prompt: "", repo: path)
+        ghost.state = .running
+        ghost.runnerPID = busy.first
+        ghost.note = "账本里没有这条 running 记录，但进程 "
+            + busy.map(String.init).joined(separator: "、") + " 确实在里面跑"
+        return ghost
+    }
+    return nil
 }
 
 func restartResidentServices() -> [String] {

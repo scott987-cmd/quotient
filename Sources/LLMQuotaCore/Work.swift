@@ -3,6 +3,11 @@ import Foundation
 // MARK: - 任务
 
 public struct WorkTask: Codable, Sendable {
+    /// 只活在当前内存快照里，不从 JSON 恢复。两个独立的 `all()` 读取必须拿到
+    /// 不同 token；同一个变量连续写则保留 token。这样 TaskStore 才能区分
+    /// “同一条控制流继续写”和“同进程另一线程拿旧快照覆盖”。
+    fileprivate var snapshotToken = UUID()
+
     public enum State: String, Codable, Sendable {
         case queued, running, done, failed
         /// 在等人回答。**不在 queued 里**，所以 nextQueued 天然跳过它 ——
@@ -306,7 +311,11 @@ public enum TaskStore {
                 }
                 continue
             }
-            latest[t.id] = t   // 后写的覆盖先写的
+            // 新版按 revision 折叠；同 revision 才保留旧版“后写获胜”的兼容语义。
+            // 否则一个还没升级、只会写 rev=0 的旧进程仍能靠更晚的文件位置
+            // 覆盖新版状态，revision 形同虚设。
+            if let current = latest[t.id], current.rev > t.rev { continue }
+            latest[t.id] = t
         }
         return latest.values.sorted { $0.createdAt < $1.createdAt }
     }
@@ -317,7 +326,7 @@ public enum TaskStore {
     /// `runOneTask` 一轮里会对同一个 task 变量 append 好几次，而它手上那份
     /// 内存快照的 rev 停在第一次写之前。没有这张表，自己的第二次写会被
     /// 当成过期写入丢掉 —— 那就从「状态倒流」换成了「状态写不进去」，更糟。
-    private static var writtenRev: [String: Int] = [:]
+    private static var writtenRev: [UUID: (id: String, rev: Int)] = [:]
 
     /// 只给测试用：把「这个进程写过什么」清干净，否则测试之间会互相串。
     public static func resetWrittenRevForTests() {
@@ -330,7 +339,7 @@ public enum TaskStore {
     public static var staleRejections: [(id: String, mine: Int, onDisk: Int)] = []
 
     /// 扫出这条任务在盘上的最新 rev。调用方必须已经持有文件锁。
-    private static func currentRev(of id: String, fileHandle fd: Int32) -> Int {
+    private static func currentRev(of id: String) -> Int {
         guard let data = try? Data(contentsOf: file) else { return -1 }
         let dec = SnapshotCoding.decoder()
         var best = -1
@@ -362,25 +371,25 @@ public enum TaskStore {
             userInfo: [NSLocalizedDescriptionKey: "任务库加锁失败"]) }
         defer { flock(lockFD, LOCK_UN) }
 
-        let onDisk = currentRev(of: task.id, fileHandle: lockFD)
+        let onDisk = currentRev(of: task.id)
         // 判据：**盘上这条最新记录是不是我自己写的。**
         //
         // 是我写的 → 这是我一轮里的连续写入（runOneTask 会对同一个 task
         // 变量 append 好几次），放行；不是我写的、而我基于的版本又更旧
         // → 我手上是过期快照，写下去就是让状态倒流，拒。
         //
-        // **覆盖范围要说清楚**：这一层挡的是**跨进程**的过期写入
-        // （被 kill 的旧 worker、另一台机器的命令行、并发的手机答复）。
-        // 同一个进程内部持旧快照的写入者（比如后台视觉对账线程）它挡不住 ——
-        // 那一层靠状态机护栏（活跃任务不能被历史否决票重开）。两层互补，
-        // 谁也不能替代谁。
-        if onDisk >= 0, task.rev < onDisk, writtenRev[task.id] != onDisk {
+        // `snapshotToken` 标识一次内存读取，所以它同时挡跨进程旧写入
+        // （被 kill 的旧 worker、另一台机器的命令行）和同进程的独立旧快照
+        // （例如后台视觉对账线程）。同一个变量连续写保留 token，仍可正常推进。
+        let mine = writtenRev[task.snapshotToken]
+        if onDisk >= 0, task.rev < onDisk,
+           (mine?.id != task.id || mine?.rev != onDisk) {
             // 别人在我读到之后写过了 —— 我手上是旧快照，写下去就是让状态倒流。
             staleRejections.append((task.id, task.rev, onDisk))
             throw StaleWrite(id: task.id, mine: task.rev, onDisk: onDisk)
         }
         task.rev = onDisk + 1
-        writtenRev[task.id] = task.rev
+        writtenRev[task.snapshotToken] = (task.id, task.rev)
         var data = try SnapshotCoding.encoder().encode(task)
         data.append(UInt8(ascii: "\n"))
         if FileManager.default.fileExists(atPath: file.path) {
@@ -2109,6 +2118,38 @@ public enum GitWorkspace {
         return String(safe) + "-" + platform.rawValue
     }
 
+    /// 谁还在这个工作区里干活（按进程的当前目录找）。可注入，方便测试。
+    ///
+    /// **为什么需要它**：普通任务的工作区是按「仓库 × 平台」共用的
+    /// （见下面 `key` 的算法），每接一条新任务就在同一个目录里**切分支**。
+    /// 只要还有 agent 进程活在里面，切分支就会让它把改动写到别人的分支上。
+    ///
+    /// 仓库租约挡不住这种情况：租约看的是任务状态，而孤儿进程
+    /// （父 worker 被 kill、子进程被 init 收养）对应的任务往往根本没有
+    /// `running` 记录 —— 老 worker 死在写终态之前。
+    ///
+    /// 2026-08-25 现场：worker 21981 被换二进制重启，它的儿子 22566 成了孤儿，
+    /// 在 worktrees/flint-openrouter 里又跑了 88 分钟；与此同时新 worker
+    /// 把同一个目录切到了另一条任务的分支 agent/openrouter/74726e09。
+    /// 两个 agent 同时往一个工作区里写，孤儿的产出会落到错误的分支上。
+    public static var occupantsProbe: (String) -> [Int32] = { path in
+        let out = Proc.run("/usr/sbin/lsof", ["-a", "-d", "cwd", "-Fp", "--", path],
+                           cwd: nil, env: [:], timeout: 10).stdout
+        return out.split(separator: "\n").compactMap {
+            $0.hasPrefix("p") ? Int32($0.dropFirst()) : nil
+        }
+    }
+
+    public struct WorkspaceBusy: Error, CustomStringConvertible {
+        public let path: String
+        public let pids: [Int32]
+        public var description: String {
+            "工作区还被占着：\(path) —— 进程 "
+                + pids.map(String.init).joined(separator: "、")
+                + "。切分支会让它把改动写到别人的分支上。"
+        }
+    }
+
     public static func prepare(repo: String, taskID: String, platform: Platform,
                                graphID: String? = nil, base: String = "main") throws -> Workspace {
         // 建 worktree 不该要两分钟。缩短到 45 秒 —— 超过这个数基本就是卡住了，
@@ -2120,6 +2161,20 @@ public enum GitWorkspace {
         let root = Paths.appSupport.appendingPathComponent("worktrees", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let path = root.appendingPathComponent(key).path
+
+        // **交出去之前先看有没有人还在里面。**
+        //
+        // 只在「目录已存在、且当前分支不是这条任务的分支」时检查 ——
+        // 那正是要切分支的情形，也正是会把别人的改动带偏的情形。
+        // 同一条任务接着用自己的工作区（图任务、同 owner 续跑）不受影响。
+        if FileManager.default.fileExists(atPath: path),
+           git(["rev-parse", "--abbrev-ref", "HEAD"], in: path, timeout: 10)
+               .stdout.trimmingCharacters(in: .whitespacesAndNewlines) != branch {
+            let busy = occupantsProbe(path).filter { $0 != getpid() }
+            if !busy.isEmpty {
+                throw WorkspaceBusy(path: path, pids: busy)
+            }
+        }
 
         // 图内后续节点：复用，**绝对不能删**。
         if graphID != nil, let live = existingWorkspace(taskID: key), live.branch == branch {
