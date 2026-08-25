@@ -151,6 +151,25 @@ final class ContextAffinityTests: XCTestCase {
         })
     }
 
+    /// Ox Alpha 当前的 OpenRouter 通道不接受图片输入。它仍然负责免费的
+    /// 编码工作，但必须把看图留给前置的 MiniMax 视觉票，避免 agent 调用
+    /// Read(image) 后以 400 invalid_request 整轮失败。
+    func testOxCodingPromptForbidsDirectImageReads() {
+        let command = OpenCodeRunner(platform: .openrouter).command(
+            prompt: "修复握枪动作，并查看 /tmp/gripframes/f26.png 验证",
+            cwd: "/tmp")
+        let prompt = command.args.last ?? ""
+        XCTAssertTrue(prompt.contains("不要直接读取图片或视频文件"))
+        XCTAssertTrue(prompt.contains("独立多模态验收"))
+        XCTAssertTrue(prompt.contains("修复握枪动作"), "不得丢失原任务")
+    }
+
+    func testOtherOpenCodeProvidersDoNotReceiveOxVisionGuard() {
+        let prompt = OpenCodeRunner(platform: .volcark)
+            .command(prompt: "查看截图后修复", cwd: "/tmp").args.last ?? ""
+        XCTAssertFalse(prompt.contains("不要直接读取图片或视频文件"))
+    }
+
     func testOpenCodeCredentialCheckOnlyNeedsProviderEntry() throws {
         let file = scratch.appendingPathComponent("opencode-auth.json")
         try Data(#"{"openrouter":{"type":"api","key":"secret-not-read"}}"#.utf8)

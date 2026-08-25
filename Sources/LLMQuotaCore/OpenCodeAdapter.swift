@@ -178,7 +178,25 @@ public struct OpenCodeRunner: AgentRunner {
         if let m = model, !m.isEmpty {
             args += ["-m", m]
         }
-        args.append(prompt)
+        // Ox Alpha 经 OpenRouter/OpenCode 传图片会稳定返回 400
+        // invalid_request。它的代码能力仍然值得用（且免费），所以这里只切断
+        // 会炸掉整轮任务的图片工具调用；画面判断由前置 MiniMax 视觉票完成，
+        // Ox 读取票里的文字结论继续改代码。修完照常产出证据，再由独立视觉闸复验。
+        let effectivePrompt: String
+        if platform == .openrouter {
+            effectivePrompt = """
+            【Ox 输入能力边界】当前通道只接收文本。不要直接读取图片或视频文件，
+            也不要对 .png/.jpg/.jpeg/.gif/.mov/.mp4 调用 Read/视觉工具；这会让请求以
+            400 invalid_request 失败。请依据任务中已有的独立多模态验收文字结论修改代码。
+            如果还缺视觉信息，完成可由代码、数值和测试验证的部分并产出新证据，交给
+            独立多模态验收复验；不要猜测自己看见了画面，也不要因此停止编码。
+
+            \(prompt)
+            """
+        } else {
+            effectivePrompt = prompt
+        }
+        args.append(effectivePrompt)
         return (binaryPath ?? "/opt/homebrew/bin/opencode", args, [:])
     }
 }
