@@ -111,12 +111,19 @@ public enum VisualQualityGate {
             // 同一黄金样板已经有更新的实现续作时，旧否决已被后续任务接住。
             // 部署新机制时不能把所有历史旧票一起翻成新任务。
             if superseded(review: review, source: source, tasks: tasks) { continue }
-            if source.visualRemediationReviewID == review.id { continue }
+            // 第一版闭环上线后的现场回放抓到：任务重开成功，但派活前的“这条
+            // 分支已合过”优化又把它写回 done。要精确救这一种假完成；真正完成
+            // 过一轮整改（note 是改了 N 个文件）不能被旧否决反复重开。
+            let falseCompletion = source.visualRemediationReviewID == review.id
+                && source.state == .done && source.landedAt == nil
+                && source.note?.contains("产出早已落地") == true
+            if source.visualRemediationReviewID == review.id && !falseCompletion { continue }
             if let newer = updates[source.id], newer.visualRemediationReviewID == review.id {
                 continue
             }
 
-            source.prompt += """
+            if !falseCompletion {
+                source.prompt += """
 
 
             【视觉整改：\(review.id)｜保持原 owner 和原会话】
@@ -129,6 +136,7 @@ public enum VisualQualityGate {
             代码审核、单测通过不能替代这张视觉票。修完仍由独立视觉验收重新判；
             有硬门槛没达到就如实保留“未达标”，不要用特写/文档冒充完成。
             """
+            }
             source.state = .queued
             source.createdAt = now
             source.startedAt = nil

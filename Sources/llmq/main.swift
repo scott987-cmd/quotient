@@ -2042,7 +2042,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             let ahead = Int(GitWorkspace.git(["rev-list", "--count", "main..\(own)"],
                                              in: repoPath).stdout
                 .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-            if mergedOnMain && (!exists || ahead == 0) {
+            // 视觉否决重开的是**同一任务 ID / 同一分支名**，以便恢复原会话。
+            // 它的上一版当然已经在 main；拿这个历史事实判“当前整改也做完了”
+            // 会在重开后一分钟内把任务重新写回 done，Kimi 根本没有启动。
+            if cand.visualRemediationReviewID == nil,
+               mergedOnMain && (!exists || ahead == 0) {
                 if !quiet { print(Ansi.yellow("  已完成 " + cand.id + "：") + Ansi.dim("它的分支 \(own) 已合进 main")) }
                 var x = cand
                 x.state = .done

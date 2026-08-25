@@ -60,6 +60,16 @@ final class VisualQualityRemediationTests: XCTestCase {
         XCTAssertEqual(throughGraph.state, .queued,
                        "worker 每轮实际调用的是 TaskGraph.reconcile，闭环不能只停在孤立 helper")
         XCTAssertEqual(throughGraph.ownerRunnerID, "kimi.code")
+
+        var falselyCompleted = reopened
+        falselyCompleted.state = .done
+        falselyCompleted.note = "派活前核实：分支 \(branch) 已合入 main，产出早已落地"
+        let recovered = try XCTUnwrap(VisualQualityGate.reconcileRemediation(
+            [falselyCompleted, review]).only)
+        XCTAssertEqual(recovered.state, .queued,
+                       "旧分支已合入是上一轮事实，不能把本轮视觉整改判成早已完成")
+        XCTAssertEqual(recovered.prompt, reopened.prompt,
+                       "恢复假完成不能把同一份视觉报告重复追加进提示词")
     }
 
     func testOlderRejectedSampleIsIgnoredWhenNewerContinuationExists() {
