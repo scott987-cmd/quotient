@@ -1670,6 +1670,11 @@ extension Review {
             let path = NSString(string: r.localPath).expandingTildeInPath
             guard GitWorkspace.isRepo(path) else { continue }
             for item in pendingForHuman(repo: path, decided: decided) {
+                let extracted = extractEvidence(
+                    repo: path, branch: item.branch, files: item.evidence,
+                    digestID: path + "|" + item.branch,
+                    revision: item.head,
+                    context: [item.subject, item.prompt ?? ""].joined(separator: "\n"))
                 out.append(Digest(
                     repo: path, repoName: r.alias, branch: item.branch,
                     platform: item.platform, subject: item.subject,
@@ -1678,13 +1683,11 @@ extension Review {
                     mergesCleanly: item.mergesCleanly,
                     overlapsWith: item.overlapsWith,
                     committedAt: item.committedAt,
-                    evidence: item.evidence,
-                    // 图真抽出来放到共享目录，不然手机上只有一行文件名。
-                    evidenceFiles: extractEvidence(
-                        repo: path, branch: item.branch, files: item.evidence,
-                        digestID: path + "|" + item.branch,
-                        revision: item.head,
-                        context: [item.subject, item.prompt ?? ""].joined(separator: "\n")),
+                    // 旧客户端用 evidence.count 画角标，新客户端用
+                    // evidenceFiles。两边都下发实际同步成功的同一份清单，
+                    // 避免旧客户端继续把原始 17 个路径显示成 17 张证据。
+                    evidence: extracted,
+                    evidenceFiles: extracted,
                     landingBlockReason: qualityLandingBlock(
                         repo: path, branch: item.branch)))
             }
