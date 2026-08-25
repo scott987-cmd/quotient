@@ -73,6 +73,23 @@ public struct WorkTask: Codable, Sendable {
     /// 正在等回答的那个问题。答案必须带着它的 id 回来才会被采纳。
     public var pendingAsk: Ask?
     /// 已经问过几轮。封顶见 Ask.Policy.maxRounds。
+    /// 这条记录的版本号，由 TaskStore 在写盘时单调分配。
+    ///
+    /// **为什么必须有它**：`tasks.jsonl` 是 append-only，读取端 `all()` 是
+    /// 「后写覆盖先写」。只要有一个进程手里攥着旧快照、又写得比别人晚，
+    /// 它就能让任务状态倒流 —— 而这个系统有四类并发写入者：worker、
+    /// 手机答复、自动落地、视觉闭环，外加被 kill 的旧 worker 的临终写入。
+    ///
+    /// 2026-08-25 现场实锤（任务 6a4a3d11）：
+    ///
+    ///     running  pid=21981 started=12:34:00   ← 新 worker 真的开跑
+    ///     blocked  pid=20686 started=12:30:25   ← 3 分半前的旧快照，后写覆盖
+    ///     failed   pid=20686                    ← 旧进程被 SIGTERM 的临终记录
+    ///     queued   pid=20686                    ← 从旧快照重新入队
+    ///
+    /// 结果：opencode 实际已经跑了 64 分钟，看板却说「排队」，
+    /// 而且这条任务随时可能被再派一次（同一 worktree 两个 agent）。
+    public var rev: Int = 0
     public var askRounds: Int = 0
     /// 答复回来之后，等着被带进下一轮的上下文。
     /// 用完就清空（在 runOneTask 里落盘时），避免第二轮又把同一份答复塞一遍。
@@ -198,6 +215,7 @@ public struct WorkTask: Codable, Sendable {
         discardReason = try c.decodeIfPresent(String.self, forKey: .discardReason)
         preferredPlatform = try c.decodeIfPresent(Platform.self, forKey: .preferredPlatform)
         pendingAsk = try c.decodeIfPresent(Ask.self, forKey: .pendingAsk)
+        rev = try c.decodeIfPresent(Int.self, forKey: .rev) ?? 0
         askRounds = try c.decodeIfPresent(Int.self, forKey: .askRounds) ?? 0
         handoff = try c.decodeIfPresent(Handoff.self, forKey: .handoff)
         answeredAsk = try c.decodeIfPresent(AskAnswer.self, forKey: .answeredAsk)
@@ -230,6 +248,19 @@ public struct WorkTask: Codable, Sendable {
 ///
 /// 没用 Hermes 的 kanban：它自带调度器会去抢着执行，而我需要的是「由额度决定派给谁」。
 /// 两个调度器同时管同一批任务只会打架。Hermes 在这里只负责飞书通道。
+/// 写入被判过期 —— 你手上那份快照，在你写之前已经被别人改过了。
+///
+/// 正确的处置是**重新读一遍、把改动重新应用上去、再写**，
+/// 而不是把它当成一次失败吞掉。
+public struct StaleWrite: Error, CustomStringConvertible {
+    public let id: String
+    public let mine: Int
+    public let onDisk: Int
+    public var description: String {
+        "任务 \(id) 的写入被拒：我基于 rev \(mine)，盘上已经是 rev \(onDisk) —— 重读后再写"
+    }
+}
+
 public enum TaskStore {
     /// **写 tasks.jsonl 的进程内锁。**
     ///
@@ -280,12 +311,78 @@ public enum TaskStore {
         return latest.values.sorted { $0.createdAt < $1.createdAt }
     }
 
+    /// 这个进程给每条任务写过的最新 rev。
+    ///
+    /// 用来把「我自己连着写第二次」和「别人在我背后写过了」分开：
+    /// `runOneTask` 一轮里会对同一个 task 变量 append 好几次，而它手上那份
+    /// 内存快照的 rev 停在第一次写之前。没有这张表，自己的第二次写会被
+    /// 当成过期写入丢掉 —— 那就从「状态倒流」换成了「状态写不进去」，更糟。
+    private static var writtenRev: [String: Int] = [:]
+
+    /// 只给测试用：把「这个进程写过什么」清干净，否则测试之间会互相串。
+    public static func resetWrittenRevForTests() {
+        writeLock.lock(); defer { writeLock.unlock() }
+        writtenRev = [:]
+    }
+
+    /// 谁的写入被判过期了。**必须出声**，不能静默丢：
+    /// 静默丢弃会让「为什么这条状态没更新」变成又一个查不出来的黑盒。
+    public static var staleRejections: [(id: String, mine: Int, onDisk: Int)] = []
+
+    /// 扫出这条任务在盘上的最新 rev。调用方必须已经持有文件锁。
+    private static func currentRev(of id: String, fileHandle fd: Int32) -> Int {
+        guard let data = try? Data(contentsOf: file) else { return -1 }
+        let dec = SnapshotCoding.decoder()
+        var best = -1
+        for line in data.split(separator: UInt8(ascii: "\n")) {
+            guard let t = try? dec.decode(WorkTask.self, from: Data(line)),
+                  t.id == id else { continue }
+            best = max(best, t.rev)
+        }
+        return best
+    }
+
     public static func append(_ task: WorkTask) throws {
+        var task = task
         try Paths.ensureDirectories()
-        var data = try SnapshotCoding.encoder().encode(task)
-        data.append(UInt8(ascii: "\n"))
         writeLock.lock()
         defer { writeLock.unlock() }
+        // **跨进程互斥 + 过期写入拒绝。**
+        //
+        // 原来这里只有进程内的 NSLock，挡不住第二个进程；而读取端是
+        // 「后写覆盖先写」，所以任何攥着旧快照的写入者只要写得晚就赢。
+        // 见 WorkTask.rev 的文档注释里 2026-08-25 的现场记录。
+        let lockFD = open(file.path, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
+        guard lockFD >= 0 else { throw NSError(
+            domain: "TaskStore", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "任务库打不开：\(file.path)"]) }
+        defer { close(lockFD) }
+        guard flock(lockFD, LOCK_EX) == 0 else { throw NSError(
+            domain: "TaskStore", code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "任务库加锁失败"]) }
+        defer { flock(lockFD, LOCK_UN) }
+
+        let onDisk = currentRev(of: task.id, fileHandle: lockFD)
+        // 判据：**盘上这条最新记录是不是我自己写的。**
+        //
+        // 是我写的 → 这是我一轮里的连续写入（runOneTask 会对同一个 task
+        // 变量 append 好几次），放行；不是我写的、而我基于的版本又更旧
+        // → 我手上是过期快照，写下去就是让状态倒流，拒。
+        //
+        // **覆盖范围要说清楚**：这一层挡的是**跨进程**的过期写入
+        // （被 kill 的旧 worker、另一台机器的命令行、并发的手机答复）。
+        // 同一个进程内部持旧快照的写入者（比如后台视觉对账线程）它挡不住 ——
+        // 那一层靠状态机护栏（活跃任务不能被历史否决票重开）。两层互补，
+        // 谁也不能替代谁。
+        if onDisk >= 0, task.rev < onDisk, writtenRev[task.id] != onDisk {
+            // 别人在我读到之后写过了 —— 我手上是旧快照，写下去就是让状态倒流。
+            staleRejections.append((task.id, task.rev, onDisk))
+            throw StaleWrite(id: task.id, mine: task.rev, onDisk: onDisk)
+        }
+        task.rev = onDisk + 1
+        writtenRev[task.id] = task.rev
+        var data = try SnapshotCoding.encoder().encode(task)
+        data.append(UInt8(ascii: "\n"))
         if FileManager.default.fileExists(atPath: file.path) {
             // O_APPEND:内核保证每次 write 原子追加到末尾,即便另一个
             // **进程**(worker 和菜单栏 App 都可能跑到 collect/落地)也在写。
