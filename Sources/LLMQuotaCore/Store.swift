@@ -324,6 +324,11 @@ public enum PlansStore {
             }
             out.plans[i].limits = merged
         }
+        // 新版本新增平台时，旧配置里没有对应 plan。只更新已有窗口会让它
+        // 永远缺席 dashboard，调度随后以「没有这个平台的用量数据」拒绝 runner。
+        // 新平台整条取模板默认；用户已有平台及其手填数字完全不动。
+        let existing = Set(out.plans.map(\.platform))
+        out.plans += tpl.plans.filter { !existing.contains($0.platform) }
         return out
     }
 

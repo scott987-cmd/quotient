@@ -141,6 +141,24 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertTrue(resume.contains("-c"))
     }
 
+    func testOxAlphaRunnerHasIndependentIdentityAndPinnedModel() {
+        let runner = OpenCodeRunner(platform: .openrouter)
+        let command = runner.command(prompt: "继续", cwd: "/tmp", session: .fresh)
+        XCTAssertEqual(runner.runnerID, "opencode.openrouter.code")
+        XCTAssertTrue(command.args.contains("openrouter/stealth/ox-alpha"))
+        XCTAssertTrue(RunnerRegistry.all.contains {
+            $0.runnerID == "opencode.openrouter.code" && $0.platform == .openrouter
+        })
+    }
+
+    func testOpenCodeCredentialCheckOnlyNeedsProviderEntry() throws {
+        let file = scratch.appendingPathComponent("opencode-auth.json")
+        try Data(#"{"openrouter":{"type":"api","key":"secret-not-read"}}"#.utf8)
+            .write(to: file)
+        XCTAssertTrue(OpenCodeCredentials.hasProvider("openrouter", file: file))
+        XCTAssertFalse(OpenCodeCredentials.hasProvider("gateway", file: file))
+    }
+
     func testReportedSessionIDIsNeverInvented() {
         let context = GraphSession.Context(
             taskID: "z", graphID: nil, capability: .coding,

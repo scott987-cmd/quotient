@@ -268,6 +268,11 @@ public enum AgentRoles {
                       note: "OpenCode 经本地网关使用火山 Coding Plan 的 GLM 5.3。"
                           + "具备仓库读写、工具调用和复杂编程能力，专注承担独立实现；"
                           + "测试分析与评审统一交给 MiniMax。"),
+            AgentRole(platform: .openrouter, title: "临时主力开发", maxRisk: .normal,
+                      maxTier: .complex, prefers: [.standard, .complex],
+                      note: "OpenCode 使用 OpenRouter 的 Ox Alpha 免费预览。"
+                          + "可接 Claude/Kimi 的复杂编码续作；预览期额度和可用性会变化，"
+                          + "敏感配置仍由架构师处理。"),
             AgentRole(platform: .gemini, title: "备用", maxRisk: .safe, prefers: []),
         ]
     }

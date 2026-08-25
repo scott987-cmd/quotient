@@ -358,6 +358,10 @@ public struct PlansConfig: Codable, Sendable {
                 platform: .volcark, planName: "火山方舟", currency: "CNY",
                 limits: [monthly(.billableTokens, hint: h)]
             ),
+            PlatformPlan(
+                platform: .openrouter, planName: "Ox Alpha 免费预览", currency: "USD",
+                pricing: Pricing(currency: "USD")
+            ),
         ])
     }
 }
@@ -921,6 +925,7 @@ public enum AgentIdentity {
         .glm:      "Claude Code · GLM",
         .deepseek: "Claude Code · DeepSeek",
         .volcark:  "opencode · 火山",
+        .openrouter: "opencode · Ox Alpha",
         .codex:    "Codex CLI",
         .qwen:     "Qwen Code",
         .kimi:     "Kimi Code",
@@ -936,6 +941,7 @@ public enum AgentIdentity {
         // 火山方舟现在有专属客户端了：opencode 经本地 LiteLLM 网关转过去。
         // 原来它挂在 claude 名下（Claude Code 改 BASE_URL 那种用法）。
         .volcark: "opencode",
+        .openrouter: "opencode",
     ]
 
     /// 干活的 agent 名。**GLM 要看本机实际能用的是哪个客户端。**

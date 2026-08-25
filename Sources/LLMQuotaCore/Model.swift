@@ -13,6 +13,7 @@ public enum Platform: String, Codable, CaseIterable, Sendable, Hashable {
     case minimax
     case deepseek
     case volcark
+    case openrouter
 
     public var displayName: String {
         switch self {
@@ -25,6 +26,7 @@ public enum Platform: String, Codable, CaseIterable, Sendable, Hashable {
         case .minimax: return "MiniMax"
         case .deepseek: return "DeepSeek"
         case .volcark: return "火山方舟"
+        case .openrouter: return "OpenRouter · Ox Alpha"
         }
     }
 
@@ -40,6 +42,7 @@ public enum Platform: String, Codable, CaseIterable, Sendable, Hashable {
         case .minimax: return "MMX"
         case .deepseek: return "DSK"
         case .volcark: return "ARK"
+        case .openrouter: return "OXA"
         }
     }
 
@@ -178,6 +181,8 @@ public enum ModelRouter {
         ("volc", .volcark),
         ("ark-code", .volcark),
         ("ep-", .volcark),
+        ("stealth/ox-alpha", .openrouter),
+        ("ox-alpha", .openrouter),
     ]
 
     /// 前缀没命中时再按子串找。只放足够独特、不会误伤的词。
@@ -191,6 +196,7 @@ public enum ModelRouter {
         ("qwen", .qwen),
         ("glm", .glm),
         ("gemini", .gemini),
+        ("ox-alpha", .openrouter),
     ]
 
     /// - Parameter fallback: 模型名为空或认不出来时，归给采集它的那个 CLI 自己的平台。

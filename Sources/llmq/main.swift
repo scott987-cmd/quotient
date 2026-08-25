@@ -895,6 +895,105 @@ func cmdWork(_ args: [String]) throws {
                 ? "  尚未合入主线，fan-out 会继续等待落地"
                 : "  已重新核对批量任务"))
 
+    case "handoff":
+        // 人工换负责人也必须走正式交接：保留提交、工作区入口和协作记录，
+        // 不能靠直接改 tasks.jsonl 把 owner 换掉（那会让下一棒从 main 重做）。
+        guard rest.count >= 2, let target = Platform(rawValue: rest[1]) else {
+            print("用法：llmq work handoff <任务id> <平台> [--base <提交>] [--reason <原因>]")
+            print("可选平台：" + Platform.allCases.map(\.rawValue).joined(separator: " "))
+            exit(2)
+        }
+        let allT = TaskStore.all()
+        let matches = allT.filter { $0.id == rest[0] || $0.id.hasPrefix(rest[0]) }
+        guard matches.count == 1, var t = matches.first else {
+            print(Ansi.red(matches.isEmpty ? "找不到任务 " + rest[0] : "任务前缀不唯一"))
+            exit(1)
+        }
+        guard t.state != .running else {
+            print(Ansi.red("任务正在运行，不能在进程中途换负责人")); exit(1)
+        }
+        let lane = TaskCapabilityLane.classify(t.prompt)
+        let targetRunners = RunnerRegistry.all.filter {
+            $0.platform == target && $0.canEdit && TaskCapabilityLane.accepts($0, lane: lane)
+        }
+        guard targetRunners.count == 1, let runner = targetRunners.first else {
+            print(Ansi.red(targetRunners.isEmpty
+                ? "\(target.displayName) 没有能接这类任务的执行器"
+                : "\(target.displayName) 有多个同类执行器，无法安全确定负责人"))
+            exit(1)
+        }
+        guard runner.isAvailable else {
+            print(Ansi.red("本机的 \(runner.binaryName) 或 \(target.displayName) 凭据不可用"))
+            exit(1)
+        }
+        func value(after option: String) -> String? {
+            guard let i = rest.firstIndex(of: option), i + 1 < rest.count else { return nil }
+            return rest[i + 1]
+        }
+        let source = t.ownerPlatform ?? t.platform
+        let requestedBase = value(after: "--base") ?? t.branch ?? "main"
+        let resolved = GitWorkspace.git(
+            ["rev-parse", "--verify", "\(requestedBase)^{commit}"], in: t.repo)
+        guard resolved.exitCode == 0 else {
+            print(Ansi.red("找不到交接基线 \(requestedBase)，拒绝从 main 猜着重做")); exit(1)
+        }
+        let baseCommit = resolved.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetBranch = "agent/\(target.rawValue)/\(t.id)"
+        let existingBranch = GitWorkspace.git(
+            ["rev-parse", "--verify", "\(targetBranch)^{commit}"], in: t.repo)
+        if existingBranch.exitCode != 0 {
+            let made = GitWorkspace.git(["branch", targetBranch, baseCommit], in: t.repo)
+            guard made.exitCode == 0 else {
+                print(Ansi.red("交接分支创建失败：" + (made.stderr.isEmpty
+                    ? made.stdout : made.stderr).prefix(200))); exit(1)
+            }
+        }
+        let targetHead = GitWorkspace.git(
+            ["rev-parse", "--verify", "\(targetBranch)^{commit}"], in: t.repo)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let files = GitWorkspace.git(
+            ["diff", "--name-only", "main...\(targetHead)"], in: t.repo)
+            .stdout.split(separator: "\n").map(String.init)
+        let reason = value(after: "--reason") ?? "人工指定由 \(target.displayName) 接手"
+
+        if let ask = t.pendingAsk {
+            AskStore.retract(taskID: t.id,
+                machine: ask.machineID.isEmpty ? Paths.machineID() : ask.machineID)
+        }
+        t.state = .queued
+        t.startedAt = nil
+        t.endedAt = nil
+        t.runnerPID = nil
+        t.pendingAsk = nil
+        t.answeredAsk = nil
+        t.platform = target
+        t.preferredPlatform = target
+        t.branch = targetBranch
+        t.triedPlatforms.removeAll { $0 == target }
+        _ = ContextAffinityPolicy.assign(
+            task: &t, runnerID: runner.runnerID, platform: target,
+            cause: .manualDisable)
+        t.handoff = Handoff(
+            fromPlatform: source ?? target, reason: reason,
+            touchedFiles: files, wipCommit: String(targetHead.prefix(12)), elapsedSeconds: 0)
+        t.note = "已从 \(source?.displayName ?? "原负责人") 交接给 \(target.displayName)"
+            + "，沿用提交 \(targetHead.prefix(8))"
+        try TaskStore.append(t)
+        publishCollaboration(CollaborationEvent(
+            project: t.repo, taskID: t.id, graphID: t.graphID,
+            lane: lane, senderRunnerID: "orchestrator", senderPlatform: source,
+            recipientRunnerID: runner.runnerID, kind: .handoff,
+            summary: reason, details: files.isEmpty ? nil : "已有成果：\(files.count) 个文件",
+            branch: targetBranch, commitSHA: targetHead, artifacts: files))
+        _ = TaskBoardStore.publishNow()
+        OfficeLog.record(OfficeEvent(
+            kind: .handoff, taskID: t.id, platform: source, toPlatform: target,
+            detail: reason, taskTitle: t.prompt))
+        OfficeLog.publish()
+        print(Ansi.green("已交接 ") + t.id + "  "
+            + (source?.displayName ?? "原负责人") + " → " + target.displayName)
+        print(Ansi.dim("  分支 \(targetBranch) · 基线 \(targetHead.prefix(12)) · 已有 \(files.count) 个文件"))
+
     case "retry":
         // **failed 必须有一条回得去的路。**
         //
@@ -1782,7 +1881,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|approve-sample|retry|discard|progress|attempts|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|approve-sample|handoff|retry|discard|progress|attempts|log]")
         exit(2)
     }
 }

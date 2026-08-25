@@ -143,6 +143,16 @@ public struct OpenCodeRunner: AgentRunner {
     /// 它能改文件。
     public let canEdit = true
 
+    /// OpenRouter 是远端 provider：机器上只有 opencode 二进制还不够，
+    /// 没有该 provider 的本机凭据就不能进入候选。否则共享配置会让另一台
+    /// 尚未登录 OpenRouter 的机器误领任务，跑一轮才报认证失败。
+    public var binaryPath: String? {
+        guard let executable = Proc.which(binaryName) else { return nil }
+        if platform == .openrouter,
+           !OpenCodeCredentials.hasProvider("openrouter") { return nil }
+        return executable
+    }
+
     public init(platform: Platform = .volcark) {
         self.platform = platform
     }
@@ -160,10 +170,30 @@ public struct OpenCodeRunner: AgentRunner {
         // 无头跑必须要它 —— 否则会停在权限提示上直到超时，
         // 这个坑在 Qwen 上踩过一次（consecutive_identical_tool_calls
         // 的根因就是编辑被审批拦住）。
-        if let m = RunnerConfigStore.load().model(for: platform), !m.isEmpty {
+        let configured = RunnerConfigStore.load().model(for: platform)
+        // Ox Alpha 是这个调度通道的身份，不跟随 opencode 的全局默认模型。
+        // 默认模型一变就会出现「账记在 Ox 名下，实际跑了别的模型」的假象。
+        let model = configured ?? (platform == .openrouter
+            ? "openrouter/stealth/ox-alpha" : nil)
+        if let m = model, !m.isEmpty {
             args += ["-m", m]
         }
         args.append(prompt)
-        return (Proc.which("opencode") ?? "/opt/homebrew/bin/opencode", args, [:])
+        return (binaryPath ?? "/opt/homebrew/bin/opencode", args, [:])
+    }
+}
+
+enum OpenCodeCredentials {
+    static var defaultFile: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".local/share/opencode/auth.json")
+    }
+
+    /// 只看 provider 键是否存在，不读取、更不输出密钥值。
+    static func hasProvider(_ provider: String, file: URL? = nil) -> Bool {
+        guard let data = try? Data(contentsOf: file ?? defaultFile),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return root[provider] != nil
     }
 }

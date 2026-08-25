@@ -1630,7 +1630,8 @@ public enum RunnerRegistry {
     /// GeminiRunner 的代码保留，哪天换成 Antigravity 或企业版把它加回来即可。
     public static let all: [AgentRunner] = [
         ClaudeRunner(), QwenRunner(), KimiRunner(), CodexRunner(),
-        OpenCodeRunner(), MiniMaxMediaRunner(), MiniMaxReviewRunner(),
+        OpenCodeRunner(), OpenCodeRunner(platform: .openrouter),
+        MiniMaxMediaRunner(), MiniMaxReviewRunner(),
         // 装了 ZCode 的机器才接得到 GLM 的活（binaryPath 会自己判）。
         ZcodeRunner()
     ]
@@ -1638,7 +1639,8 @@ public enum RunnerRegistry {
     /// 能做纯推理（分类、总结）的执行器，包含改不了文件的那些。
     /// MiniMax 排第一：它的额度最富余，而分类正是"高频、单次极小"的活。
     public static let reasoning: [AgentRunner] = [
-        MiniMaxRunner(), ClaudeRunner(), QwenRunner(), KimiRunner(), OpenCodeRunner()
+        MiniMaxRunner(), ClaudeRunner(), QwenRunner(), KimiRunner(), OpenCodeRunner(),
+        OpenCodeRunner(platform: .openrouter)
     ]
 
     /// 恢复持久化 owner。先认稳定 ID；旧 ID 不认识时，只在同平台、同能力泳道

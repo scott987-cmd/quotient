@@ -180,6 +180,7 @@ public enum PlatformCapability {
         .deepseek: .standard,
         .qwen: .standard,
         .volcark: .standard,
+        .openrouter: .complex,
         .gemini: .standard,
     ]
 

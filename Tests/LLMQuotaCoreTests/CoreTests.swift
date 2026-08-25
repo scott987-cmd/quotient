@@ -13,6 +13,8 @@ final class ModelRouterTests: XCTestCase {
         XCTAssertEqual(ModelRouter.platform(forModel: "doubao-pro-32k", fallback: .codex), .volcark)
         XCTAssertEqual(ModelRouter.platform(forModel: "qwen3-coder-plus", fallback: .claude), .qwen)
         XCTAssertEqual(ModelRouter.platform(forModel: "gpt-5.6-sol", fallback: .codex), .codex)
+        XCTAssertEqual(ModelRouter.platform(
+            forModel: "stealth/ox-alpha", fallback: .volcark), .openrouter)
     }
 
     func testUnknownModelFallsBackToHostPlatform() {
@@ -2543,6 +2545,16 @@ final class PlanReconcileTests: XCTestCase {
         let out = PlansStore.reconcileWindows(old)
         XCTAssertTrue(out.plan(for: .kimi)!.limits.contains { $0.id == "custom-2h" },
                       "用户自己加的窗口被删了，那是越权")
+    }
+
+    func testNewPlatformIsAddedToExistingPlans() {
+        let old = PlansConfig(plans: [
+            PlatformPlan(platform: .claude, planName: "已有 Claude 配置"),
+        ])
+        let out = PlansStore.reconcileWindows(old)
+        XCTAssertNotNil(out.plan(for: .openrouter),
+                        "升级后新增的平台必须进入旧配置，否则调度永远看不到它")
+        XCTAssertEqual(out.plan(for: .claude)?.planName, "已有 Claude 配置")
     }
 }
 
