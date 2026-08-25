@@ -588,6 +588,52 @@ extension ViewFeed {
             // 只承担低风险的只读扩展，不能再生成第二套操作流程。
             MenuEntry(page: "roadmap", title: "计划进度",
                       icon: "map", badge: nil, group: "看进展"),
+            MenuEntry(page: "collaboration", title: "Agent 协作",
+                      icon: "arrow.triangle.branch", badge: nil, group: "看进展"),
+        ], now: now)
+    }
+
+    /// Agent 协作页。只下发显式结论/问题/证据，不暴露模型隐藏推理。
+    /// 页面完全走通用渲染，已有客户端不需要发版。
+    public static func collaborationPage(now: Date = Date()) -> Page {
+        let all = CollaborationStore.all()
+        let pendingIDs = Set(CollaborationStore.unresolved().map(\.id))
+        guard !all.isEmpty else {
+            return Page(page: "collaboration", sections: [
+                Section(kind: "text", title: "还没有 Agent 协作记录", tone: .neutral,
+                        text: "任务开始、交接、发现和结果会自动出现在这里。")
+            ], now: now)
+        }
+        let recent = Array(all.suffix(30).reversed())
+        return Page(page: "collaboration", sections: [
+            Section(kind: "facts", title: "协作状态", facts: [
+                Fact(key: "待回应", value: "\(pendingIDs.count)",
+                     tone: pendingIDs.isEmpty ? .good : .warn),
+                Fact(key: "最近记录", value: "\(recent.count)", tone: .neutral),
+            ]),
+            Section(kind: "cards", title: "最近动态",
+                    note: "只显示 Agent 主动留下的结论、问题、证据和交接",
+                    cards: recent.map { event in
+                        let repo = URL(fileURLWithPath: event.project).lastPathComponent
+                        let pending = pendingIDs.contains(event.id)
+                        var detail = event.details ?? ""
+                        if let branch = event.branch { detail += "\n分支：" + branch }
+                        if let sha = event.commitSHA { detail += "\n提交：" + sha }
+                        if !event.artifacts.isEmpty {
+                            detail += "\n材料：" + event.artifacts.joined(separator: "、")
+                        }
+                        return Card(
+                            id: event.id,
+                            title: pending ? "待回应 · " + event.summary : event.summary,
+                            body: event.senderRunnerID
+                                + (event.recipientRunnerID.map { " → " + $0 } ?? " · 项目广播"),
+                            detail: detail.isEmpty ? nil : detail,
+                            tone: pending ? .warn : (event.kind == .result ? .good : .neutral),
+                            icon: pending ? "bubble.left.and.exclamationmark.bubble.right"
+                                : "arrow.triangle.branch",
+                            trailing: repo,
+                            images: event.artifacts.filter(EvidenceGate.isEvidenceFile))
+                    })
         ], now: now)
     }
 

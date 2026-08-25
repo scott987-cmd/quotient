@@ -79,6 +79,16 @@ final class MirrorServiceTests: XCTestCase {
         XCTAssertEqual(read(local, "taskboards/\(mid).json"), "local-old")
     }
 
+    func testCollaborationJournalsPushOwnAndPullPeer() {
+        put(local, "collaboration/\(mid).jsonl", "mine", age: 60)
+        put(cloud, "collaboration/machine-B.jsonl", "peer", age: 60)
+
+        _ = sync()
+        XCTAssertEqual(read(cloud, "collaboration/\(mid).jsonl"), "mine")
+        XCTAssertEqual(read(local, "collaboration/machine-B.jsonl"), "peer")
+        XCTAssertTrue(SharedLayout.dirs.contains("collaboration"))
+    }
+
     // MARK: - 根下单文件：只推
 
     func testRootFilesPushOnly() {

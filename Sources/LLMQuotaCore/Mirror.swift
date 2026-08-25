@@ -15,7 +15,7 @@ public enum SharedLayout {
         "inbox", "inbox/processed",
         "answers", "questions", "outbox",
         "config-intents", "config-intents/processed",
-        "releases",
+        "releases", "collaboration",
     ]
 
     public static func ensure(at root: URL) {
@@ -126,7 +126,7 @@ public enum MirrorService {
                                  // 来自**本机私有**的 jsonl → 两台机器互相覆盖,和当年
                                  // reviews.json 同病(对账 2026-08-23)。改成每机一份 +
                                  // 根上那份由各机合并后写,谁写都一样。
-                                 "office"]
+                                 "office", "collaboration"]
     static let rootPushFiles = ["dashboard.json", "office.json", "repos.json",
                                 "reviews.json"]
     /// 双向同步的目录。

@@ -1936,6 +1936,19 @@ func appendWorkAttempt(_ attempt: WorkAttempt) -> Bool {
     }
 }
 
+/// 协作账不阻断任务执行，但写失败必须显眼；静默丢掉交接信息会让下一棒
+/// 误以为前面什么都没发生，正是这个模块要消灭的浪费。
+@discardableResult
+func publishCollaboration(_ event: CollaborationEvent) -> Bool {
+    do {
+        try CollaborationStore.publish(event)
+        return true
+    } catch {
+        print(Ansi.red("  ⚠︎ Agent 协作记录失败：" + error.localizedDescription))
+        return false
+    }
+}
+
 func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
     // **修队头阻塞：不再只看队头。**
     //
@@ -2487,8 +2500,20 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         if let brief = TaskGraph.briefing(for: task, in: TaskStore.all()) {
             effectivePrompt += "\n\n" + brief
         }
+        // 原生会话负责同一个 Agent 的隐式上下文；协作账负责跨 Agent、跨进程、
+        // 跨机器的显式事实。两者叠加，不能拿一份大提示词冒充共享会话。
+        effectivePrompt += CollaborationStore.contract(
+            project: task.repo, taskID: task.id, graphID: task.graphID,
+            runnerID: pick.runner.runnerID)
         if let (ans, ask) = resumedAnswer {
             effectivePrompt += ans.briefing(for: ask)
+            publishCollaboration(CollaborationEvent(
+                id: "answer:" + ask.id, project: task.repo, taskID: task.id,
+                graphID: task.graphID, lane: TaskCapabilityLane.classify(task.prompt),
+                senderRunnerID: "human", recipientRunnerID: pick.runner.runnerID,
+                kind: .answer, summary: "用户已回答 Agent 的问题",
+                details: ans.answers.values.joined(separator: "\n"),
+                replyTo: "ask:" + ask.id))
         }
         // 提问契约只给「可能真需要澄清」的任务加。
         // trivial 是改文档改注释，本来就不该问，而且它的超时预算只有几分钟，
@@ -2584,6 +2609,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             headBefore: headBefore, headAfter: headBefore,
             timedOut: false, sessionSupport: pick.runner.sessionSupport,
             sessionAction: .from(session)))
+        publishCollaboration(CollaborationEvent(
+            id: attemptID + "-started", project: task.repo, taskID: task.id,
+            graphID: task.graphID, lane: TaskCapabilityLane.classify(task.prompt),
+            senderRunnerID: pick.runner.runnerID, senderPlatform: pick.platform,
+            kind: .started, summary: "开始执行：" + String(task.prompt.prefix(100)),
+            branch: ws.branch))
         var executionEnv = cmd.env
         executionEnv["LLMQ_TASK_ID"] = task.id
         executionEnv["LLMQ_WORKSPACE"] = ws.path
@@ -2771,6 +2802,14 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 try? TaskStore.append(task)
                 return .noPlatform
             }
+            publishCollaboration(CollaborationEvent(
+                id: "ask:" + ask.id,
+                project: task.repo, taskID: task.id, graphID: task.graphID,
+                lane: TaskCapabilityLane.classify(task.prompt),
+                senderRunnerID: pick.runner.runnerID, senderPlatform: pick.platform,
+                kind: .question, summary: ask.questions.first?.text ?? "需要补充信息",
+                details: ask.questions.dropFirst().map(\.text).joined(separator: "\n"),
+                branch: task.branch, commitSHA: stored.wipCommit))
             recordAttempt(.blocked, handoffReason: "等待用户答复")
             try? FileManager.default.removeItem(at: askFile)
             try? TaskStore.append(task)
@@ -2823,6 +2862,13 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 touchedFiles: touched,
                 wipCommit: wip,
                 elapsedSeconds: Int(elapsed))
+            publishCollaboration(CollaborationEvent(
+                project: task.repo, taskID: task.id, graphID: task.graphID,
+                lane: TaskCapabilityLane.classify(task.prompt),
+                senderRunnerID: pick.runner.runnerID, senderPlatform: pick.platform,
+                kind: .handoff, summary: failure.describe,
+                details: touched.isEmpty ? nil : "已改：" + touched.joined(separator: "、"),
+                branch: ws.branch, commitSHA: wip, artifacts: touched))
 
             let failureName: String
             switch failure {
@@ -3167,6 +3213,20 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         detail: task.note ?? (task.state == .done ? "干完了" : "没干成"),
         taskTitle: task.prompt))
     OfficeLog.publish()
+    let terminalRunner = task.ownerRunnerID ?? task.platform?.rawValue ?? "orchestrator"
+    let terminalSHA = task.branch.flatMap { branch in
+        let r = GitWorkspace.git(["rev-parse", branch], in: task.repo)
+        return r.exitCode == 0
+            ? r.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+    }
+    publishCollaboration(CollaborationEvent(
+        project: task.repo, taskID: task.id, graphID: task.graphID,
+        lane: TaskCapabilityLane.classify(task.prompt),
+        senderRunnerID: terminalRunner, senderPlatform: task.platform,
+        kind: .result,
+        summary: task.note ?? (task.state == .done ? "任务完成" : "任务未完成"),
+        details: task.outputs.isEmpty ? nil : task.outputs.suffix(8).joined(separator: "\n"),
+        branch: task.branch, commitSHA: terminalSHA))
     try TaskStore.append(task)
     Inbox.writeResult(for: task)   // 让手机端能看到结果
 
@@ -3573,6 +3633,7 @@ func cmdWorkLoop(_ args: [String]) throws {
             ViewFeed.publish(ViewFeed.blockedPage())
             ViewFeed.publish(RoadmapPage.page())
             ViewFeed.publish(ViewFeed.playbookPage())
+            ViewFeed.publish(ViewFeed.collaborationPage())
             ViewFeed.publishMenu(ViewFeed.menu())
             for inv in ViewFeed.pendingInvocations() {
                 // **试够了就别再试。** 一个必然失败的动作（比如合一条和 main
@@ -6220,6 +6281,7 @@ func usage() {
       llmq release publish     发新版给集群（签名）
       llmq update              拉取并安装新版（验签）
       llmq office              数字员工办公室的事件流
+      llmq collaboration ...   Agent 跨会话协作账 / MCP stdio
 
     \(Ansi.bold("典型流程"))
       llmq doctor              先看本机认出了哪些平台
@@ -6227,6 +6289,94 @@ func usage() {
       llmq install-agent       让它定时后台采集
       llmq report              随时查看
     """)
+}
+
+// MARK: - Agent 协作
+
+func cmdCollaboration(_ args: [String]) throws {
+    let sub = args.first ?? "list"
+    let rest = Array(args.dropFirst())
+    func option(_ name: String) -> String? {
+        guard let i = rest.firstIndex(of: name), i + 1 < rest.count else { return nil }
+        return rest[i + 1]
+    }
+    func options(_ name: String) -> [String] {
+        rest.indices.compactMap { i in
+            rest[i] == name && i + 1 < rest.count ? rest[i + 1] : nil
+        }
+    }
+    func need(_ name: String) throws -> String {
+        guard let value = option(name), !value.isEmpty else {
+            throw NSError(domain: "llmq collaboration", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "缺少 " + name])
+        }
+        return value
+    }
+
+    switch sub {
+    case "mcp":
+        CollaborationMCP.runStdio()
+    case "list":
+        let project = option("--project")
+        let events = project.map { path in
+            CollaborationStore.all().filter {
+                $0.project == CollaborationStore.normalizeProject(path)
+            }
+        } ?? CollaborationStore.all()
+        guard !events.isEmpty else { print(Ansi.dim("还没有协作记录。")); return }
+        let pending = Set(CollaborationStore.unresolved(project: project).map(\.id))
+        for event in events.suffix(50) {
+            let flag = pending.contains(event.id) ? Ansi.yellow("待回应") : event.kind.rawValue
+            let target = event.recipientRunnerID.map { " → " + $0 } ?? ""
+            print(Ansi.dim(Format.dateTime(event.createdAt)) + "  " + flag
+                + "  " + event.senderRunnerID + target + "  " + event.summary)
+            print(Ansi.dim("    " + event.id))
+        }
+    case "context":
+        let events = CollaborationStore.context(
+            project: try need("--project"), taskID: option("--task"),
+            graphID: option("--graph"), runnerID: try need("--runner"))
+        let data = try SnapshotCoding.prettyEncoder().encode(events)
+        print(String(decoding: data, as: UTF8.self))
+    case "publish":
+        let rawKind = try need("--kind")
+        guard let kind = CollaborationEvent.Kind(rawValue: rawKind) else {
+            throw NSError(domain: "llmq collaboration", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "未知 kind：" + rawKind])
+        }
+        let event = CollaborationEvent(
+            id: option("--id") ?? UUID().uuidString.lowercased(),
+            project: try need("--project"), taskID: option("--task"),
+            graphID: option("--graph"), senderRunnerID: try need("--sender"),
+            recipientRunnerID: option("--to"), kind: kind,
+            summary: try need("--summary"), details: option("--details"),
+            replyTo: option("--reply-to"), branch: option("--branch"),
+            commitSHA: option("--commit"), artifacts: options("--artifact"))
+        let stored = try CollaborationStore.publish(event)
+        print(Ansi.green("已记录协作事实 ") + stored.id)
+    case "ack":
+        let eventID = (rest.first?.hasPrefix("--") == false ? rest.first : nil)
+            ?? option("--event")
+        guard let eventID else {
+            throw NSError(domain: "llmq collaboration", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "缺少事件 ID"])
+        }
+        let event = try CollaborationStore.acknowledge(
+            eventID: eventID, project: try need("--project"),
+            taskID: option("--task"), senderRunnerID: try need("--sender"),
+            summary: option("--summary") ?? "已收到并纳入后续工作")
+        print(Ansi.green("已确认 ") + event.replyTo! + Ansi.dim("  " + event.id))
+    default:
+        print("""
+        llmq collaboration list [--project PATH]
+        llmq collaboration context --project PATH --runner ID [--task ID] [--graph ID]
+        llmq collaboration publish --project PATH --sender ID --kind KIND --summary TEXT
+            [--task ID] [--graph ID] [--to ID] [--reply-to ID]
+            [--details TEXT] [--branch NAME] [--commit SHA] [--artifact PATH ...]
+        llmq collaboration ack EVENT_ID --project PATH --sender ID [--task ID]
+        llmq collaboration mcp
+        """)
+    }
 }
 
 // MARK: - Entry
@@ -6334,6 +6484,7 @@ do {
         // now / board 不在列 —— 见 work loop 里「下发视图」那段的说明。
         let pages: [ViewFeed.Page] = [
             ViewFeed.reviewPage(), ViewFeed.playbookPage(),
+            ViewFeed.collaborationPage(),
         ]
         for p in pages where rest.first == nil || rest.first == p.page {
             _ = ViewFeed.publish(p)
@@ -6362,6 +6513,8 @@ do {
         try cmdPlaybook(rest)
     case "office":
         try cmdOffice(rest)
+    case "collaboration":
+        try cmdCollaboration(rest)
     case "release":
         try cmdRelease(rest)
     case "update":

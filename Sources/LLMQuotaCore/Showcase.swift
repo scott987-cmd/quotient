@@ -63,6 +63,7 @@ public enum Showcase {
 
             { _ = ViewFeed.publish(RoadmapPage.page()) },
             { _ = ViewFeed.publish(ViewFeed.playbookPage()) },
+            { _ = ViewFeed.publish(ViewFeed.collaborationPage()) },
             { _ = ViewFeed.publishMenu(ViewFeed.menu()) },
         ]
     }

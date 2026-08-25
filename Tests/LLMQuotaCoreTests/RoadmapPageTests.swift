@@ -45,7 +45,7 @@ final class RoadmapPageTests: XCTestCase {
 
     func testDynamicMenuOnlyContainsReadOnlyExtensions() {
         let pages = ViewFeed.menu().entries.map(\.page)
-        XCTAssertEqual(pages, ["roadmap"])
+        XCTAssertEqual(pages, ["roadmap", "collaboration"])
         XCTAssertFalse(pages.contains("review"))
         XCTAssertFalse(pages.contains("blocked"))
         XCTAssertFalse(pages.contains("playbook"))
