@@ -272,4 +272,39 @@ extension AutoLandTests {
         XCTAssertEqual(visual?.preferredPlatform, .minimax)
         XCTAssertTrue(visual?.prompt.contains("agent/qwen/t31") == true)
     }
+
+    func testOrdinaryMergeCannotBypassRejectedVisualVerdict() {
+        git(["checkout", "-b", "agent/qwen/t32"])
+        write("Feature.swift", "// visible behavior\n")
+        write("docs/evidence/t32-playtest.mov", "fake-video-bytes")
+        git(["add", "."]); git(["commit", "-m", "t32 视觉改动"])
+        git(["checkout", "main"])
+
+        var entry = RepoAlias(alias: "game", path: repo)
+        entry.qualityContract = "QUALITY.md"
+        try? RepoRegistry.save([entry])
+        let head = git(["rev-parse", "--short", "agent/qwen/t32"]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var rejected = WorkTask(
+            id: "eyes-reject",
+            prompt: "【看效果】分支 agent/qwen/t32 提交 \(head) 的视觉质量是否达标",
+            repo: repo)
+        rejected.origin = "visual-quality-review"
+        rejected.state = .done
+        rejected.outputs = ["**结论**：未达标"]
+
+        guard case .failure(let error) = Review.merge(
+            repo: repo, branch: "agent/qwen/t32", tasks: [doneTask("t32"), rejected])
+        else { return XCTFail("手机/CLI 的普通合入不得绕过视觉否决") }
+        XCTAssertTrue(error.localizedDescription.contains("未达标"))
+        XCTAssertFalse(git(["log", "--oneline", "main"]).stdout.contains("t32 视觉改动"))
+
+        // 变异钉：同一版视觉票改成批准，中央合入入口必须立即允许，不是把分支
+        // 或质量仓库一刀切永久锁死。
+        rejected.outputs = ["**结论**：达标"]
+        guard case .success = Review.merge(
+            repo: repo, branch: "agent/qwen/t32", tasks: [doneTask("t32"), rejected])
+        else { return XCTFail("批准票应通过同一个中央合入入口") }
+        XCTAssertTrue(git(["log", "--oneline", "main"]).stdout.contains("t32 视觉改动"))
+    }
 }

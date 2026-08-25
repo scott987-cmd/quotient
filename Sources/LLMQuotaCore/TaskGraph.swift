@@ -327,6 +327,12 @@ public enum TaskGraph {
                 }
             }
         }
+        // 视觉否决先把原实现任务重开，再让黄金样板闸看见它已经回到 queued；
+        // 顺序反过来会有一轮短暂把 fan-out 误放出去。
+        for task in VisualQualityGate.reconcileRemediation(Array(byID.values)) {
+            byID[task.id] = task
+            touched[task.id] = task
+        }
         // 生产质量闸和图依赖共用同一条“每轮对账”入口，避免新增一种 blocked
         // 却漏掉 retry / done / worker 启动等恢复路径。
         for task in GoldenSampleGate.reconcile(Array(byID.values)) {

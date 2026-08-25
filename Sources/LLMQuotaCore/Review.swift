@@ -817,7 +817,7 @@ public enum Review {
                 // 人工 `work review` 合入或 discard 之后这条自然消失。
                 continue
             }
-            switch merge(repo: repo, branch: item.branch, base: base) {
+            switch merge(repo: repo, branch: item.branch, base: base, tasks: tasks) {
             case .success:
                 // merge 内部已记 landedAt，这里不用再记。
                 outcomes.append(AutoLandOutcome(
@@ -882,12 +882,47 @@ public enum Review {
         return oldest?.branch == item.branch
     }
 
+    /// 质量契约对这次合入的硬阻断。nil 表示该层允许继续；它不替代构建验证。
+    public static func qualityLandingBlock(repo: String, branch: String,
+                                           base: String = "main",
+                                           tasks: [WorkTask] = TaskStore.all()) -> String? {
+        let want = URL(fileURLWithPath: repo).standardizedFileURL.path
+        guard RepoRegistry.all().contains(where: {
+            URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == want
+                && !($0.qualityContract ?? "").isEmpty
+        }) else { return nil }
+        let files = GitWorkspace.git(
+            ["diff", "--name-only", "\(base)...\(branch)"], in: repo).stdout
+            .split(separator: "\n").map(String.init)
+        guard EvidenceGate.changesVisibleBehavior(files) else { return nil }
+        let head = GitWorkspace.git(["rev-parse", "--short", branch], in: repo)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !head.isEmpty else { return "质量闸无法读取分支提交，禁止合入" }
+        switch VisualQualityGate.status(branch: branch, head: head, tasks: tasks) {
+        case .approved: return nil
+        case .missing: return "质量契约要求先逐帧验收截图/录屏；当前还没有视觉结论"
+        case .pending: return "多模态 Agent 正在逐帧验收；结论出来前不能合入"
+        case .rejected: return "多模态视觉验收判定未达标；已交回原 Agent 会话整改，不能合入"
+        }
+    }
+
     public static func merge(repo: String, branch: String, base: String = "main",
                              deleteBranch: Bool = true,
-                             verify: Bool = true) -> Result<String, NSError> {
+                             verify: Bool = true,
+                             allowQualityOverride: Bool = false,
+                             tasks: [WorkTask] = TaskStore.all()) -> Result<String, NSError> {
         // 合并会立刻改变待审集合 —— 缓存必须作废，否则同一轮里后面的
         // 调用点会拿着「这条还在待审」的旧清单再处理它一遍。
         defer { invalidateListCache() }
+        // 所有合入入口最终都经过这里。手机、CLI --auto、新增调用点不能再各自
+        // “记得”补一遍质量判断。人工强行翻案必须显式传 override；普通手机
+        // “合入”没有这个权限，避免一指把机器已经看出的画面缺陷推进 main。
+        if !allowQualityOverride,
+           let reason = qualityLandingBlock(repo: repo, branch: branch, base: base,
+                                            tasks: tasks) {
+            return .failure(NSError(domain: "Review", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "没合：" + reason]))
+        }
         if verify, let reg = RepoRegistry.all().first(where: {
             NSString(string: $0.localPath).expandingTildeInPath
                 == NSString(string: repo).expandingTildeInPath
@@ -1207,6 +1242,8 @@ extension Review {
         public var evidence: [String]
         /// 已经抽出来放进共享目录的图（文件名，在 `evidence/<id 去斜杠>/` 下）。
         public var evidenceFiles: [String] = []
+        /// 非空时服务端不提供普通“合入”动作，并直接把原因展示给人。
+        public var landingBlockReason: String? = nil
     }
 
     /// 手机上的验收结论。写进 `shared/verdicts/<repo>|<branch>.json`，
@@ -1486,7 +1523,9 @@ extension Review {
                     // 图真抽出来放到共享目录，不然手机上只有一行文件名。
                     evidenceFiles: extractEvidence(
                         repo: path, branch: item.branch, files: item.evidence,
-                        digestID: path + "|" + item.branch)))
+                        digestID: path + "|" + item.branch),
+                    landingBlockReason: qualityLandingBlock(
+                        repo: path, branch: item.branch)))
             }
         }
         // **按仓库合并，绝不整份覆盖。**

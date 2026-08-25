@@ -180,23 +180,13 @@ public enum GoldenSampleGate {
         guard context.requiresExperienceApproval else { return nil }
         if context.approvedAt != nil { return nil }
         guard let branch = source.branch else { return "黄金样板缺少可核对的质量分支" }
-        if VisualQualityGate.hasApproved(branch: branch, tasks: tasks) { return nil }
-        if hasRejectedVisualVerdict(branch: branch, tasks: tasks) {
+        switch VisualQualityGate.latestStatus(branch: branch, tasks: tasks) {
+        case .approved:
+            return nil
+        case .rejected:
             return "黄金样板的体验评审未达标，必须先整改样板"
-        }
-        return "黄金样板还没有通过体验质量评审"
-    }
-
-    private static func hasRejectedVisualVerdict(branch: String,
-                                                  tasks: [WorkTask]) -> Bool {
-        tasks.contains { task in
-            task.state == .done
-                && task.prompt.hasPrefix("【看效果】分支 \(branch) 提交 ")
-                && (task.outputs + [task.note ?? ""]).contains(where: {
-                    $0.components(separatedBy: .newlines).contains(where: {
-                        $0.contains("结论") && $0.contains("未达标")
-                    })
-                })
+        case .missing, .pending:
+            return "黄金样板还没有通过体验质量评审"
         }
     }
 

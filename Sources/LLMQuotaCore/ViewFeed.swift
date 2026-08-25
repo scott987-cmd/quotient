@@ -424,14 +424,16 @@ extension ViewFeed {
                     Card(id: d.repo + "|" + d.branch,
                          title: d.subject,
                          body: d.platform + " · " + "\(d.files.count) 个文件"
-                             + " · +\(d.insertions)/−\(d.deletions)",
+                             + " · +\(d.insertions)/−\(d.deletions)"
+                             + (d.landingBlockReason.map { " · " + $0 } ?? ""),
                          detail: d.prompt,
-                         tone: d.mergesCleanly ? .neutral : .warn,
-                         icon: d.mergesCleanly ? "checkmark.seal" : "exclamationmark.triangle",
+                         tone: d.mergesCleanly && d.landingBlockReason == nil ? .neutral : .warn,
+                         icon: d.mergesCleanly && d.landingBlockReason == nil
+                             ? "checkmark.seal" : "exclamationmark.triangle",
                          trailing: d.evidenceFiles.isEmpty ? nil
                              : "\(d.evidenceFiles.count) 张证据",
                          images: d.evidenceFiles,
-                         actions: d.mergesCleanly
+                         actions: d.mergesCleanly && d.landingBlockReason == nil
                              ? [Action(id: "review:merge:" + d.repo + "|" + d.branch,
                                        label: "合入", style: "primary"),
                                 Action(id: "review:discard:" + d.repo + "|" + d.branch,
@@ -669,14 +671,15 @@ extension ViewFeed {
                          title: d.subject,
                          body: d.platform + " · \(d.files.count) 个文件"
                              + " · +\(d.insertions)/−\(d.deletions)"
-                             + (d.mergesCleanly ? "" : " · 有冲突，要去电脑上处理"),
+                             + (d.mergesCleanly ? "" : " · 有冲突，要去电脑上处理")
+                             + (d.landingBlockReason.map { " · " + $0 } ?? ""),
                          detail: d.prompt,
                          tone: d.mergesCleanly ? .neutral : .warn,
                          icon: d.mergesCleanly ? "checkmark.seal" : "exclamationmark.triangle",
                          trailing: d.evidenceFiles.isEmpty ? "没交证据"
                              : "\(d.evidenceFiles.count) 张证据",
                          images: d.evidenceFiles,
-                         actions: (d.mergesCleanly
+                         actions: (d.mergesCleanly && d.landingBlockReason == nil
                              ? [Action(id: "review:merge:" + d.repo + "|" + d.branch,
                                        label: "合入", style: "primary")] : [])
                              + [Action(id: "review:discard:" + d.repo + "|" + d.branch,

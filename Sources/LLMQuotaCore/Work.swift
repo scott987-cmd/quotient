@@ -122,6 +122,12 @@ public struct WorkTask: Codable, Sendable {
     /// 黄金样板生产关系。nil = 旧任务/普通任务，不受阶段 1 的批量扩张闸影响。
     public var production: ProductionContext?
 
+    /// 最近一次把这条任务重新打开的视觉否决任务 ID。
+    ///
+    /// 视觉验收失败后必须让原任务、原 owner、原会话接着整改，而不是另造一条
+    /// 从零认识项目的任务。它也是对账幂等键：同一份否决只能重开一次。
+    public var visualRemediationReviewID: String?
+
     /// 跑到一半被打断过几次（worker 重启、进程被杀）。
     ///
     /// **打断和失败是两回事**，但原来的孤儿回收把两者合并成 `failed`，
@@ -208,6 +214,8 @@ public struct WorkTask: Codable, Sendable {
         runnerPID = try c.decodeIfPresent(Int32.self, forKey: .runnerPID)
         frozenBy = try c.decodeIfPresent(String.self, forKey: .frozenBy)
         production = try c.decodeIfPresent(ProductionContext.self, forKey: .production)
+        visualRemediationReviewID = try c.decodeIfPresent(
+            String.self, forKey: .visualRemediationReviewID)
         stepIndex = try c.decodeIfPresent(Int.self, forKey: .stepIndex)
         interruptedCount = try c.decodeIfPresent(Int.self, forKey: .interruptedCount)
     }

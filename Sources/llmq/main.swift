@@ -1631,7 +1631,9 @@ func cmdWork(_ args: [String]) throws {
         }
 
         if let i = rest.firstIndex(of: "--merge"), i + 1 < rest.count {
-            switch Review.merge(repo: repoPath, branch: rest[i + 1]) {
+            switch Review.merge(
+                repo: repoPath, branch: rest[i + 1],
+                allowQualityOverride: rest.contains("--override-quality")) {
             case .success:
                 print(Ansi.green("已合并 ") + rest[i + 1] + Ansi.dim("（分支和工作区已清理）"))
             case .failure(let e):
@@ -1686,20 +1688,25 @@ func cmdWork(_ args: [String]) throws {
                 exit(1)
             }
             print(Ansi.dim("验证命令：\(cmd)"))
-            var ok = 0, bad = 0
-            for it in cands {
-                print("\n" + Ansi.bold(it.branch) + Ansi.dim("  验证中…"))
-                switch Review.merge(repo: repoPath, branch: it.branch) {
-                case .success:
-                    // 不用手动记：Review.merge 内部已经把 landedAt 写回任务记录了。
-                    ok += 1
-                    print(Ansi.green("  ✓ 已落地"))
-                case .failure(let e):
-                    bad += 1
-                    print(Ansi.red("  ✗ " + e.localizedDescription))
+            // 不能自己再循环调用裸 merge。那条旧路径只验构建，绕过 agent 票、
+            // 视觉票、任务状态、重叠顺序和否决名单；名字叫 --auto，实际比
+            // 常驻自动落地少了大半安全条件。统一走唯一的 autoLand 策略。
+            let outcomes = Review.autoLand(
+                repo: repoPath, tasks: TaskStore.all(), maxPerCall: cands.count)
+            let ok = outcomes.filter(\.landed).count
+            for outcome in outcomes {
+                print((outcome.landed ? Ansi.green("  ✓ ") : Ansi.red("  ✗ "))
+                      + outcome.branch + Ansi.dim("  " + outcome.note))
+            }
+            if outcomes.isEmpty {
+                let reasons = Review.whyNotLanding(repo: repoPath)
+                for blocked in reasons.prefix(8) {
+                    print(Ansi.yellow("  等待 ") + blocked.branch
+                          + Ansi.dim("  " + blocked.reason))
                 }
             }
-            print("\n" + Ansi.bold("落地 \(ok) 份") + (bad > 0 ? Ansi.dim("，\(bad) 份没过，留着待查") : ""))
+            print("\n" + Ansi.bold("落地 \(ok) 份")
+                  + (ok < cands.count ? Ansi.dim("，其余仍受统一质量策略约束") : ""))
             return
         }
 
@@ -3440,9 +3447,9 @@ func cmdWorkLoop(_ args: [String]) throws {
         }
 
         // 黄金样板落地/质量票可能由后台落地线程完成，不一定经过 runOneTask
-        // 的收尾路径。每轮对账一次，样板一通过就自动放行 fan-out，并立刻
-        // 重发手机任务板；反过来，未通过的扩张也不会以 queued 伪装成快开工。
-        phase("黄金样板准入", 10) {
+        // 的收尾路径。每轮统一对账：视觉否决重开原会话，样板通过才放行
+        // fan-out，并立刻重发手机任务板。
+        phase("质量闭环", 10) {
             let updates = TaskGraph.reconcile(TaskStore.all())
             for task in updates { try? TaskStore.append(task) }
             if !updates.isEmpty { _ = TaskBoardStore.publishNow() }
