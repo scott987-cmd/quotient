@@ -431,8 +431,7 @@ extension ViewFeed {
                          tone: d.mergesCleanly && d.landingBlockReason == nil ? .neutral : .warn,
                          icon: d.mergesCleanly && d.landingBlockReason == nil
                              ? "checkmark.seal" : "exclamationmark.triangle",
-                         trailing: d.evidenceFiles.isEmpty ? nil
-                             : "\(d.evidenceFiles.count) 张证据",
+                         trailing: Review.evidenceSummary(d.evidenceFiles),
                          images: d.evidenceFiles,
                          actions: d.mergesCleanly && d.landingBlockReason == nil
                              ? [Action(id: "review:merge:" + d.repo + "|" + d.branch,
@@ -719,7 +718,7 @@ extension ViewFeed {
                          body: item.repoName + " · 已合入 main，等你看实际效果",
                          detail: "来源分支：\(item.branch)\n提交：\(item.mergeSHA)",
                          tone: .neutral, icon: "play.rectangle",
-                         trailing: "\(item.evidenceFiles.count) 份证据",
+                         trailing: Review.evidenceSummary(item.evidenceFiles),
                          images: item.evidenceFiles,
                          actions: [
                             Action(id: "milestone:approve:" + item.repo + "|" + item.mergeSHA,
@@ -746,8 +745,7 @@ extension ViewFeed {
                          detail: d.prompt,
                          tone: d.mergesCleanly ? .neutral : .warn,
                          icon: d.mergesCleanly ? "checkmark.seal" : "exclamationmark.triangle",
-                         trailing: d.evidenceFiles.isEmpty ? "没交证据"
-                             : "\(d.evidenceFiles.count) 张证据",
+                         trailing: Review.evidenceSummary(d.evidenceFiles) ?? "没交证据",
                          images: d.evidenceFiles,
                          actions: (d.mergesCleanly && d.landingBlockReason == nil
                              ? [Action(id: "review:merge:" + d.repo + "|" + d.branch,

@@ -62,6 +62,39 @@ final class WorkQueuePriorityTests: XCTestCase {
         XCTAssertTrue(Review.isVideoName("repo-branch__gameplay.m4v"))
     }
 
+    func testEvidenceSummaryCountsActualImagesAndVideosSeparately() {
+        XCTAssertEqual(Review.evidenceSummary([
+            "grip-idle.jpg", "grip-fire.jpg", "match.m4v",
+        ]), "2 张图片 · 1 个视频")
+        XCTAssertEqual(Review.evidenceSummary(["match.mov"]), "1 个视频")
+        XCTAssertNil(Review.evidenceSummary([]))
+    }
+
+    func testGripReviewPrioritizesHandCloseupsWithoutSacrificingVideo() {
+        let files = [
+            "face-front.png", "face-side.png", "grip-idle.png",
+            "grip-idle-hands-closeup.png", "grip-fire-hands-closeup.png",
+            "grip-reload-hands-closeup.png", "grip-reload-end-hands-closeup.png",
+            "infection-match.mov", "docs/evidence/test.log",
+        ]
+        XCTAssertEqual(Review.prioritizedEvidence(
+            files, context: "修复第一人称握枪 GripPose，并录制真实对局"), [
+                "grip-idle-hands-closeup.png",
+                "grip-fire-hands-closeup.png",
+                "grip-reload-hands-closeup.png",
+                "grip-reload-end-hands-closeup.png",
+                "infection-match.mov",
+            ])
+    }
+
+    func testEvidenceCacheKeyChangesWhenBranchHeadChanges() {
+        let old = Review.evidencePrefix(digestID: "/repo|agent/ox/task", revision: "abc123")
+        let new = Review.evidencePrefix(digestID: "/repo|agent/ox/task", revision: "def456")
+        XCTAssertNotEqual(old, new)
+        XCTAssertTrue(old.contains("abc123"))
+        XCTAssertTrue(new.contains("def456"))
+    }
+
     func testVisualTaskCannotReadArbitraryLocalImages() {
         let prompt = """
         【看效果】恶意输入

@@ -3867,6 +3867,33 @@ final class AuditFixTests2: XCTestCase {
         XCTAssertFalse(Review.list(repo: d.path, tasks: [s1, s2]).isEmpty,
                        "全部跑完之后才该能审")
     }
+
+    /// 普通任务的中途提交也只是检查点，不能在 agent 仍运行时催人验收。
+    func testRunningOrdinaryTaskIsExcludedFromReview() throws {
+        let d = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("rv-ordinary-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: d) }
+        for a in [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                  ["config", "user.name", "t"]] { _ = GitWorkspace.git(a, in: d.path) }
+        try Data("x".utf8).write(to: d.appendingPathComponent("a.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: d.path)
+        _ = GitWorkspace.git(["commit", "-qm", "init"], in: d.path)
+        _ = GitWorkspace.git(["checkout", "-qb", "agent/volcark/task1"], in: d.path)
+        try Data("y".utf8).write(to: d.appendingPathComponent("b.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: d.path)
+        _ = GitWorkspace.git(["commit", "-qm", "checkpoint"], in: d.path)
+        _ = GitWorkspace.git(["checkout", "-q", "main"], in: d.path)
+
+        var task = WorkTask(id: "task1", prompt: "p", repo: d.path)
+        task.state = .running
+        XCTAssertTrue(Review.list(repo: d.path, tasks: [task]).isEmpty,
+                      "运行中的普通任务不能把检查点当最终产出")
+
+        task.state = .done
+        XCTAssertFalse(Review.list(repo: d.path, tasks: [task]).isEmpty,
+                       "任务完成后才进入待审名单")
+    }
 }
 
 // MARK: - 图的落地闭环

@@ -216,13 +216,25 @@ public enum Review {
                 let gid = String(b.dropFirst("agent/graph/".count))
                 if unfinishedGraphs.contains(gid) { continue }
             }
-            guard let mb = mergeBase(repo: repo, base: base, branch: b) else { continue }
-            let stat = numstat(repo: repo, from: mb, to: b)
-            guard !stat.files.isEmpty else { continue }
 
             let parts = b.split(separator: "/")   // agent/<平台>/<任务id>
             let platform = parts.count >= 2 ? String(parts[1]) : "?"
             let taskID = parts.count >= 3 ? String(parts[2]) : ""
+
+            // **普通任务跑到一半也不能送审。**
+            //
+            // 图任务此前有终态闸，普通任务却没有。只要 agent 中途提交过一次，
+            // 分支就会立刻出现在手机上；人看到的是旧提交和旧证据，而同一个
+            // agent 其实还在继续改。2026-08-25 Flint 正在修握枪时就因此同时
+            // 出现了“等你验收”和“火山运行中”，把半成品当成了最终产出。
+            // failed 仍放行，便于人决定是否打捞；只有会继续变化的状态隐藏。
+            if let task = byID[taskID],
+               task.state == .queued || task.state == .running || task.state == .blocked {
+                continue
+            }
+            guard let mb = mergeBase(repo: repo, base: base, branch: b) else { continue }
+            let stat = numstat(repo: repo, from: mb, to: b)
+            guard !stat.files.isEmpty else { continue }
 
             let log = GitWorkspace.git(
                 ["log", "-1", "--format=%s%n%cI%n%h", b], in: repo).stdout
@@ -1347,6 +1359,69 @@ extension Review {
         return l.hasSuffix(".mp4") || l.hasSuffix(".mov") || l.hasSuffix(".m4v")
     }
 
+    static func isImageName(_ name: String) -> Bool {
+        let l = name.lowercased()
+        return l.hasSuffix(".png") || l.hasSuffix(".jpg")
+            || l.hasSuffix(".jpeg") || l.hasSuffix(".gif")
+    }
+
+    /// 给人看的媒体数量必须按**实际同步文件**分类型，不能把原始声明里的
+    /// 17 个路径写成“17 张图片”，而详情只展示成功抽出的 4 个媒体。
+    public static func evidenceSummary(_ files: [String]) -> String? {
+        guard !files.isEmpty else { return nil }
+        let videos = files.filter(isVideoName).count
+        let images = files.count - videos
+        if images > 0 && videos > 0 { return "\(images) 张图片 · \(videos) 个视频" }
+        if images > 0 { return "\(images) 张图片" }
+        return "\(videos) 个视频"
+    }
+
+    /// 从可能很长的证据清单里挑手机首屏最值得看的内容。
+    /// 图片和视频分别限额，避免“一段录屏占掉一张关键近景”的旧行为。
+    public static func prioritizedEvidence(_ files: [String], context: String?,
+                                           imageLimit: Int = 4,
+                                           videoLimit: Int = 1) -> [String] {
+        let text = (context ?? "").lowercased()
+        let gripContext = text.contains("握枪") || text.contains("持枪")
+            || text.contains("grip") || text.contains("hands")
+        let faceContext = text.contains("面部") || text.contains("眼睛")
+            || text.contains("face") || text.contains("eyes")
+
+        func score(_ path: String) -> Int {
+            let name = (path as NSString).lastPathComponent.lowercased()
+            let tokens = name.components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 3 }
+            var value = tokens.reduce(0) { $0 + (text.contains($1) ? 3 : 0) }
+            if gripContext {
+                if name.contains("grip") { value += 12 }
+                if name.contains("hands") { value += 8 }
+                if name.contains("closeup") { value += 4 }
+            }
+            if faceContext && name.contains("face") { value += 8 }
+            return value
+        }
+
+        func best(_ candidates: [String], limit: Int) -> [String] {
+            guard limit > 0 else { return [] }
+            return candidates.enumerated().sorted {
+                let lhs = score($0.element), rhs = score($1.element)
+                if lhs != rhs { return lhs > rhs }
+                return $0.offset < $1.offset
+            }.prefix(limit).map(\.element)
+        }
+
+        return best(files.filter(isImageName), limit: imageLimit)
+            + best(files.filter(isVideoName), limit: videoLimit)
+    }
+
+    /// 提交号必须进入媒体缓存键；否则同一分支更新图片后手机仍命中旧图。
+    static func evidencePrefix(digestID: String, revision: String) -> String {
+        let safe = digestID.replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "|", with: "-")
+        let cleanRevision = revision.filter { $0.isLetter || $0.isNumber }
+        return safe + "__" + (cleanRevision.isEmpty ? "" : cleanRevision + "__")
+    }
+
     /// 手机验收用统一的轻量容器名。原始录屏仍留在成果分支里，iCloud 只传
     /// 适合移动端的审阅副本；否则一段 58 秒录屏可达 27MB，首次打开 2.5 秒
     /// 下不完，客户端看起来就像“永远加载不出来”。
@@ -1356,27 +1431,41 @@ extension Review {
 
     static func extractEvidence(repo: String, branch: String,
                                 files: [String], digestID: String,
-                                limit: Int = 4) -> [String] {
+                                revision: String = "", context: String? = nil,
+                                imageLimit: Int = 4, videoLimit: Int = 1) -> [String] {
         // **平铺，不建子目录。** 镜像的目录推送只看平铺文件
         //（regularFiles 不递归），放进子目录的话一张都推不过去 ——
         // 实测抽出来 18 张，iCloud 里一张都没有。
         // 文件名带上分支标识，用 `__` 隔开。
-        let safe = digestID.replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "|", with: "-")
         let dir = evidenceDir
         let fm = FileManager.default
-        let prefix = safe + "__"
-        if let have = try? fm.contentsOfDirectory(atPath: dir.path) {
-            let mine = have.filter {
-                $0.hasPrefix(prefix) && (isVideoName($0) || $0.hasSuffix(".jpg"))
-            }
-            // 已经抽过就不重复干 —— 这个函数挂在 5 分钟一次的发布里。
-            if !mine.isEmpty { return mine.sorted() }
-        }
+        // 文件名带提交号：分支有新提交时，移动端缓存键和服务端抽取缓存同时
+        // 失效。旧实现只看分支名，第一次抽到的图会被永久复用。
+        let basePrefix = evidencePrefix(digestID: digestID, revision: "")
+        let prefix = evidencePrefix(digestID: digestID, revision: revision)
+        let selected = prioritizedEvidence(files, context: context,
+                                           imageLimit: imageLimit,
+                                           videoLimit: videoLimit)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
 
+        func expectedName(_ source: String) -> String {
+            let base = (source as NSString).lastPathComponent
+            if isVideoName(base) { return mobileVideoName(prefix: prefix, sourceName: base) }
+            return prefix + ((base as NSString).deletingPathExtension) + ".jpg"
+        }
+
+        let expected = selected.map(expectedName)
+        if let have = try? fm.contentsOfDirectory(atPath: dir.path),
+           expected.allSatisfy({ have.contains($0) }) {
+            // 清掉同一分支旧提交留下的媒体；当前提交的完整缓存直接复用。
+            for name in have where name.hasPrefix(basePrefix) && !expected.contains(name) {
+                try? fm.removeItem(at: dir.appendingPathComponent(name))
+            }
+            return expected
+        }
+
         var out: [String] = []
-        for f in files.prefix(limit) {
+        for f in selected {
             let base = (f as NSString).lastPathComponent
             // **录屏转成手机审阅副本，不把原片塞进 iCloud。**
             //
@@ -1445,7 +1534,13 @@ extension Review {
             try? fm.removeItem(at: raw)
             if conv.exitCode == 0 { out.append(jpg) }
         }
-        return out.sorted()
+        // 新提交已经抽完再删旧提交，避免转换期间让手机引用的上一版突然消失。
+        if let have = try? fm.contentsOfDirectory(atPath: dir.path) {
+            for name in have where name.hasPrefix(basePrefix) && !out.contains(name) {
+                try? fm.removeItem(at: dir.appendingPathComponent(name))
+            }
+        }
+        return out
     }
 
     /// **这条分支要不要过 agent 审核 —— 只准有这一个实现。**
@@ -1587,7 +1682,9 @@ extension Review {
                     // 图真抽出来放到共享目录，不然手机上只有一行文件名。
                     evidenceFiles: extractEvidence(
                         repo: path, branch: item.branch, files: item.evidence,
-                        digestID: path + "|" + item.branch),
+                        digestID: path + "|" + item.branch,
+                        revision: item.head,
+                        context: [item.subject, item.prompt ?? ""].joined(separator: "\n")),
                     landingBlockReason: qualityLandingBlock(
                         repo: path, branch: item.branch)))
             }
