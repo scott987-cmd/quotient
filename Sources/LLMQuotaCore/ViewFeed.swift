@@ -292,9 +292,10 @@ public enum ViewFeed {
             contentsOf: actionsDir.appendingPathComponent(".done"), encoding: .utf8))?
             .split(separator: "\n").map(String.init) ?? [])
         var out: [Invocation] = []
-        for n in names.sorted() where n.hasSuffix(".json") {
+        for n in names.sorted() where n.hasSuffix(".json") && !n.hasPrefix(".") {
             guard let inv = SafeDecode.json(
-                at: actionsDir.appendingPathComponent(n), as: Invocation.self)
+                at: actionsDir.appendingPathComponent(n), as: Invocation.self),
+                  !inv.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
             if done.contains(inv.key) { continue }
             out.append(inv)
