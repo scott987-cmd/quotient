@@ -47,6 +47,40 @@ final class ArchitectReviewTests: XCTestCase {
                       "同一个负面结论只能生成一次架构复核")
     }
 
+    func testQuotaFailedArchitectReviewIsRequeuedInsteadOfDeadlocking() throws {
+        let review = mergeReview(id: "quota1", verdict: "不合入")
+        var architect = try XCTUnwrap(ArchitectReview.reconcile([review]).only)
+        architect.state = .failed
+        architect.platform = .claude
+        architect.ownerPlatform = .claude
+        architect.ownerRunnerID = "claude.code"
+        architect.triedPlatforms = [.claude]
+        architect.startedAt = Date(timeIntervalSince1970: 10)
+        architect.endedAt = Date(timeIntervalSince1970: 20)
+        architect.note = "Claude：退出码 1：You've hit your session limit · resets 5:50pm"
+
+        let retried = try XCTUnwrap(
+            ArchitectReview.reconcile([review, architect]).only)
+        XCTAssertEqual(retried.id, architect.id, "应恢复原复核任务，不能再造重复任务")
+        XCTAssertEqual(retried.state, .queued)
+        XCTAssertTrue(retried.triedPlatforms.isEmpty,
+                      "额度失败不是能力失败，恢复后 Claude 仍应可在冷却结束后承接")
+        XCTAssertNil(retried.startedAt)
+        XCTAssertNil(retried.endedAt)
+        XCTAssertEqual(retried.preferredPlatform, .claude)
+    }
+
+    func testArchitectPromptDoesNotCopyUnboundedSourceHistory() throws {
+        var review = mergeReview(id: "large1", verdict: "不合入")
+        review.prompt += "\n" + String(repeating: "历史视觉整改与完整报告。", count: 20_000)
+
+        let architect = try XCTUnwrap(ArchitectReview.reconcile([review]).only)
+        XCTAssertLessThan(architect.prompt.count, 20_000,
+                          "架构复核不能复制整条累积历史，避免上下文和 token 失控")
+        XCTAssertTrue(architect.prompt.contains("agent/kimi/work"))
+        XCTAssertTrue(architect.prompt.contains("abc123"))
+    }
+
     func testManualArchitectReviewIntakePrefersClaude() throws {
         let outcome = try TaskIntake.enqueue(
             prompt: "【架构复核】检查状态机并发风险", repo: "/tmp/x",

@@ -26,11 +26,40 @@ public enum ArchitectReview {
     }
 
     public static func reconcile(_ tasks: [WorkTask]) -> [WorkTask] {
-        var known = Set(tasks.compactMap(\.origin))
+        let existingByOrigin = Dictionary(
+            tasks.compactMap { task in task.origin.map { ($0, task) } },
+            uniquingKeysWith: { _, newer in newer })
+        var known = Set(existingByOrigin.keys)
         var made: [WorkTask] = []
-        for review in tasks where isNegative(review) {
+        for review in tasks {
             let origin = originPrefix + review.id
+            // 平台额度/认证/环境故障不是复核结论。旧逻辑把失败任务也放进
+            // `known`，同时 `decision` 又把它视为 pending，最终形成永久死锁：
+            // 原分支一直“等架构复核”，复核却永远不会再入队。
+            // 只恢复能被冷却分类器明确识别的平台故障；真正的 agent 失败仍
+            // 保持终态，避免坏提示词无限烧额度。
+            if let existing = existingByOrigin[origin],
+               existing.state == .failed,
+               CooldownLedger.classify(existing.note ?? "") != nil {
+                var retry = existing
+                retry.state = .queued
+                retry.startedAt = nil
+                retry.endedAt = nil
+                retry.exitCode = nil
+                retry.runnerPID = nil
+                retry.triedPlatforms = []
+                retry.platform = nil
+                retry.preferredPlatform = .claude
+                retry.note = "架构师平台故障已进入冷却；保留原复核任务，冷却结束后续跑"
+                made.append(retry)
+                continue
+            }
             guard !known.contains(origin) else { continue }
+            // `isNegative` 对 merge review 会读取完整 EVAL 报告。先用 origin
+            // 去重再判负面，避免每 30 秒把所有历史报告重新从 git/磁盘读一遍。
+            // 现场 tasks.jsonl 已有数百条评审，这个顺序错误足以让 10 秒质量
+            // 闭环看门狗超时，真正的新视觉否决反而没有机会重开原任务。
+            guard isNegative(review) else { continue }
             var task = WorkTask(
                 id: "a" + String(review.id.prefix(7)).lowercased(),
                 prompt: prompt(for: review), repo: review.repo)
@@ -84,11 +113,17 @@ public enum ArchitectReview {
 
     private static func prompt(for review: WorkTask) -> String {
         let material = String(reviewText(review).prefix(12_000))
+        // 原评审提示词会嵌入来源任务，而视觉整改又会把上一轮报告追加到来源
+        // 任务。若这里原样复制，复核提示会按轮次膨胀；现场一条已经超过
+        // 70 万字符。架构师只需要任务身份、分支/提交和负面证据，前 4000
+        // 字足以保留这些稳定字段，完整改动仍应直接从仓库核查。
+        let original = String(review.prompt.prefix(4_000))
         return """
         【架构复核】MiniMax 评审任务 \(review.id) 的负面结论是否成立。
 
         原任务：
-        \(review.prompt)
+        \(original)
+        \(review.prompt.count > original.count ? "\n（来源任务历史已截断；请以仓库、分支和提交为准，不要依赖累积提示词。）" : "")
 
         MiniMax 的结论和证据：
         \(material.isEmpty ? "（没有可读结论材料；不得据此推翻拒绝）" : material)
