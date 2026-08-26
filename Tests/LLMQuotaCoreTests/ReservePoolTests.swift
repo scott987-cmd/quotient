@@ -86,6 +86,14 @@ final class CooldownClassifyTests: XCTestCase {
             + "purchase extra usage or upgrade your plan"), .quotaExhausted,
             "Kimi 的原话没有 429，但 refreshed in the next cycle 是明说打满了")
     }
+
+    /// Claude Code 2.1.246 的会话窗口耗尽原文。2026-08-26 因未识别这句，
+    /// 调度器在 11 分钟内连续派了三次必然失败的架构复核。
+    func testClaudeSessionLimitIsCaught() {
+        XCTAssertEqual(CooldownLedger.classify(
+            "You've hit your session limit · resets 5:50pm (Asia/Shanghai)"),
+            .quotaExhausted)
+    }
 }
 
 extension CooldownClassifyTests {

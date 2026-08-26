@@ -223,6 +223,7 @@ public enum CooldownLedger {
         // 不会冒出「购买额外用量」这种话。
         let unambiguous = ["rate limit exceeded", "quota exhausted",
                            "you've reached your usage limit",
+                           "you've hit your session limit",
                            "refreshed in the next cycle", "upgrade your plan",
                            "purchase extra usage", "已达到 5 小时的使用上限"]
         if unambiguous.contains(where: { t.contains($0) }) { return .quotaExhausted }
@@ -301,6 +302,36 @@ extension CooldownLedger {
                     if d <= now { comps.year! += 1; d = cal.date(from: comps) ?? d }
                     if d > now, d.timeIntervalSince(now) < 40 * 86400 { return d }
                 }
+            }
+        }
+
+        // Claude Code 2.1.246："resets 5:50pm (Asia/Shanghai)"。
+        // 日期省略时按报错所带时区取“今天”；若该时刻已过，则取次日。
+        let localClock = #"resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*\(([^)]+)\)"#
+        if let regex = try? NSRegularExpression(pattern: localClock,
+                                                 options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let hourRange = Range(match.range(at: 1), in: text),
+           let minuteRange = Range(match.range(at: 2), in: text),
+           let meridiemRange = Range(match.range(at: 3), in: text),
+           let zoneRange = Range(match.range(at: 4), in: text),
+           let rawHour = Int(text[hourRange]),
+           let minute = Int(text[minuteRange]),
+           (1...12).contains(rawHour), (0...59).contains(minute),
+           let zone = TimeZone(identifier: String(text[zoneRange])) {
+            let meridiem = text[meridiemRange].lowercased()
+            let hour = (rawHour % 12) + (meridiem == "pm" ? 12 : 0)
+            var localCalendar = Calendar(identifier: .gregorian)
+            localCalendar.timeZone = zone
+            var components = localCalendar.dateComponents([.year, .month, .day], from: now)
+            components.hour = hour
+            components.minute = minute
+            components.second = 0
+            if var reset = localCalendar.date(from: components) {
+                if reset <= now {
+                    reset = localCalendar.date(byAdding: .day, value: 1, to: reset) ?? reset
+                }
+                if reset > now, reset.timeIntervalSince(now) < 40 * 86400 { return reset }
             }
         }
         return nil

@@ -100,4 +100,12 @@ final class ResetTimeParseTests: XCTestCase {
                                                    now: now), "过去的时间不能采信")
         XCTAssertNil(CooldownLedger.parseResetTime("没有时间的普通报错", now: now))
     }
+
+    /// Claude Code 2.1.246 的本地时区重置格式。
+    func testParsesClaudeLocalResetTime() {
+        let now = ISO8601DateFormatter().date(from: "2026-08-26T07:08:00Z")!
+        let d = CooldownLedger.parseResetTime(
+            "You've hit your session limit · resets 5:50pm (Asia/Shanghai)", now: now)
+        XCTAssertEqual(d.map(ISO8601DateFormatter().string), "2026-08-26T09:50:00Z")
+    }
 }
