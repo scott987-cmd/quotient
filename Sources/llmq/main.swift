@@ -2063,7 +2063,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     // 「没人能接」的照旧标 blocked（顺手也不再堵队了）。
     // 家务先行:扫过期的验收残留;磁盘见底就别派了 —— 派了也只会失败。
     // 2026-08-21 晚磁盘 99% 时整条流水线无声烂掉,没有一层说「磁盘满了」。
-    let hk = Housekeeping.roundCheck()
+    let hk = Housekeeping.roundCheck(performMaintenance: !dryRun)
     if let n = hk.note, !quiet { print(Ansi.yellow("  家务 ") + n) }
     if hk.skipDispatch {
         return noteIdle(IdleReason.explain(

@@ -22,4 +22,28 @@ final class MenuBarAliveTests: XCTestCase {
         XCTAssertFalse(r.skipDispatch && r.note == nil,
                        "拦下派活就必须说清为什么")
     }
+
+    func testReadOnlyRoundCheckDoesNotDeleteOrphanEvidence() throws {
+        let original = Paths.appSupportOverride
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("llmq-housekeeping-\(UUID().uuidString)")
+        Paths.appSupportOverride = root
+        defer {
+            Paths.appSupportOverride = original
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let orphan = Review.evidenceDir.appendingPathComponent("orphan.png")
+        try FileManager.default.createDirectory(
+            at: Review.evidenceDir, withIntermediateDirectories: true)
+        try Data("evidence".utf8).write(to: orphan)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -3600)],
+            ofItemAtPath: orphan.path)
+
+        _ = Housekeeping.roundCheck(performMaintenance: false)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: orphan.path),
+                      "--dry-run 的只读家务不得删除证据")
+    }
 }
