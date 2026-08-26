@@ -2566,56 +2566,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         }
         task.branch = ws.branch
 
-        // 接力说明只追加文件清单和中断原因，**不贴 diff** ——
-        // 工作区就在 agent 眼前，让它自己看比塞进提示词便宜得多。
-        var effectivePrompt = VisualQualityGate.compactRemediationPrompt(task.prompt)
-            + ((handoff ?? task.handoff)?.briefing() ?? "")
-        // 仓库地图：每个任务都是全新 worktree，agent 一律从零认路。
-        // 更硬的是 MiniMax 这种只能文本进出的执行器 —— 不塞进提示词它就看不见，
-        // Greed 那六份评审全写「材料不足」就是这么来的。
-        //
-        // 两种情况不贴：
-        // - 接力任务：briefing 里已经有文件清单，再来一份是浪费
-        // - trivial：那种活的描述里已经点名了文件和行号（「第 34 行的 foo 补注释」），
-        //   地图一个字都用不上，而 LLMQuotaBar 的地图有 7k token
-        if handoff == nil, task.handoff == nil, task.profile?.tier != .trivial {
-            effectivePrompt += RepoMap.briefing(repo: ws.path)
-        }
-        // 产品事实（AGENTS.md）：让每个 agent 知道自己在给什么产品干活、
-        // 什么不能动。地图管「去哪找」，这份管「别碰什么」——
-        // 不注入的话这份知识只存在于老板脑子里，agent 只能临场猜。
-        // 老板（2026-08-20）：「让不同的 agent 不知道自己在干啥」说的就是这个。
-        // 接力任务也要：换了平台的 agent 更不知道铁律。
-        effectivePrompt += ProductBrief.briefing(repo: ws.path, registeredRepo: task.repo)
-        // 证据条款（事前）：干活的 agent 在同一次执行里自己交证据，
-        // 别等落地闸发现缺图再另派一个从零认路的 agent 去补 ——
-        // 老板（2026-08-20）：「尽量让一个任务在一个 agent 内完成工作」。
-        effectivePrompt += EvidenceGate.inlineClause(repoPath: task.repo,
-                                                     prompt: task.prompt)
-        effectivePrompt += WorkProgressContract.clause()
-        // 图内节点要知道自己在整件事里的位置。
-        //
-        // 换了平台的 agent 对前面发生了什么一无所知 —— 这正是「上下文丢失」
-        // 在图这一层的样子。而跨厂商的两个 CLI **不可能共享会话**，
-        // 能交接的只有磁盘上的产物，所以这段必须显式拼进提示词。
-        if let brief = TaskGraph.briefing(for: task, in: TaskStore.all()) {
-            effectivePrompt += "\n\n" + brief
-        }
-        // 原生会话负责同一个 Agent 的隐式上下文；协作账负责跨 Agent、跨进程、
-        // 跨机器的显式事实。两者叠加，不能拿一份大提示词冒充共享会话。
-        effectivePrompt += CollaborationStore.contract(
-            project: task.repo, taskID: task.id, graphID: task.graphID,
-            runnerID: pick.runner.runnerID)
-        if let (ans, ask) = resumedAnswer {
-            effectivePrompt += ans.briefing(for: ask)
-            publishCollaboration(CollaborationEvent(
-                id: "answer:" + ask.id, project: task.repo, taskID: task.id,
-                graphID: task.graphID, lane: TaskCapabilityLane.classify(task.prompt),
-                senderRunnerID: "human", recipientRunnerID: pick.runner.runnerID,
-                kind: .answer, summary: "用户已回答 Agent 的问题",
-                details: ans.answers.values.joined(separator: "\n"),
-                replyTo: "ask:" + ask.id))
-        }
         // 提问契约只给「可能真需要澄清」的任务加。
         // trivial 是改文档改注释，本来就不该问，而且它的超时预算只有几分钟，
         // 多一段契约反而挤占正事。已经问满轮次的也不再给口子。
@@ -2624,7 +2574,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let mayAsk = Ask.Policy.mayAsk(task.profile)
             && task.askRounds < Ask.Policy.maxRounds
             && resumedAnswer == nil
-        if mayAsk { effectivePrompt += AskContract.clause(askFile: askFile.path) }
         // 会话跟随「稳定工作区 × Runner × 能力泳道」。同一个 Agent 在同一项目
         // 接新任务时继续已有上下文；不同 Agent/项目/泳道互不串线。
         let sessionContext = GraphSession.Context(
@@ -2637,6 +2586,54 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let session = GraphSession.mode(
             context: sessionContext, support: pick.runner.sessionSupport,
             workspace: ws.path)
+
+        // 提示词统一由 ContextPackBuilder 装配（Context Graph 阶段 1 收口）：
+        // RepoMap、ProductBrief、任务图位置、协作账和固定条款全部进同一个
+        // 预算与优先级模型。这里不允许任何模块再往尾部自行追加无预算内容；
+        // 各段为什么被选中，见 manifest（ContextTelemetry 台账）。
+        let allTasks = TaskStore.all()
+        let pack = ContextPackBuilder.build(.init(
+            task: task, allTasks: allTasks, events: nil,
+            runnerID: pick.runner.runnerID, platform: pick.platform,
+            canReadFiles: pick.runner.canEdit,
+            workspacePath: ws.path, handoff: handoff ?? task.handoff,
+            resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
+            mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,
+            tier: task.profile?.tier,
+            sessionAction: WorkAttempt.SessionAction.from(session).rawValue))
+        if let refusalReason = pack.refusedReason {
+            // 文本型 Runner 的关键材料装不进预算：派发前拒绝，
+            // 不让它烧一轮额度产「材料不足」的报告（设计 6.3 硬规则）。
+            attempts.append("\(pick.platform.displayName)：上下文装不进系统注入预算，"
+                + "派发前拒绝 —— \(refusalReason)")
+            appendWorkAttempt(WorkAttempt(
+                taskID: task.id, runnerID: pick.runner.runnerID,
+                platform: pick.platform, taskTier: task.profile?.tier,
+                startedAt: Date(), endedAt: Date(), outcome: .failed,
+                failureKind: "insufficientContextCapability",
+                workspacePrepared: true, timedOut: false,
+                sessionSupport: pick.runner.sessionSupport))
+            idx += 1
+            continue
+        }
+        var effectivePrompt = pack.text
+        ContextTelemetry.record(pack.manifest)
+        print(Ansi.dim(String(format: "  上下文包 %d 字符（上限 %d；纳入 %d 项，折叠 %d 项，删减 %d 项）",
+            pack.manifest.totalCharacters, ContextPackBuilder.defaultBudget,
+            pack.manifest.includedFactIDs.count,
+            pack.manifest.referencedFactIDs.count,
+            pack.manifest.droppedFacts.count)))
+        // 答复本身已由 builder 作为用户材料拼进提示词；这里只把「人已经回答」
+        // 落成协作事实，让跨机器的账面看见问题被关闭。
+        if let (ans, ask) = resumedAnswer {
+            publishCollaboration(CollaborationEvent(
+                id: "answer:" + ask.id, project: task.repo, taskID: task.id,
+                graphID: task.graphID, lane: TaskCapabilityLane.classify(task.prompt),
+                senderRunnerID: "human", recipientRunnerID: pick.runner.runnerID,
+                kind: .answer, summary: "用户已回答 Agent 的问题",
+                details: ans.answers.values.joined(separator: "\n"),
+                replyTo: "ask:" + ask.id))
+        }
         switch session {
         case .resume(let id):
             print(Ansi.dim("  已请求恢复会话 " + String(id.prefix(8))))

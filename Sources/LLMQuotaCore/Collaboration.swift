@@ -282,18 +282,28 @@ public enum CollaborationStore {
     }
 
     /// 即使当前还没有历史，也告诉 Agent 如何给下一棒留下结构化信息。
-    public static func contract(project: String, taskID: String? = nil,
-                                graphID: String? = nil, runnerID: String) -> String {
+    /// 只给「怎么留下结构化事实」的固定条款。briefing 部分由
+    /// ContextPackBuilder 按预算和优先级单独装配，两者在这里分家；
+    /// `contract` 继续返回完整拼接，旧调用点行为不变。
+    public static func conventionClause(project: String, taskID: String? = nil,
+                                        graphID: String? = nil,
+                                        runnerID: String) -> String {
         var command = "llmq collaboration publish --project "
             + shellQuote(normalizeProject(project))
             + " --sender " + shellQuote(runnerID)
         if let taskID { command += " --task " + shellQuote(taskID) }
         if let graphID { command += " --graph " + shellQuote(graphID) }
         command += " --kind finding --summary '替换成一句可执行结论'"
-        return briefing(project: project, taskID: taskID, graphID: graphID, runnerID: runnerID)
-            + "\n\n【协作约定】遇到会影响下一棒的发现、决定、问题或检查点时，"
+        return "\n\n【协作约定】遇到会影响下一棒的发现、决定、问题或检查点时，"
             + "请用以下命令留下结构化事实；不要写隐藏推理。若环境已配置 MCP，"
             + "也可调用 collaboration_publish。\n" + command
+    }
+
+    public static func contract(project: String, taskID: String? = nil,
+                                graphID: String? = nil, runnerID: String) -> String {
+        return briefing(project: project, taskID: taskID, graphID: graphID, runnerID: runnerID)
+            + conventionClause(project: project, taskID: taskID,
+                               graphID: graphID, runnerID: runnerID)
     }
 
     private static func error(_ code: Int, _ message: String) -> NSError {
@@ -303,7 +313,10 @@ public enum CollaborationStore {
 
     /// 显式 answer/ack 关闭所引用事件；同任务更晚的终态 result 也会关闭此前
     /// 的交接/发现，避免任务已经收工，协作页还永久挂着“待回应”。
-    private static func resolvedIDs(in events: [CollaborationEvent]) -> Set<String> {
+    ///
+    /// 「一个事件算不算已解决」只能有一套判据 —— ContextProjection 也用
+    /// 这份；两处各写一份迟早分叉（这个形状本项目踩过不止一次）。
+    static func resolvedIDs(in events: [CollaborationEvent]) -> Set<String> {
         var resolved = Set(events.compactMap { event -> String? in
             guard event.kind == .answer || event.kind == .ack else { return nil }
             return event.replyTo
