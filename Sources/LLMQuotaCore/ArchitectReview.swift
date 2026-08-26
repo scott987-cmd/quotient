@@ -18,8 +18,14 @@ public enum ArchitectReview {
         }) else { return .missing }
         guard task.state == .done else { return .pending }
         let text = reviewText(task)
-        guard let line = text.components(separatedBy: .newlines)
-            .first(where: { $0.contains("结论") }) else { return .pending }
+        // 架构师常先写“## 架构复核结论”标题，再在报告末尾回显契约行。
+        // 旧逻辑拿第一个含“结论”的行，标题既不是维持也不是推翻，于是把
+        // 已完成报告永久判成 pending，视觉否决永远交不回原实现 owner。
+        // 契约要求最后一行二选一；从尾部找带明确动作的结论也能避开正文讨论。
+        guard let line = text.components(separatedBy: .newlines).last(where: {
+            $0.contains("结论")
+                && ($0.contains("推翻拒绝") || $0.contains("维持拒绝"))
+        }) else { return .pending }
         if line.contains("推翻拒绝") { return .overturn }
         if line.contains("维持拒绝") { return .uphold }
         return .pending

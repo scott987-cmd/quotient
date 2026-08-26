@@ -179,6 +179,32 @@ final class ArchitectReviewTests: XCTestCase {
         XCTAssertEqual(reopened.state, .queued)
     }
 
+    func testArchitectDecisionIgnoresHeadingBeforeFinalVerdict() throws {
+        let branch = "agent/openrouter/source"
+        let review = visualReview(id: "heading", branch: branch, head: "abc123")
+        var architect = try XCTUnwrap(ArchitectReview.reconcile([review]).only)
+        architect.state = .done
+        architect.outputs = [
+            "## 架构复核结论",
+            "逐项核验后，负面视觉证据成立。",
+            "**结论**：维持拒绝",
+        ]
+
+        XCTAssertEqual(ArchitectReview.decision(
+            for: review, tasks: [review, architect]), .uphold,
+            "报告标题不能吞掉后面的最终契约结论")
+
+        var source = WorkTask(id: "source", prompt: "继续角色整改", repo: "/tmp/x")
+        source.branch = branch
+        source.state = .done
+        source.ownerPlatform = .openrouter
+        source.ownerRunnerID = "opencode.openrouter.code"
+        let reopened = try XCTUnwrap(VisualQualityGate.reconcileRemediation(
+            [source, review, architect]).only)
+        XCTAssertEqual(reopened.state, .queued)
+        XCTAssertEqual(reopened.ownerRunnerID, "opencode.openrouter.code")
+    }
+
     func testArchitectReviewUsesClaudeDispatcherAndNoOtherRunner() throws {
         var roles = AgentRoles.defaults()
         roles.removeAll { $0.platform == .claude }
