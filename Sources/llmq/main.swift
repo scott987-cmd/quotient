@@ -2566,56 +2566,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         }
         task.branch = ws.branch
 
-        // 接力说明只追加文件清单和中断原因，**不贴 diff** ——
-        // 工作区就在 agent 眼前，让它自己看比塞进提示词便宜得多。
-        var effectivePrompt = VisualQualityGate.compactRemediationPrompt(task.prompt)
-            + ((handoff ?? task.handoff)?.briefing() ?? "")
-        // 仓库地图：每个任务都是全新 worktree，agent 一律从零认路。
-        // 更硬的是 MiniMax 这种只能文本进出的执行器 —— 不塞进提示词它就看不见，
-        // Greed 那六份评审全写「材料不足」就是这么来的。
-        //
-        // 两种情况不贴：
-        // - 接力任务：briefing 里已经有文件清单，再来一份是浪费
-        // - trivial：那种活的描述里已经点名了文件和行号（「第 34 行的 foo 补注释」），
-        //   地图一个字都用不上，而 LLMQuotaBar 的地图有 7k token
-        if handoff == nil, task.handoff == nil, task.profile?.tier != .trivial {
-            effectivePrompt += RepoMap.briefing(repo: ws.path)
-        }
-        // 产品事实（AGENTS.md）：让每个 agent 知道自己在给什么产品干活、
-        // 什么不能动。地图管「去哪找」，这份管「别碰什么」——
-        // 不注入的话这份知识只存在于老板脑子里，agent 只能临场猜。
-        // 老板（2026-08-20）：「让不同的 agent 不知道自己在干啥」说的就是这个。
-        // 接力任务也要：换了平台的 agent 更不知道铁律。
-        effectivePrompt += ProductBrief.briefing(repo: ws.path, registeredRepo: task.repo)
-        // 证据条款（事前）：干活的 agent 在同一次执行里自己交证据，
-        // 别等落地闸发现缺图再另派一个从零认路的 agent 去补 ——
-        // 老板（2026-08-20）：「尽量让一个任务在一个 agent 内完成工作」。
-        effectivePrompt += EvidenceGate.inlineClause(repoPath: task.repo,
-                                                     prompt: task.prompt)
-        effectivePrompt += WorkProgressContract.clause()
-        // 图内节点要知道自己在整件事里的位置。
-        //
-        // 换了平台的 agent 对前面发生了什么一无所知 —— 这正是「上下文丢失」
-        // 在图这一层的样子。而跨厂商的两个 CLI **不可能共享会话**，
-        // 能交接的只有磁盘上的产物，所以这段必须显式拼进提示词。
-        if let brief = TaskGraph.briefing(for: task, in: TaskStore.all()) {
-            effectivePrompt += "\n\n" + brief
-        }
-        // 原生会话负责同一个 Agent 的隐式上下文；协作账负责跨 Agent、跨进程、
-        // 跨机器的显式事实。两者叠加，不能拿一份大提示词冒充共享会话。
-        effectivePrompt += CollaborationStore.contract(
-            project: task.repo, taskID: task.id, graphID: task.graphID,
-            runnerID: pick.runner.runnerID)
-        if let (ans, ask) = resumedAnswer {
-            effectivePrompt += ans.briefing(for: ask)
-            publishCollaboration(CollaborationEvent(
-                id: "answer:" + ask.id, project: task.repo, taskID: task.id,
-                graphID: task.graphID, lane: TaskCapabilityLane.classify(task.prompt),
-                senderRunnerID: "human", recipientRunnerID: pick.runner.runnerID,
-                kind: .answer, summary: "用户已回答 Agent 的问题",
-                details: ans.answers.values.joined(separator: "\n"),
-                replyTo: "ask:" + ask.id))
-        }
         // 提问契约只给「可能真需要澄清」的任务加。
         // trivial 是改文档改注释，本来就不该问，而且它的超时预算只有几分钟，
         // 多一段契约反而挤占正事。已经问满轮次的也不再给口子。
@@ -2624,7 +2574,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let mayAsk = Ask.Policy.mayAsk(task.profile)
             && task.askRounds < Ask.Policy.maxRounds
             && resumedAnswer == nil
-        if mayAsk { effectivePrompt += AskContract.clause(askFile: askFile.path) }
         // 会话跟随「稳定工作区 × Runner × 能力泳道」。同一个 Agent 在同一项目
         // 接新任务时继续已有上下文；不同 Agent/项目/泳道互不串线。
         let sessionContext = GraphSession.Context(
@@ -2637,6 +2586,69 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let session = GraphSession.mode(
             context: sessionContext, support: pick.runner.sessionSupport,
             workspace: ws.path)
+
+        // 提示词由选择层裁决（发布保险丝）：新 pack 始终构建并记账，实际
+        // 派发哪份由灰度名单决定 —— 默认影子模式继续用旧拼装
+        // （LegacyContextPromptBuilder），只有白名单里的已登记仓库才真正
+        // 切换；refusal 也只有在 active 模式才允许阻断候选。
+        let allTasks = TaskStore.all()
+        let outcome = ContextDispatchPrompt.build(
+            request: .init(
+                task: task, allTasks: allTasks, events: nil,
+                runnerID: pick.runner.runnerID, platform: pick.platform,
+                canReadFiles: pick.runner.canReadFiles,
+                workspacePath: ws.path, handoff: handoff ?? task.handoff,
+                resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
+                mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,
+                tier: task.profile?.tier,
+                sessionAction: WorkAttempt.SessionAction.from(session).rawValue),
+            legacy: { LegacyContextPromptBuilder.build(
+                task: task, allTasks: allTasks, runnerID: pick.runner.runnerID,
+                workspacePath: ws.path, handoff: handoff ?? task.handoff,
+                resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
+                mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil) })
+        let effectivePrompt = outcome.prompt
+        // 台账每次构建恰好记一笔，且必须发生在拒绝分支之前 —— 拒绝的
+        // manifest 不进台账，context miss 和拒绝率就永远统计不出来。
+        ContextTelemetry.record(outcome.manifest)
+        if outcome.refused {
+            // active 模式下文本型 Runner 的关键材料装不进预算：派发前拒绝，
+            // 不让它烧一轮额度产「材料不足」的报告（设计 6.3 硬规则）。
+            let refusalReason = outcome.pack.refusedReason ?? "unknown"
+            attempts.append("\(pick.platform.displayName)：上下文装不进系统注入预算，"
+                + "派发前拒绝 —— \(refusalReason)")
+            appendWorkAttempt(WorkAttempt(
+                taskID: task.id, runnerID: pick.runner.runnerID,
+                platform: pick.platform, taskTier: task.profile?.tier,
+                startedAt: Date(), endedAt: Date(), outcome: .failed,
+                failureKind: "insufficientContextCapability",
+                workspacePrepared: true, timedOut: false,
+                sessionSupport: pick.runner.sessionSupport))
+            idx += 1
+            continue
+        }
+        if outcome.mode == .shadow {
+            print(Ansi.dim(String(format:
+                "  灰度影子：实际派发旧拼装；新包 %d 字符仅记录对比",
+                outcome.manifest.totalCharacters)))
+        } else {
+            print(Ansi.dim(String(format: "  上下文包 %d 字符（上限 %d；纳入 %d 项，折叠 %d 项，删减 %d 项）",
+                outcome.pack.manifest.totalCharacters, ContextPackBuilder.defaultBudget,
+                outcome.pack.manifest.includedFactIDs.count,
+                outcome.pack.manifest.referencedFactIDs.count,
+                outcome.pack.manifest.droppedFacts.count)))
+        }
+        // 答复本身已由 builder 作为用户材料拼进提示词；这里只把「人已经回答」
+        // 落成协作事实，让跨机器的账面看见问题被关闭。
+        if let (ans, ask) = resumedAnswer {
+            publishCollaboration(CollaborationEvent(
+                id: "answer:" + ask.id, project: task.repo, taskID: task.id,
+                graphID: task.graphID, lane: TaskCapabilityLane.classify(task.prompt),
+                senderRunnerID: "human", recipientRunnerID: pick.runner.runnerID,
+                kind: .answer, summary: "用户已回答 Agent 的问题",
+                details: ans.answers.values.joined(separator: "\n"),
+                replyTo: "ask:" + ask.id))
+        }
         switch session {
         case .resume(let id):
             print(Ansi.dim("  已请求恢复会话 " + String(id.prefix(8))))
@@ -4053,6 +4065,89 @@ func cmdRunner(_ args: [String]) throws {
     default:
         print("用法：llmq runner [list|set]")
         exit(2)
+    }
+}
+
+/// llmq context-pack rollout —— 新上下文包的灰度开关。
+///
+/// 默认影子模式：新包只记录不生效，所有仓库照旧用旧拼装派发。
+/// 只有这里显式点名的**已登记**仓库才真正切换；改名单即时生效，
+/// 不需要发版。名单存共享配置，坏配置一律当影子处理。
+func cmdContextPack(_ args: [String]) throws {
+    guard args.first == "rollout" else {
+        print("""
+        llmq context-pack rollout list
+            看现在哪些仓库启用了新上下文包
+        llmq context-pack rollout enable <仓库别名>
+            让这个已登记的仓库开始用新上下文包（按预算装配、超限先删地图）
+        llmq context-pack rollout disable <仓库别名>
+            让它退回影子模式（继续记录新包作对比，但派发走旧拼装）
+        """)
+        return
+    }
+    let sub = Array(args.dropFirst())
+    switch (sub.first, sub.count) {
+    case ("list", 1):
+        let config = ContextPackRollout.load()
+        // 名单里的别名可能已经从登记表删掉了 —— 调度上它们 fail-closed
+        // 不生效，界面上也绝不能说成「已启用」，单独提示被忽略。
+        let (valid, ignored) = ContextPackRollout.partitionEnabled(
+            config.enabledAliases, registry: RepoRegistry.all())
+        let repos = RepoRegistry.all()
+        if repos.isEmpty && valid.isEmpty {
+            print("还没有登记任何仓库，也没有启用任何新上下文包。")
+            print(Ansi.dim("一切照旧：所有任务都用旧提示词派发。"))
+            return
+        }
+        if valid.isEmpty {
+            print("当前没有仓库启用新上下文包 —— 全部任务照旧用旧提示词派发，"
+                + "系统只在后台记录新包的样子作对比。")
+        } else {
+            print(Ansi.bold("已启用新上下文包的仓库"))
+            for alias in valid.sorted() {
+                print("  " + Ansi.green(alias))
+            }
+        }
+        if !ignored.isEmpty {
+            print()
+            print(Ansi.yellow("配置中有已忽略的未知仓库："
+                + ignored.sorted().joined(separator: "、")))
+            print(Ansi.dim("这些名字不在登记表里，不生效。清理可用："
+                + "llmq context-pack rollout disable <别名>"))
+        }
+        let unlisted = repos.filter { !valid.contains($0.alias) }
+        if !unlisted.isEmpty {
+            print()
+            print(Ansi.dim("仍在影子模式的登记仓库：" +
+                unlisted.map(\.alias).sorted().joined(separator: "、")))
+        }
+    case ("enable", 2):
+        let alias = sub[1]
+        guard RepoRegistry.all().contains(where: { $0.alias == alias }) else {
+            print("没有叫「\(alias)」的仓库。先看已登记的仓库：llmq repo list")
+            exit(2)
+        }
+        var config = ContextPackRollout.load()
+        guard !config.enabledAliases.contains(alias) else {
+            print(Ansi.yellow("\(alias) 已经在用新上下文包了。"))
+            return
+        }
+        config.enabledAliases.append(alias)
+        try ContextPackRollout.save(config)
+        print(Ansi.green("已启用 ") + alias + Ansi.dim("  从下一次派活开始生效"))
+    case ("disable", 2):
+        let alias = sub[1]
+        var config = ContextPackRollout.load()
+        guard config.enabledAliases.contains(alias) else {
+            print(Ansi.yellow("\(alias) 本来就没启用，无需关闭。"))
+            return
+        }
+        config.enabledAliases.removeAll { $0 == alias }
+        try ContextPackRollout.save(config)
+        print(Ansi.green("已退回影子模式 ") + alias
+            + Ansi.dim("  派发恢复旧提示词，新包继续在后台记录对比"))
+    default:
+        try cmdContextPack([])
     }
 }
 
@@ -6549,6 +6644,8 @@ do {
         try cmdMachines()
     case "repo":
         try cmdRepo(rest)
+    case "context-pack":
+        try cmdContextPack(rest)
     case "runner":
         try cmdRunner(rest)
     case "work":
