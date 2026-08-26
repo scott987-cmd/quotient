@@ -105,7 +105,15 @@ public struct ContextProjection: Sendable {
     /// 与当前任务相关的其余事实。排序规则是设计 6.2 的硬要求：
     /// **同任务 > 同图 > 项目广播，时间只是同级内的最后条件** ——
     /// 一条一小时前的定向问题比一条刚刚发生的无关检查点更重要。
+    ///
+    /// 可见性与 `CollaborationStore.context` 是同一套语义：
+    /// 项目广播、明确发给当前 Runner 的、以及当前 Runner 自己发出的才可见 ——
+    /// 发给别人的私有事实进别人的包，不进这里的。
+    ///
+    /// 已被 answer/ack 关闭的 question/handoff 不再返回（它们的使命结束了，
+    /// 重新携带只会白占核心预算）；decision/finding 保留「最新有效」语义。
     public func scopedFacts(taskID: String?, graphID: String?,
+                            recipientRunnerID: String,
                             limit: Int = 40) -> [CollaborationEvent] {
         func rank(_ e: CollaborationEvent) -> Int {
             if taskID != nil && e.taskID == taskID { return 0 }
@@ -113,8 +121,18 @@ public struct ContextProjection: Sendable {
             if e.taskID == nil && e.graphID == nil { return 2 }
             return 3
         }
+        func visible(_ e: CollaborationEvent) -> Bool {
+            e.recipientRunnerID == nil || e.recipientRunnerID == recipientRunnerID
+                || e.senderRunnerID == recipientRunnerID
+        }
         return events
-            .filter { $0.kind != .started && $0.kind != .ack }
+            .filter { $0.kind != .started && $0.kind != .ack && $0.kind != .answer }
+            .filter { event in
+                guard resolvedEventIDs.contains(event.id),
+                      event.kind == .question || event.kind == .handoff else { return true }
+                return false
+            }
+            .filter { visible($0) }
             .filter { rank($0) < 3 }
             .sorted {
                 let ra = rank($0), rb = rank($1)

@@ -2595,7 +2595,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
         let pack = ContextPackBuilder.build(.init(
             task: task, allTasks: allTasks, events: nil,
             runnerID: pick.runner.runnerID, platform: pick.platform,
-            canReadFiles: pick.runner.canEdit,
+            canReadFiles: pick.runner.canReadFiles,
             workspacePath: ws.path, handoff: handoff ?? task.handoff,
             resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
             mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,

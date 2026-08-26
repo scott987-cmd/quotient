@@ -350,8 +350,145 @@ final class ContextPackTests: XCTestCase {
         XCTAssertEqual(first.unresolvedEvents(recipientRunnerID: "claude.code").map(\.id),
                        ["q-late"])
         // 时间只是最后的排序条件：一小时前的定向问题必须排在更新的无关检查点前面。
-        let ranked = first.scopedFacts(taskID: "t1", graphID: nil)
+        let ranked = first.scopedFacts(taskID: "t1", graphID: nil,
+                                       recipientRunnerID: "claude.code")
         XCTAssertEqual(ranked.first?.id, "q-late")
+        // 收件人过滤：发给 Claude 的私有事实不能出现在别人的投影里。
+        let oxView = first.scopedFacts(taskID: "t1", graphID: nil,
+                                       recipientRunnerID: "opencode.openrouter.code")
+        XCTAssertFalse(oxView.contains { $0.id == "q-late" },
+            "scopedFacts 必须按收件人可见性过滤")
         XCTAssertEqual(first.visualFacts(sourceTaskID: "t1").first?.observation, "观察甲")
+    }
+
+    // MARK: - 架构复核修复（2026-08-26 三项）
+
+    /// 修复 1：明确发给别的 Runner 的私有事实不得进入 Ox 的包。
+    func testPrivateFactsAddressedToOtherRunnersNeverEnterThePack() throws {
+        try publishEvent(id: "priv-q", project: repoA, taskID: "t1",
+                         sender: "kimi.code", to: "claude.code",
+                         kind: .question, summary: "PRIV-只发给Claude的私有事实")
+        try publishEvent(id: "priv-f", project: repoA, taskID: "t1",
+                         sender: "kimi.code", to: "claude.code",
+                         kind: .finding, summary: "PRIV-只给Claude的发现")
+        let source = task("t1", prompt: "修 A 产品的导出按钮", repo: repoA)
+
+        let ox = build(task: source, all: [source],
+                       runnerID: "opencode.openrouter.code",
+                       platform: .openrouter, canReadFiles: true)
+        XCTAssertFalse(ox.text.contains("PRIV-"),
+            "发给别人的私有事实泄漏进了 Ox 的提示词")
+        XCTAssertFalse(ox.manifest.includedFactIDs.contains("priv-q"))
+        XCTAssertFalse(ox.manifest.includedFactIDs.contains("priv-f"))
+
+        // 发送者本人仍然看得见自己的线程（与 CollaborationStore.context 同语义）。
+        let kimi = build(task: source, all: [source], runnerID: "kimi.code",
+                         platform: .kimi, canReadFiles: true)
+        XCTAssertTrue(kimi.text.contains("PRIV-"), "发送者自己的事实被误藏了")
+    }
+
+    /// 修复 1：已解决的 question/handoff 不应重新占核心事实预算。
+    func testResolvedQuestionsAndHandoffsDoNotReenterCoreBudget() throws {
+        try publishEvent(id: "q-done", project: repoA, taskID: "t1",
+                         sender: "kimi.code", to: "opencode.openrouter.code",
+                         kind: .question, summary: "DONEQ-已经回答过的问题")
+        _ = try CollaborationStore.publish(CollaborationEvent(
+            id: "a-done", project: repoA.path, taskID: "t1",
+            senderRunnerID: "human", recipientRunnerID: "opencode.openrouter.code",
+            kind: .answer, summary: "已答复，按方案 A 走",
+            replyTo: "q-done"))
+        var source = task("t1", prompt: "继续干活", repo: repoA)
+        source.handoff = Handoff(fromPlatform: .qwen, reason: "超时",
+                                 touchedFiles: [], wipCommit: nil, elapsedSeconds: 60)
+
+        let pack = build(task: source, all: [source],
+                         runnerID: "opencode.openrouter.code",
+                         platform: .openrouter, canReadFiles: true)
+        XCTAssertFalse(pack.text.contains("DONEQ-"),
+            "已被回答关闭的问题不应再进包占预算")
+    }
+
+    // MARK: - 修复 2：产品硬约束的预算行为
+
+    private func giveRepoBigAgents(_ repo: URL, characters: Int) {
+        let sentence = "铁律：不许删除导出按钮，不许绕过验收闸门。"
+        let body = "# 产品 A\n\n"
+            + String(repeating: sentence, count: max(1, characters / sentence.count))
+        try? body.write(to: repo.appendingPathComponent("AGENTS.md"),
+                        atomically: true, encoding: .utf8)
+    }
+
+    /// 装不下时：能读文件的 Runner 折叠为 AGENTS.md/QUALITY 路径引用，
+    /// 不硬塞半截硬约束。
+    func testProductConstraintsFoldToPathReferenceForFileReaders() throws {
+        giveRepoBigAgents(repoA, characters: 2_000)
+        let source = task("t1", prompt: "修 A 产品", repo: repoA)
+        let pack = build(task: source, all: [source], runnerID: "claude.code",
+                         platform: .claude, canReadFiles: true, budget: 1_500)
+
+        XCTAssertNil(pack.refusedReason)
+        XCTAssertFalse(pack.text.contains("不许删除导出按钮"),
+            "装不下时应折叠为引用，而不是截断硬塞半截约束")
+        XCTAssertTrue(pack.text.contains("AGENTS.md"), "折叠必须指路到文件")
+        XCTAssertLessThanOrEqual(pack.manifest.totalCharacters, 1_500)
+    }
+
+    /// 装不下时：文本型 Runner 读不了文件，缺硬约束还派发等于瞎干 —— 拒绝。
+    func testTextRunnerIsRefusedWhenProductConstraintsCannotFit() throws {
+        giveRepoBigAgents(repoA, characters: 2_000)
+        let source = task("t1", prompt: "修 A 产品", repo: repoA)
+        let pack = build(task: source, all: [source], runnerID: "minimax.text",
+                         platform: .minimax, canReadFiles: false, budget: 1_500)
+
+        XCTAssertNotNil(pack.refusedReason,
+            "文本型 Runner 缺产品硬约束必须在派发前拒绝")
+        XCTAssertTrue(pack.refusedReason?.hasPrefix("insufficientContextCapability") == true)
+    }
+
+    /// 预算不变量扫描：任何档位下 totalCharacters（含截断提示文字）
+    /// 都不得超过 budget；装不下就走折叠或拒绝。
+    func testTotalCharactersNeverExceedBudgetAcrossTightSweep() throws {
+        // 截断算术的直接断言：结果必须恰好占满分配额（含提示文字），
+        // 否则 totalCharacters 会悄悄越过 budget。
+        let clipped = ContextPackBuilder.clippedWithNotice(
+            String(repeating: "x", count: 6_000), 5_000)
+        XCTAssertEqual(clipped.count, 5_000,
+            "截断结果连提示文字一起必须恰好等于分配额")
+        XCTAssertFalse(clipped.hasSuffix("x"))
+
+        giveRepoBigAgents(repoA, characters: 8_000)   // 触发 ceiling 截断提示
+        stuffRepo(repoA, files: 30)
+        let review = visualReview(id: "revs", repo: repoA, observation: "观察甲乙丙丁")
+        var source = task("t1", prompt: "修复握枪动作", repo: repoA)
+        source.visualRemediationReviewID = "revs"
+
+        for budget in [650, 700, 750, 800, 900, 1_000, 1_300, 1_600, 2_000, 5_000, 24_000] {
+            for (runner, files) in [("claude.code", true), ("minimax.text", false)] {
+                let pack = build(task: source, all: [source, review],
+                                 runnerID: runner, platform: .claude,
+                                 canReadFiles: files, budget: budget)
+                if pack.refused {
+                    continue   // 拒绝路径不产出正文，是合法出口
+                }
+                XCTAssertLessThanOrEqual(
+                    pack.manifest.totalCharacters, budget,
+                    "budget=\(budget) runner=\(runner) 时注入量突破硬预算："
+                        + "\(pack.manifest.totalCharacters)")
+            }
+        }
+    }
+
+    // MARK: - 修复 3：canReadFiles 是显式能力
+
+    func testRunnerFileReadingCapabilityIsExplicitNotBorrowedFromCanEdit() {
+        // 纯文本进出的执行器读不了本地文件 —— 不能拿 canEdit 冒充。
+        XCTAssertFalse(MiniMaxReviewRunner().canReadFiles)
+        XCTAssertFalse(MiniMaxRunner().canReadFiles)
+        XCTAssertFalse(MiniMaxMediaRunner().canReadFiles)
+        // 编码执行器默认能读文件。
+        XCTAssertTrue(ClaudeRunner().canReadFiles)
+        XCTAssertTrue(QwenRunner().canReadFiles)
+        XCTAssertTrue(KimiRunner().canReadFiles)
+        XCTAssertTrue(OpenCodeRunner(platform: .openrouter).canReadFiles)
     }
 }

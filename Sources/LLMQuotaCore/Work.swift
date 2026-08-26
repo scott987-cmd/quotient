@@ -961,6 +961,18 @@ public protocol AgentRunner: Sendable {
     /// 默认 false：宁可漏派，也不要让看不见的平台去评判看得见的东西。
     var canSeeMedia: Bool { get }
 
+    /// **读得到本地文件吗（上下文折叠成路径引用的前提）。**
+    ///
+    /// 和 `canEdit` 是两回事：MiniMax 的三个执行器都能**写**文件
+    /// （评审报告、媒体资产），但它们只能文本进出 —— 你不把内容塞进
+    /// 提示词，它就看不见。ContextPackBuilder 靠这个字段决定「超预算时
+    /// 折叠为引用」还是「必须内联/拒绝」；拿 canEdit 冒充它，会让
+    /// 文本型 Runner 拿着一堆它读不到的路径引用开工。
+    ///
+    /// 必须声明在协议里（canSeeMedia 的注释写过原因：只写在扩展里，
+    /// 存在类型调用永远走扩展默认值）。
+    var canReadFiles: Bool { get }
+
     /// 无头执行。cwd 是独立 worktree，不是用户的工作区。
     func command(prompt: String, cwd: String) -> (launchPath: String, args: [String], env: [String: String])
 
@@ -987,6 +999,8 @@ public extension AgentRunner {
 
     /// 绝大多数执行器都是能改文件的编码 agent。
     var canEdit: Bool { true }
+    /// 编码执行器默认能读本地文件；纯文本进出的执行器必须显式覆盖为 false。
+    var canReadFiles: Bool { true }
     var sessionSupport: SessionSupport { .none }
     /// 只接【媒体】任务的执行器（生成图片/音乐这类）。
     /// 编码任务派给它必然产出垃圾，媒体任务派给编码执行器则白跑 ——
@@ -1316,6 +1330,8 @@ public struct MiniMaxRunner: AgentRunner {
     public let runnerID = "minimax.text"
     public let binaryName = "mmx"
     public var canEdit: Bool { false }
+    /// mmx 只能文本进出 —— 提示词里没有的内容它看不见。
+    public var canReadFiles: Bool { false }
     public init() {}
 
     public func command(
@@ -1359,6 +1375,8 @@ public struct MiniMaxMediaRunner: AgentRunner {
     public let runnerID = "minimax.media"
     public let binaryName = "mmx"
     public var canEdit: Bool { true }     // 它写文件（资产），这是真的编辑
+    /// 生成媒体时同样只能文本进出；读文件不成立。
+    public var canReadFiles: Bool { false }
     public var mediaOnly: Bool { true }
     /// mmx 的本事里就有图片/视频理解 —— 全系统唯一看得见的一个。
     public var canSeeMedia: Bool { true }
@@ -2814,6 +2832,9 @@ public struct MiniMaxReviewRunner: AgentRunner {
     public let binaryName = "mmx"
     /// 它写文件（评审报告），走正常的 worktree → 提交 → 审查流程。
     public var canEdit: Bool { true }
+    /// 材料全由派发方收集后内联进提示词；它自己读不了仓库文件。
+    /// 所以 ContextPackBuilder 对它必须内联关键材料，不能折叠成路径引用。
+    public var canReadFiles: Bool { false }
     public var mediaOnly: Bool { false }
     public var reviewOnly: Bool { true }
     public init() {}

@@ -125,18 +125,37 @@ public enum ContextPackBuilder {
         assembler.append(section: .contracts, content: contracts.content,
                          includedIDs: contracts.factIDs)
 
-        // P0 产品硬约束：沿用既有「超长显式截断并提醒精简」的行为，
-        // 不是静默截断。
+        // P0 产品硬约束：共享预算内尽量保全全文；确实装不下时按 Runner 能力
+        // 分流 —— 能读文件的折叠为 AGENTS.md/QUALITY 路径引用，文本型
+        // Runner 派发前拒绝。缺着硬约束派发等于让它瞎干。
         if !product.isEmpty {
-            guard assembler.remaining >= min(600, product.count) else {
+            let ceilingFit = min(product.count, Section.product.ceiling)
+            if ceilingFit <= assembler.remaining {
+                assembler.append(section: .product,
+                                 content: clippedWithNotice(product, ceilingFit),
+                                 includedIDs: ["agents"])
+            } else if request.canReadFiles {
+                let qualityName = RepoExecutionPolicy.repo(for: request.task.repo)?
+                    .qualityContract?.trimmingCharacters(in: .whitespacesAndNewlines)
+                var files = [ProductBrief.fileName]
+                if let qualityName, !qualityName.isEmpty, !qualityName.hasPrefix("/") {
+                    files.append(qualityName)
+                }
+                let reference = "\n\n---\n## 这个产品是什么、什么不能动（预算内折叠为引用）\n\n"
+                    + "完整约束在仓库的 " + files.joined(separator: " 和 ")
+                    + " 里，动手之前先自己读一遍；改动和铁律冲突时在产出里明说。\n---\n"
+                if reference.count <= assembler.remaining {
+                    assembler.append(section: .product, content: reference,
+                                     referencedIDs: ["agents"])
+                } else {
+                    assembler.drop(id: "agents",
+                                   reason: "总预算不足（P0 引用形式也放不下）")
+                }
+            } else {
                 return refusal(request: request,
-                               detail: "产品硬约束无法纳入系统注入预算")
+                               detail: "产品硬约束无法纳入系统注入预算，"
+                                   + "而该 Runner 读不了本地文件")
             }
-            let allowance = min(product.count, Section.product.ceiling,
-                                max(assembler.remaining, min(600, product.count)))
-            assembler.append(section: .product,
-                             content: clippedWithNotice(product, allowance),
-                             includedIDs: ["agents"])
         }
 
         // P1 决定/否决/未解决问题：逐条装配。装不下的先折叠为引用；
@@ -219,10 +238,13 @@ public enum ContextPackBuilder {
         }
     }
 
+    /// 截断提示文字本身也占预算 —— 返回内容的字符数恰好等于 limit，
+    /// 不然 totalCharacters 会悄悄越过 budget（不变量扫描测试盯着这条）。
     static func clippedWithNotice(_ raw: String, _ limit: Int) -> String {
         guard raw.count > limit else { return raw }
-        return String(raw.prefix(limit))
-            + "\n（这一段超出预算被截断了 —— 完整内容在仓库文件里，需要时自己打开）"
+        let notice = "\n（这一段超出预算被截断了 —— 完整内容在仓库文件里，需要时自己打开）"
+        let bodyCount = max(0, limit - notice.count)
+        return String(raw.prefix(bodyCount)) + notice
     }
 
     // MARK: - 各段内容
@@ -311,7 +333,8 @@ public enum ContextPackBuilder {
         // 时间只是同级内的条件），排除上面已经带上的。
         let listed = Set(items.map(\.id))
         for event in projection.scopedFacts(taskID: request.task.id,
-                                            graphID: request.task.graphID)
+                                            graphID: request.task.graphID,
+                                            recipientRunnerID: request.runnerID)
         where !listed.contains(event.id) {
             let line = "- [\(event.id)] \(event.kind.rawValue) · \(event.senderRunnerID)："
                 + String(event.summary.prefix(240))
