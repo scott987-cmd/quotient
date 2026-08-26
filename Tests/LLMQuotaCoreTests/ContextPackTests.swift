@@ -18,6 +18,10 @@ final class ContextPackTests: XCTestCase {
         scratch = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ctxpack-" + UUID().uuidString)
         CollaborationStore.directoryOverride = scratch
+        // 隔离真实用户配置：EvidenceGate/ProductBrief 都会查仓库登记表，
+        // 不隔离的话测试结果取决于这台机器登记了什么。
+        RepoRegistry.fileOverride = scratch.appendingPathComponent("repos.json")
+        try? Data("[]".utf8).write(to: RepoRegistry.fileOverride!, options: .atomic)
         appSupport = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ctxpack-support-" + UUID().uuidString)
         Paths.appSupportOverride = appSupport
@@ -29,6 +33,7 @@ final class ContextPackTests: XCTestCase {
 
     override func tearDown() {
         CollaborationStore.directoryOverride = nil
+        RepoRegistry.fileOverride = nil
         Paths.appSupportOverride = nil
         ContextTelemetry.fileOverride = nil
         try? FileManager.default.removeItem(at: scratch)

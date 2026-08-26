@@ -2587,28 +2587,34 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             context: sessionContext, support: pick.runner.sessionSupport,
             workspace: ws.path)
 
-        // 提示词统一由 ContextPackBuilder 装配（Context Graph 阶段 1 收口）：
-        // RepoMap、ProductBrief、任务图位置、协作账和固定条款全部进同一个
-        // 预算与优先级模型。这里不允许任何模块再往尾部自行追加无预算内容；
-        // 各段为什么被选中，见 manifest（ContextTelemetry 台账）。
+        // 提示词由选择层裁决（发布保险丝）：新 pack 始终构建并记账，实际
+        // 派发哪份由灰度名单决定 —— 默认影子模式继续用旧拼装
+        // （LegacyContextPromptBuilder），只有白名单里的已登记仓库才真正
+        // 切换；refusal 也只有在 active 模式才允许阻断候选。
         let allTasks = TaskStore.all()
-        let pack = ContextPackBuilder.build(.init(
-            task: task, allTasks: allTasks, events: nil,
-            runnerID: pick.runner.runnerID, platform: pick.platform,
-            canReadFiles: pick.runner.canReadFiles,
-            workspacePath: ws.path, handoff: handoff ?? task.handoff,
-            resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
-            mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,
-            tier: task.profile?.tier,
-            sessionAction: WorkAttempt.SessionAction.from(session).rawValue))
-        var effectivePrompt = pack.text
+        let outcome = ContextDispatchPrompt.build(
+            request: .init(
+                task: task, allTasks: allTasks, events: nil,
+                runnerID: pick.runner.runnerID, platform: pick.platform,
+                canReadFiles: pick.runner.canReadFiles,
+                workspacePath: ws.path, handoff: handoff ?? task.handoff,
+                resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
+                mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,
+                tier: task.profile?.tier,
+                sessionAction: WorkAttempt.SessionAction.from(session).rawValue),
+            legacy: { LegacyContextPromptBuilder.build(
+                task: task, allTasks: allTasks, runnerID: pick.runner.runnerID,
+                workspacePath: ws.path, handoff: handoff ?? task.handoff,
+                resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
+                mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil) })
+        var effectivePrompt = outcome.prompt
         // 台账每次构建恰好记一笔，且必须发生在拒绝分支之前 —— 拒绝的
-        // manifest 不进台账，context miss 和拒绝率就永远统计不出来
-        // （第二轮架构复核第 5 条）。
-        ContextTelemetry.record(pack.manifest)
-        if let refusalReason = pack.refusedReason {
-            // 文本型 Runner 的关键材料装不进预算：派发前拒绝，
+        // manifest 不进台账，context miss 和拒绝率就永远统计不出来。
+        ContextTelemetry.record(outcome.manifest)
+        if outcome.refused {
+            // active 模式下文本型 Runner 的关键材料装不进预算：派发前拒绝，
             // 不让它烧一轮额度产「材料不足」的报告（设计 6.3 硬规则）。
+            let refusalReason = outcome.pack.refusedReason ?? "unknown"
             attempts.append("\(pick.platform.displayName)：上下文装不进系统注入预算，"
                 + "派发前拒绝 —— \(refusalReason)")
             appendWorkAttempt(WorkAttempt(
@@ -2621,11 +2627,17 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             idx += 1
             continue
         }
-        print(Ansi.dim(String(format: "  上下文包 %d 字符（上限 %d；纳入 %d 项，折叠 %d 项，删减 %d 项）",
-            pack.manifest.totalCharacters, ContextPackBuilder.defaultBudget,
-            pack.manifest.includedFactIDs.count,
-            pack.manifest.referencedFactIDs.count,
-            pack.manifest.droppedFacts.count)))
+        if outcome.mode == .shadow {
+            print(Ansi.dim(String(format:
+                "  灰度影子：实际派发旧拼装；新包 %d 字符仅记录对比",
+                outcome.manifest.totalCharacters)))
+        } else {
+            print(Ansi.dim(String(format: "  上下文包 %d 字符（上限 %d；纳入 %d 项，折叠 %d 项，删减 %d 项）",
+                outcome.pack.manifest.totalCharacters, ContextPackBuilder.defaultBudget,
+                outcome.pack.manifest.includedFactIDs.count,
+                outcome.pack.manifest.referencedFactIDs.count,
+                outcome.pack.manifest.droppedFacts.count)))
+        }
         // 答复本身已由 builder 作为用户材料拼进提示词；这里只把「人已经回答」
         // 落成协作事实，让跨机器的账面看见问题被关闭。
         if let (ans, ask) = resumedAnswer {
@@ -4053,6 +4065,78 @@ func cmdRunner(_ args: [String]) throws {
     default:
         print("用法：llmq runner [list|set]")
         exit(2)
+    }
+}
+
+/// llmq context-pack rollout —— 新上下文包的灰度开关。
+///
+/// 默认影子模式：新包只记录不生效，所有仓库照旧用旧拼装派发。
+/// 只有这里显式点名的**已登记**仓库才真正切换；改名单即时生效，
+/// 不需要发版。名单存共享配置，坏配置一律当影子处理。
+func cmdContextPack(_ args: [String]) throws {
+    guard args.first == "rollout" else {
+        print("""
+        llmq context-pack rollout list
+            看现在哪些仓库启用了新上下文包
+        llmq context-pack rollout enable <仓库别名>
+            让这个已登记的仓库开始用新上下文包（按预算装配、超限先删地图）
+        llmq context-pack rollout disable <仓库别名>
+            让它退回影子模式（继续记录新包作对比，但派发走旧拼装）
+        """)
+        return
+    }
+    let sub = Array(args.dropFirst())
+    switch (sub.first, sub.count) {
+    case ("list", 1):
+        let enabled = Set(ContextPackRollout.load().enabledAliases)
+        let repos = RepoRegistry.all()
+        if repos.isEmpty && enabled.isEmpty {
+            print("还没有登记任何仓库，也没有启用任何新上下文包。")
+            print(Ansi.dim("一切照旧：所有任务都用旧提示词派发。"))
+            return
+        }
+        if enabled.isEmpty {
+            print("当前没有仓库启用新上下文包 —— 全部任务照旧用旧提示词派发，"
+                + "系统只在后台记录新包的样子作对比。")
+        } else {
+            print(Ansi.bold("已启用新上下文包的仓库"))
+            for alias in ContextPackRollout.load().enabledAliases.sorted() {
+                print("  " + Ansi.green(alias))
+            }
+        }
+        let unlisted = repos.filter { !enabled.contains($0.alias) }
+        if !unlisted.isEmpty {
+            print()
+            print(Ansi.dim("仍在影子模式的登记仓库：" +
+                unlisted.map(\.alias).sorted().joined(separator: "、")))
+        }
+    case ("enable", 2):
+        let alias = sub[1]
+        guard RepoRegistry.all().contains(where: { $0.alias == alias }) else {
+            print("没有叫「\(alias)」的仓库。先看已登记的仓库：llmq repo list")
+            exit(2)
+        }
+        var config = ContextPackRollout.load()
+        guard !config.enabledAliases.contains(alias) else {
+            print(Ansi.yellow("\(alias) 已经在用新上下文包了。"))
+            return
+        }
+        config.enabledAliases.append(alias)
+        try ContextPackRollout.save(config)
+        print(Ansi.green("已启用 ") + alias + Ansi.dim("  从下一次派活开始生效"))
+    case ("disable", 2):
+        let alias = sub[1]
+        var config = ContextPackRollout.load()
+        guard config.enabledAliases.contains(alias) else {
+            print(Ansi.yellow("\(alias) 本来就没启用，无需关闭。"))
+            return
+        }
+        config.enabledAliases.removeAll { $0 == alias }
+        try ContextPackRollout.save(config)
+        print(Ansi.green("已退回影子模式 ") + alias
+            + Ansi.dim("  派发恢复旧提示词，新包继续在后台记录对比"))
+    default:
+        try cmdContextPack([])
     }
 }
 
@@ -6549,6 +6633,8 @@ do {
         try cmdMachines()
     case "repo":
         try cmdRepo(rest)
+    case "context-pack":
+        try cmdContextPack(rest)
     case "runner":
         try cmdRunner(rest)
     case "work":

@@ -503,6 +503,8 @@ public struct ContextPackManifest: Codable, Sendable {
     public var fullRepoMapUsed: Bool
     public var sessionAction: String?
     public var refusedReason: String?
+    /// 灰度模式（shadow/active）。旧记录没有这个字段，解码降级为 nil。
+    public var rolloutMode: String?
     public var createdAt: Date
 
     public init(taskID: String, runnerID: String, totalCharacters: Int,
@@ -521,6 +523,7 @@ public struct ContextPackManifest: Codable, Sendable {
         self.fullRepoMapUsed = fullRepoMapUsed
         self.sessionAction = sessionAction
         self.refusedReason = nil
+        self.rolloutMode = nil
         self.createdAt = createdAt
     }
 
@@ -543,6 +546,7 @@ public struct ContextPackManifest: Codable, Sendable {
                                                 forKey: .fullRepoMapUsed) ?? false
         sessionAction = try c.decodeIfPresent(String.self, forKey: .sessionAction)
         refusedReason = try c.decodeIfPresent(String.self, forKey: .refusedReason)
+        rolloutMode = try c.decodeIfPresent(String.self, forKey: .rolloutMode)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? .distantPast
     }
 }
