@@ -1465,8 +1465,23 @@ public struct MiniMaxMediaRunner: AgentRunner {
               done
               for image in "$frames"/*.jpg(N); do
                 n=$((n+1))
-                echo "\n## $src · 抽帧 $n" >> "$observations"
+                echo "\n## $src · 关键全尺寸帧 $n" >> "$observations"
                 run_mmx vision describe --image "$image" --prompt "$LLMQ_FRAME_PROMPT" \
+                  --output text --non-interactive --quiet >> "$observations" 2>&1
+              done
+              # 开头/中间/结尾会漏掉中间持续数秒的关键状态。每 2 秒取一帧，
+              # 25 帧拼一张联系表：覆盖整段 30–60 秒录屏，同时只增加 1–2 次
+              # 多模态调用。实测 Flint 50.75 秒录屏的第一人称持枪只出现在
+              # 前 18 秒，旧三帧抽样把它完全漏掉并据此错误否决。
+              sheets="$tmpd/sheets-$n"
+              /bin/mkdir -p "$sheets"
+              "$LLMQ_FFMPEG" -loglevel error -i "$src" \
+                -vf "fps=1/2,scale='min(320,iw)':-2,tile=5x5:padding=2:margin=2" \
+                -frames:v 4 "$sheets/contact-%02d.jpg" || true
+              for image in "$sheets"/*.jpg(N); do
+                n=$((n+1))
+                echo "\n## $src · 全时段联系表 $n（从左到右、从上到下）" >> "$observations"
+                run_mmx vision describe --image "$image" --prompt "$LLMQ_CONTACT_PROMPT" \
                   --output text --non-interactive --quiet >> "$observations" 2>&1
               done;;
             *)
@@ -1478,7 +1493,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
         done <<< "$LLMQ_VISUAL_FILES"
         [ $n -gt 0 ] || { echo "没有读到任何可看的截图/录屏"; exit 1; }
         seen="$(<"$observations")"
-        ask="你是游戏视觉质量验收人。下面先给验收任务与项目质量契约，再给图片/录屏抽帧的逐帧观察。只依据真正看到的画面判断，不用文件名猜。\n\n任务与契约：\n${LLMQ_VISUAL_PROMPT[1,12000]}\n\n逐帧观察：\n${seen[1,24000]}\n\n输出 Markdown：第一行必须严格写 **结论**：达标 或 **结论**：未达标（二选一）；然后写看到了什么、违反了哪条质量契约、对应哪个画面。任一明显穿模、悬空握持、T-pose、占位资产、流程断点或画面无法证明任务目标，都只能判未达标。"
+        ask="你是游戏视觉质量验收人。下面先给验收任务与项目质量契约，再给静态图片、关键全尺寸帧和覆盖录屏全时段的联系表观察。只依据真正看到的画面判断，不用文件名猜。\n\n任务与契约：\n${LLMQ_VISUAL_PROMPT[1,12000]}\n\n画面观察：\n${seen[1,24000]}\n\n输出 Markdown：第一行必须严格写 **结论**：达标 或 **结论**：未达标（二选一）；然后写看到了什么、违反了哪条质量契约、对应哪个画面。任一明显穿模、悬空握持、T-pose、占位资产、流程断点或画面无法证明任务目标，都只能判未达标。"
         final="$tmpd/final.md"
         run_mmx text chat --message "$ask" --output text --non-interactive --quiet > "$final"
         [ -s "$final" ] || { echo "视觉验收没有生成结论"; exit 1; }
@@ -1489,11 +1504,12 @@ public struct MiniMaxMediaRunner: AgentRunner {
         while IFS= read -r line; do
           case "$line" in *结论*) echo "$line"; break;; esac
         done < "$out"
-        echo "已逐帧查看 $n 张画面，报告：$out"
+        echo "已检查 $n 份证据画面（含全时段联系表），报告：$out"
         """#
         var env = [
             "LLMQ_VISUAL_PROMPT": prompt,
             "LLMQ_FRAME_PROMPT": "只描述这张游戏画面中实际可见的内容。重点检查双手与武器接触、手腕方向、穿模/悬空、动作状态、角色材质、HUD 和明显卡顿迹象；看不到就明确说看不到，不要推测。",
+            "LLMQ_CONTACT_PROMPT": "这是按时间从左到右、从上到下排列的游戏录屏联系表，每格间隔约 2 秒。先说明画面阶段如何变化，再检查是否出现任务目标、双手与武器接触、手腕方向、穿模/悬空、动作状态、角色材质和流程断点；某阶段看不清就明确说看不清，不要把没看清说成不存在。",
             "LLMQ_VISUAL_FILES": files.joined(separator: "\n"),
             "LLMQ_FFMPEG": Proc.which("ffmpeg") ?? "/opt/homebrew/bin/ffmpeg",
             "LLMQ_FFPROBE": Proc.which("ffprobe") ?? "/opt/homebrew/bin/ffprobe",

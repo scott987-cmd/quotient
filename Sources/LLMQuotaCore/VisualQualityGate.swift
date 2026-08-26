@@ -107,7 +107,7 @@ public enum VisualQualityGate {
         文件（都在 \(Review.evidenceDir.path) 下）：
         \(extracted.map { "  - " + $0 }.joined(separator: "\n"))
 
-        必须真的逐帧看图/录屏，并逐条对照任务目标和注入的 QUALITY.md。
+        必须逐项查看图片，并用覆盖全时段的抽帧检查录屏；逐条对照任务目标和注入的 QUALITY.md。
         第一行结论只能写“**结论**：达标”或“**结论**：未达标”。
         """
         guard let result = try? TaskIntake.enqueue(

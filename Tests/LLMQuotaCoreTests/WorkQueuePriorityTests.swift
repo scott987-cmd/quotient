@@ -53,6 +53,11 @@ final class WorkQueuePriorityTests: XCTestCase {
         XCTAssertTrue(command.args.joined(separator: " ").contains("vision describe"))
         XCTAssertTrue(command.args[1].contains("*.mov|*.mp4|*.m4v"),
                       "移动端审阅副本必须按视频逐帧读取，不能当静态图片或忽略")
+        XCTAssertTrue(command.args[1].contains("fps=1/2"))
+        XCTAssertTrue(command.args[1].contains("tile=5x5"),
+                      "长录屏必须覆盖全时段，不能只取开头、中间、结尾三帧")
+        XCTAssertFalse(command.args[1].contains("已逐帧查看"),
+                       "抽帧验收不能谎称逐帧看完了整段视频")
         let syntax = Proc.run("/bin/zsh", ["-n", "-c", command.args[1]],
                               cwd: "/tmp", env: [:], timeout: 5)
         XCTAssertEqual(syntax.exitCode, 0, syntax.stderr)
