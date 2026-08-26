@@ -79,8 +79,8 @@ final class ContextPackTests: XCTestCase {
             【看效果】分支 agent/x/src 提交 abc123 的视觉质量是否达到项目契约。
 
             成果：握枪动作
-            文件（都在证据目录下）：
-              - \(evidenceDir.path)/f\(id).png
+            文件（都在 \(Review.evidenceDir.standardizedFileURL.path) 下）：
+              - f\(id).png
 
             必须真的逐帧看图/录屏，并逐条对照任务目标和注入的 QUALITY.md。
             **结论**：未达标
@@ -445,18 +445,10 @@ final class ContextPackTests: XCTestCase {
         XCTAssertTrue(pack.refusedReason?.hasPrefix("insufficientContextCapability") == true)
     }
 
-    /// 预算不变量扫描：任何档位下 totalCharacters（含截断提示文字）
-    /// 都不得超过 budget；装不下就走折叠或拒绝。
+    /// 预算不变量扫描：任何档位下 totalCharacters 都不得超过 budget；
+    /// 装不下就走折叠或拒绝（P0 全文 / 引用 / 拒绝三选一，不再有截断态）。
     func testTotalCharactersNeverExceedBudgetAcrossTightSweep() throws {
-        // 截断算术的直接断言：结果必须恰好占满分配额（含提示文字），
-        // 否则 totalCharacters 会悄悄越过 budget。
-        let clipped = ContextPackBuilder.clippedWithNotice(
-            String(repeating: "x", count: 6_000), 5_000)
-        XCTAssertEqual(clipped.count, 5_000,
-            "截断结果连提示文字一起必须恰好等于分配额")
-        XCTAssertFalse(clipped.hasSuffix("x"))
-
-        giveRepoBigAgents(repoA, characters: 8_000)   // 触发 ceiling 截断提示
+        giveRepoBigAgents(repoA, characters: 8_000)   // P0 全文，超旧 ceiling
         stuffRepo(repoA, files: 30)
         let review = visualReview(id: "revs", repo: repoA, observation: "观察甲乙丙丁")
         var source = task("t1", prompt: "修复握枪动作", repo: repoA)
@@ -490,5 +482,152 @@ final class ContextPackTests: XCTestCase {
         XCTAssertTrue(QwenRunner().canReadFiles)
         XCTAssertTrue(KimiRunner().canReadFiles)
         XCTAssertTrue(OpenCodeRunner(platform: .openrouter).canReadFiles)
+    }
+
+    // MARK: - 第二轮架构复核（2026-08-26 五项）
+
+    /// 修复 1a：P0 高优先级可借共享池 —— 全文能放进 remaining 时，
+    /// 即使超过 product ceiling=5000 也必须完整放入，不能截断。
+    func testProductFullTextRidesSharedPoolEvenBeyondCeiling() throws {
+        giveRepoBigAgents(repoA, characters: 8_000)
+        let source = task("t1", prompt: "修 A 产品", repo: repoA)
+
+        // 重写一份带尾部标志的大 AGENTS.md（约 1 万字符，超过 ceiling）。
+        let sentence = "铁律：不许删除导出按钮，不许绕过验收闸门。"
+        let body = "# 产品 A\n\n" + String(repeating: sentence, count: 440)
+            + "\n尾部铁律：TAIL-EXPORT-⌘E 不许移除。\n"
+        try body.write(to: repoA.appendingPathComponent("AGENTS.md"),
+                       atomically: true, encoding: .utf8)
+
+        let pack = build(task: source, all: [source], runnerID: "minimax.text",
+                         platform: .minimax, canReadFiles: false,
+                         budget: ContextPackBuilder.defaultBudget)
+        XCTAssertNil(pack.refusedReason)
+        XCTAssertGreaterThan(pack.manifest.charactersBySection["product"] ?? 0, 5_000,
+            "全文能放进共享池时不得按 ceiling 截断")
+        XCTAssertTrue(pack.text.contains("TAIL-EXPORT-⌘E"),
+            "文本 Runner 也必须拿到完整 P0 尾部铁律")
+        XCTAssertLessThanOrEqual(pack.manifest.totalCharacters,
+                                 ContextPackBuilder.defaultBudget)
+    }
+
+    /// 修复 1b：可读文件 Runner 连路径引用都放不下时必须拒绝，不能丢 P0 继续。
+    func testFileReaderRefusedWhenEvenProductReferenceCannotFit() throws {
+        // 先用小产品测出固定契约段的真实长度。
+        let probe = task("t0", prompt: "探针", repo: repoA)
+        let baseline = build(task: probe, all: [probe], runnerID: "claude.code",
+                             platform: .claude, canReadFiles: true, budget: 24_000)
+        let contracts = baseline.manifest.charactersBySection["contracts"] ?? 623
+
+        giveRepoBigAgents(repoA, characters: 2_000)
+        let source = task("t1", prompt: "修 A 产品", repo: repoA)
+        let pack = build(task: source, all: [source], runnerID: "claude.code",
+                         platform: .claude, canReadFiles: true,
+                         budget: contracts + 50)
+
+        XCTAssertNotNil(pack.refusedReason,
+            "连引用都放不下时必须拒绝派发，而不是静默丢弃 P0 硬约束")
+        XCTAssertTrue(pack.refusedReason?.hasPrefix("insufficientContextCapability") == true)
+    }
+
+    /// 修复 2：builder 必须拿未截断的产品全文 —— ProductBrief 的
+    /// per-file 8000 预截断会先把尾部铁律吃掉，让 builder 把缺语义的
+    /// 文本当完整。旧 API 保持截断兼容。
+    func testBuilderReceivesUntruncatedProductBriefTailIncluded() throws {
+        let sentence = "铁律：不许删除导出按钮，不许绕过验收闸门。"
+        let body = "# 产品 A\n\n" + String(repeating: sentence, count: 500)
+            + "\n尾部铁律：TAIL-LAW-777 快捷键 ⌘E 不许移除。\n"
+        try body.write(to: repoA.appendingPathComponent("AGENTS.md"),
+                       atomically: true, encoding: .utf8)
+        let source = task("t1", prompt: "修 A 产品", repo: repoA)
+
+        // 旧 API 仍然截断（兼容行为不变）。
+        let legacy = ProductBrief.text(repo: repoA.path) ?? ""
+        XCTAssertLessThanOrEqual(legacy.count, ProductBrief.maxCharacters + 100)
+
+        // builder 走未截断通道：文本 Runner 在默认预算下拿到含尾部的全文。
+        let pack = build(task: source, all: [source], runnerID: "minimax.text",
+                         platform: .minimax, canReadFiles: false)
+        XCTAssertNil(pack.refusedReason)
+        XCTAssertTrue(pack.text.contains("TAIL-LAW-777"),
+            "8000 字以后的尾部铁律对文本 Runner 丢失了 —— "
+                + "builder 拿到的是被预截断的 P0")
+    }
+
+    /// 修复 3：证据路径解析必须吃真实 dispatch 形状
+    /// （「都在 <evidenceDir> 下」+ 相对文件名），只允许 evidence 目录，
+    /// 其他目录一律为空。
+    func testEvidencePathsParseRealDispatchShapeAndRejectOtherDirectories() {
+        let dir = Review.evidenceDir.standardizedFileURL.path
+        let realPrompt = """
+            【看效果】分支 agent/x/s 提交 abc 的视觉质量是否达到项目契约。
+
+            成果：开火节奏
+            文件（都在 \(dir) 下）：
+              - idle.png
+              - fire.mov
+
+            必须真的逐帧看图/录屏。
+            """
+        XCTAssertEqual(ContextProjection.evidencePaths(in: realPrompt),
+                       [dir + "/idle.png", dir + "/fire.mov"],
+            "真实票形状解析不出完整绝对路径，视觉事实的证据引用就是空的")
+
+        let foreign = """
+            文件（都在 /tmp/other-dir 下）：
+              - sneak.png
+            """
+        XCTAssertTrue(ContextProjection.evidencePaths(in: foreign).isEmpty,
+            "非 evidence 目录的文件不得借这个入口进入上下文")
+
+        XCTAssertTrue(ContextProjection.evidencePaths(in: "- notes.md").isEmpty,
+            "非媒体后缀不算视觉证据")
+    }
+
+    /// 修复 4：挂在视觉票下的 finding 同样受收件人隔离约束；
+    /// 发给别人的私有发现不进 pack。
+    func testPrivateVisualFindingsStayHiddenFromOtherRunners() throws {
+        let review = visualReview(id: "revp", repo: repoA, observation: "观察甲乙丙")
+        var source = task("t1", prompt: "修复握枪动作", repo: repoA)
+        source.visualRemediationReviewID = "revp"
+        try publishEvent(id: "priv-vf", project: repoA, taskID: "revp",
+                         sender: "kimi.code", to: "claude.code",
+                         kind: .finding, summary: "PRIVVF-只给Claude的画面发现")
+        try publishEvent(id: "pub-vf", project: repoA, taskID: "revp",
+                         sender: "minimax.review", kind: .finding,
+                         summary: "PUBVF-广播的画面发现")
+
+        let ox = build(task: source, all: [source, review],
+                       runnerID: "opencode.openrouter.code",
+                       platform: .openrouter, canReadFiles: true)
+        XCTAssertFalse(ox.text.contains("PRIVVF-"),
+            "发给 Claude 的私有视觉发现泄漏进了 Ox 的包")
+        XCTAssertTrue(ox.text.contains("PUBVF-"), "广播的视觉发现应当可见")
+
+        let claude = build(task: source, all: [source, review],
+                           runnerID: "claude.code", platform: .claude,
+                           canReadFiles: true)
+        XCTAssertTrue(claude.text.contains("PRIVVF-"), "收件人本人必须看得见")
+    }
+
+    /// 修复 5：拒绝的 manifest 也要能进台账 —— 否则 context miss /
+    /// 拒绝率没法统计（main.swift 每次 build 恰好 record 一次，
+    /// 拒绝分支在 record 之后）。
+    func testRefusedManifestIsRecordableForTelemetry() {
+        let review = visualReview(id: "revr", repo: repoA, observation: String(
+            repeating: "画面证实手臂穿透枪身。", count: 700))
+        var source = task("t1", prompt: "修复握枪动作", repo: repoA)
+        source.visualRemediationReviewID = "revr"
+
+        let denied = build(task: source, all: [source, review],
+                           runnerID: "minimax.text", platform: .minimax,
+                           canReadFiles: false, budget: 3_000)
+        XCTAssertNotNil(denied.refusedReason)
+
+        ContextTelemetry.record(denied.manifest)
+        let recorded = ContextTelemetry.all().first { $0.taskID == "t1" }
+        XCTAssertNotNil(recorded, "拒绝 manifest 没有进台账")
+        XCTAssertFalse(recorded?.refusedReason?.isEmpty ?? true,
+            "台账里的记录必须带着拒绝原因")
     }
 }

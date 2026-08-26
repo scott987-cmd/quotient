@@ -19,6 +19,10 @@ public enum ContextTelemetry {
     private static let lock = NSLock()
 
     public static func record(_ manifest: ContextPackManifest) {
+        // 台账目录不存在时先建 —— 拒绝记录恰恰发生在派发早期，
+        // 目录还没人建过；静默丢掉它，context miss 就统计不出来。
+        try? FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard let data = try? SnapshotCoding.encoder().encode(manifest) else { return }
         var line = data
         line.append(UInt8(ascii: "\n"))

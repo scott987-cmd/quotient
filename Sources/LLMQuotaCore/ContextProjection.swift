@@ -14,10 +14,29 @@ public struct ContextProjection: Sendable {
     public struct Finding: Sendable, Equatable {
         public var id: String
         public var summary: String
+        /// 可见性元数据：nil = 项目广播；否则只发给这个 Runner。
+        var recipient: String?
+        var sender: String
 
         public init(id: String, summary: String) {
             self.id = id
             self.summary = summary
+            self.recipient = nil
+            self.sender = ""
+        }
+
+        init(event: CollaborationEvent) {
+            self.id = event.id
+            self.summary = event.summary
+            self.recipient = event.recipientRunnerID
+            self.sender = event.senderRunnerID
+        }
+
+        /// 与 CollaborationStore.context 同一套语义：
+        /// 广播、发给我的、我自己发的才可见。
+        func isVisible(to runnerID: String?) -> Bool {
+            guard let runnerID else { return true }
+            return recipient == nil || recipient == runnerID || sender == runnerID
         }
     }
 
@@ -78,7 +97,7 @@ public struct ContextProjection: Sendable {
                   review.platform?.canSeeMediaSemantics == true else { continue }
             let findings = self.events
                 .filter { ($0.taskID == rid || $0.replyTo == rid) && $0.kind == .finding }
-                .map { Finding(id: $0.id, summary: $0.summary) }
+                .map { Finding(event: $0) }
             visuals[source.id, default: []].append(VisualFact(
                 reviewTaskID: rid, sourceTaskID: source.id,
                 reviewedPlatform: review.platform,
@@ -89,8 +108,21 @@ public struct ContextProjection: Sendable {
         self.visualFactsBySourceTaskID = visuals
     }
 
-    public func visualFacts(sourceTaskID: String) -> [VisualFact] {
-        visualFactsBySourceTaskID[sourceTaskID] ?? []
+    /// 挂在视觉票下的结构化发现。`recipientRunnerID` 传入当前 Runner：
+    /// 广播、发给我的、我发的才带进 pack —— 发给别人的私有发现不泄漏
+    /// （与 scopedFacts 同一套可见性语义）。nil = 不过滤（投影层直调用）。
+    ///
+    /// 视觉票本身没有收件人概念 —— 它就是打回这条实现任务的票，
+    /// 对实现 owner 天然可见；需要隔离的是挂在票下的协作 finding。
+    public func visualFacts(sourceTaskID: String,
+                            recipientRunnerID: String? = nil) -> [VisualFact] {
+        let facts = visualFactsBySourceTaskID[sourceTaskID] ?? []
+        guard recipientRunnerID != nil else { return facts }
+        return facts.map { fact in
+            var copy = fact
+            copy.findings = fact.findings.filter { $0.isVisible(to: recipientRunnerID) }
+            return copy
+        }
     }
 
     /// 还需要这个 Runner 处理的问题/交接/否决：定向给它的和项目广播都算。
@@ -148,21 +180,14 @@ public struct ContextProjection: Sendable {
         task.dependsOn.compactMap { tasksByID[$0] }
     }
 
-    /// 从视觉票提示词里抽证据文件路径。【看效果】票把抽取出的证据列成
-    /// 「- <绝对路径>」行，只保留图像/视频后缀。这里只存路径引用：
-    /// 不能看图的 Runner 需要知道「材料在哪」，不需要也不该拿到
-    /// 「去打开它」的指令。
+    /// 从视觉票提示词里抽证据文件路径，直接复用 `MiniMaxMediaRunner.visualFiles`
+    /// 的安全解析 —— 真实票的形状是「都在 <Review.evidenceDir> 下」加相对
+    /// 文件名（VisualQualityGate.dispatch 生成的），只允许系统 evidence 目录，
+    /// 手写提示词不能借这个入口读取任意本机图片；返回完整绝对路径。
+    /// 这里只存路径引用：不能看图的 Runner 需要知道「材料在哪」，
+    /// 不需要也不该拿到「去打开它」的指令。
     static func evidencePaths(in prompt: String) -> [String] {
-        let mediaExtensions = ["png", "jpg", "jpeg", "gif", "mov", "mp4"]
-        return prompt.components(separatedBy: .newlines).compactMap { raw -> String? in
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("- ") else { return nil }
-            let token = line.dropFirst(2).trimmingCharacters(in: .whitespaces)
-            guard token.hasPrefix("/") else { return nil }
-            return mediaExtensions.contains(where: {
-                token.lowercased().hasSuffix("." + $0)
-            }) ? token : nil
-        }
+        MiniMaxMediaRunner.visualFiles(in: prompt)
     }
 }
 

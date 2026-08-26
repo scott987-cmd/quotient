@@ -37,12 +37,20 @@ public enum ProductBrief {
         return raw
     }
 
-    public static func text(repo: String) -> String? {
+    /// 未截断全文。**ContextPackBuilder 必须用这个** —— 唯一总预算在那里
+    /// 决定全文 / 折叠引用 / 拒绝；这里的 per-file 预截断会先把 P0 的尾部
+    /// 吃掉，让 builder 把缺了语义的硬约束当完整派发出去。
+    public static func fullText(repo: String) -> String? {
         let url = URL(fileURLWithPath: NSString(string: repo).expandingTildeInPath)
             .appendingPathComponent(fileName)
         guard let raw = try? String(contentsOf: url, encoding: .utf8),
               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
+        return raw
+    }
+
+    public static func text(repo: String) -> String? {
+        guard let raw = fullText(repo: repo) else { return nil }
         return clipped(raw, fileName: fileName)
     }
 
@@ -50,6 +58,15 @@ public enum ProductBrief {
     /// 这样已提交到分支的契约用分支版本；刚登记、还没进入稳定 worktree 的
     /// 契约也不会在第一次派活时静默消失。
     public static func qualityText(repo: String, registeredRepo: String? = nil) -> String? {
+        guard let (name, raw) = qualityContent(repo: repo,
+                                               registeredRepo: registeredRepo)
+        else { return nil }
+        return clipped(raw, fileName: name)
+    }
+
+    private static func qualityContent(
+        repo: String, registeredRepo: String?
+    ) -> (name: String, body: String)? {
         guard let name = RepoExecutionPolicy.repo(for: registeredRepo ?? repo)?
             .qualityContract?.trimmingCharacters(in: .whitespacesAndNewlines),
               !name.isEmpty, !name.hasPrefix("/"), !name.contains("..")
@@ -62,7 +79,7 @@ public enum ProductBrief {
                 .appendingPathComponent(name)
             if let raw = try? String(contentsOf: url, encoding: .utf8),
                !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return clipped(raw, fileName: name)
+                return (name, raw)
             }
         }
         return nil
@@ -72,8 +89,32 @@ public enum ProductBrief {
     public static func briefing(repo: String, registeredRepo: String? = nil) -> String {
         var sections: [String] = []
         if let facts = text(repo: repo) {
-            sections.append("""
+            sections.append(header(facts: facts))
+        }
+        if let quality = qualityText(repo: repo, registeredRepo: registeredRepo) {
+            sections.append(qualityHeader(quality: quality))
+        }
+        return sections.joined()
+    }
 
+    /// 未截断版本，专供 ContextPackBuilder：全文 / 折叠引用 / 拒绝由唯一
+    /// 总预算统一裁决，per-file 截断不在这条通路上发生 —— AGENTS.md 和
+    /// 质量契约都是 P0，谁都不许在这里先被咬掉尾巴。
+    public static func fullBriefing(repo: String, registeredRepo: String? = nil) -> String {
+        var sections: [String] = []
+        if let facts = fullText(repo: repo) {
+            sections.append(header(facts: facts))
+        }
+        if let quality = qualityContent(repo: repo, registeredRepo: registeredRepo)
+            .map(\.body) {
+            sections.append(qualityHeader(quality: quality))
+        }
+        return sections.joined()
+    }
+
+    private static func header(facts: String) -> String {
+
+        """
 
         ---
         ## 这个产品是什么、什么不能动（仓库里的 AGENTS.md，人工维护 —— 是约束，不是任务）
@@ -85,11 +126,12 @@ public enum ProductBrief {
         \(facts)
         ---
 
-        """)
-        }
-        if let quality = qualityText(repo: repo, registeredRepo: registeredRepo) {
-            sections.append("""
+        """
+    }
 
+    private static func qualityHeader(quality: String) -> String {
+
+        """
 
         ---
         ## 这个项目怎样才算做完（项目质量契约 —— 是验收标准，不是参考建议）
@@ -101,8 +143,6 @@ public enum ProductBrief {
         \(quality)
         ---
 
-        """)
-        }
-        return sections.joined()
+        """
     }
 }

@@ -2601,6 +2601,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,
             tier: task.profile?.tier,
             sessionAction: WorkAttempt.SessionAction.from(session).rawValue))
+        var effectivePrompt = pack.text
+        // 台账每次构建恰好记一笔，且必须发生在拒绝分支之前 —— 拒绝的
+        // manifest 不进台账，context miss 和拒绝率就永远统计不出来
+        // （第二轮架构复核第 5 条）。
+        ContextTelemetry.record(pack.manifest)
         if let refusalReason = pack.refusedReason {
             // 文本型 Runner 的关键材料装不进预算：派发前拒绝，
             // 不让它烧一轮额度产「材料不足」的报告（设计 6.3 硬规则）。
@@ -2616,8 +2621,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             idx += 1
             continue
         }
-        var effectivePrompt = pack.text
-        ContextTelemetry.record(pack.manifest)
         print(Ansi.dim(String(format: "  上下文包 %d 字符（上限 %d；纳入 %d 项，折叠 %d 项，删减 %d 项）",
             pack.manifest.totalCharacters, ContextPackBuilder.defaultBudget,
             pack.manifest.includedFactIDs.count,

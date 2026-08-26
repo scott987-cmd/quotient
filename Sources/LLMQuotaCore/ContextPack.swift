@@ -112,8 +112,8 @@ public enum ContextPackBuilder {
         }
 
         let contracts = renderContracts(request: request)
-        let product = ProductBrief.briefing(repo: request.workspacePath,
-                                            registeredRepo: request.task.repo)
+        let product = ProductBrief.fullBriefing(repo: request.workspacePath,
+                                                registeredRepo: request.task.repo)
         let facts = factItems(projection: projection, request: request)
 
         // P0 固定契约：没有它 agent 不知道怎么交证据、怎么汇报进度、怎么留
@@ -125,14 +125,13 @@ public enum ContextPackBuilder {
         assembler.append(section: .contracts, content: contracts.content,
                          includedIDs: contracts.factIDs)
 
-        // P0 产品硬约束：共享预算内尽量保全全文；确实装不下时按 Runner 能力
-        // 分流 —— 能读文件的折叠为 AGENTS.md/QUALITY 路径引用，文本型
-        // Runner 派发前拒绝。缺着硬约束派发等于让它瞎干。
+        // P0 产品硬约束：高优先级可借共享池 —— 全文放得下就完整放入，
+        // 不做任何截断；全文装不下时按 Runner 能力分流：能读文件的折叠为
+        // AGENTS.md/QUALITY 路径引用；文本型 Runner 或连引用都放不下时
+        // 一律派发前拒绝。缺着硬约束派发等于让它瞎干，丢 P0 继续更不行。
         if !product.isEmpty {
-            let ceilingFit = min(product.count, Section.product.ceiling)
-            if ceilingFit <= assembler.remaining {
-                assembler.append(section: .product,
-                                 content: clippedWithNotice(product, ceilingFit),
+            if product.count <= assembler.remaining {
+                assembler.append(section: .product, content: product,
                                  includedIDs: ["agents"])
             } else if request.canReadFiles {
                 let qualityName = RepoExecutionPolicy.repo(for: request.task.repo)?
@@ -144,13 +143,12 @@ public enum ContextPackBuilder {
                 let reference = "\n\n---\n## 这个产品是什么、什么不能动（预算内折叠为引用）\n\n"
                     + "完整约束在仓库的 " + files.joined(separator: " 和 ")
                     + " 里，动手之前先自己读一遍；改动和铁律冲突时在产出里明说。\n---\n"
-                if reference.count <= assembler.remaining {
-                    assembler.append(section: .product, content: reference,
-                                     referencedIDs: ["agents"])
-                } else {
-                    assembler.drop(id: "agents",
-                                   reason: "总预算不足（P0 引用形式也放不下）")
+                guard reference.count <= assembler.remaining else {
+                    return refusal(request: request,
+                                   detail: "产品硬约束连路径引用都无法纳入系统注入预算")
                 }
+                assembler.append(section: .product, content: reference,
+                                 referencedIDs: ["agents"])
             } else {
                 return refusal(request: request,
                                detail: "产品硬约束无法纳入系统注入预算，"
@@ -238,15 +236,6 @@ public enum ContextPackBuilder {
         }
     }
 
-    /// 截断提示文字本身也占预算 —— 返回内容的字符数恰好等于 limit，
-    /// 不然 totalCharacters 会悄悄越过 budget（不变量扫描测试盯着这条）。
-    static func clippedWithNotice(_ raw: String, _ limit: Int) -> String {
-        guard raw.count > limit else { return raw }
-        let notice = "\n（这一段超出预算被截断了 —— 完整内容在仓库文件里，需要时自己打开）"
-        let bodyCount = max(0, limit - notice.count)
-        return String(raw.prefix(bodyCount)) + notice
-    }
-
     // MARK: - 各段内容
 
     struct Contracts {
@@ -305,8 +294,10 @@ public enum ContextPackBuilder {
         // 视觉否决：Review/Finding/Evidence 经 visualRemediationReviewID 关联。
         // 对不能看图的 Runner 只注入已确认的文字观察和证据**引用**，
         // 绝不发图片内容，也绝不出现「去打开它」的指令 —— 那会复现 Ox 的
-        // 400 invalid_request 整轮失败。
-        for fact in projection.visualFacts(sourceTaskID: request.task.id) {
+        // 400 invalid_request 整轮失败。挂在票下的 finding 同样按收件人
+        // 可见性过滤，发给别人的私有发现不进这个包。
+        for fact in projection.visualFacts(sourceTaskID: request.task.id,
+                                           recipientRunnerID: request.runnerID) {
             var lines = ["- 视觉否决 [visual:\(fact.reviewTaskID)]"
                 + "（独立多模态验收已判未达标；下面是它的文字结论 —— 勿打开图像或录屏文件）"]
             lines.append("  观察：" + fact.observation)
