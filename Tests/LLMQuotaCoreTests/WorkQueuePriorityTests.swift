@@ -41,14 +41,18 @@ final class WorkQueuePriorityTests: XCTestCase {
         文件（都在 \(dir) 下）：
           - idle.png
           - reload.mov
+          - match.m4v
           - notes.txt
         """
         XCTAssertEqual(MiniMaxMediaRunner.visualFiles(in: prompt), [
             (dir as NSString).appendingPathComponent("idle.png"),
             (dir as NSString).appendingPathComponent("reload.mov"),
+            (dir as NSString).appendingPathComponent("match.m4v"),
         ])
         let command = MiniMaxMediaRunner().command(prompt: prompt, cwd: "/tmp")
         XCTAssertTrue(command.args.joined(separator: " ").contains("vision describe"))
+        XCTAssertTrue(command.args[1].contains("*.mov|*.mp4|*.m4v"),
+                      "移动端审阅副本必须按视频逐帧读取，不能当静态图片或忽略")
         let syntax = Proc.run("/bin/zsh", ["-n", "-c", command.args[1]],
                               cwd: "/tmp", env: [:], timeout: 5)
         XCTAssertEqual(syntax.exitCode, 0, syntax.stderr)

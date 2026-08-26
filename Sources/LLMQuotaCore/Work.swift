@@ -1416,9 +1416,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
             }
             guard line.hasPrefix("- ") else { continue }
             let name = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            let lower = name.lowercased()
-            guard [".png", ".jpg", ".jpeg", ".mov", ".mp4"]
-                .contains(where: lower.hasSuffix) else { continue }
+            guard Review.isImageName(name) || Review.isVideoName(name) else { continue }
             let candidate: String?
             if name.hasPrefix("/") { candidate = URL(fileURLWithPath: name).standardizedFileURL.path }
             else if let directory {
@@ -1450,7 +1448,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
         while IFS= read -r src; do
           [ -s "$src" ] || { echo "缺少视觉证据: $src" >> "$observations"; continue; }
           case "${src:l}" in
-            *.mov|*.mp4)
+            *.mov|*.mp4|*.m4v)
               frames="$tmpd/frames-$n"
               /bin/mkdir -p "$frames"
               duration="$("$LLMQ_FFPROBE" -v error -show_entries format=duration \

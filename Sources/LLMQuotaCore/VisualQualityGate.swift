@@ -93,8 +93,7 @@ public enum VisualQualityGate {
         guard status(branch: item.branch, head: item.head, tasks: tasks) == .missing
         else { return nil }
         let visual = item.evidence.filter {
-            let l = $0.lowercased()
-            return [".png", ".jpg", ".jpeg", ".mov", ".mp4"].contains(where: l.hasSuffix)
+            Review.isImageName($0) || Review.isVideoName($0)
         }
         guard !visual.isEmpty else { return nil }
         let extracted = Review.extractEvidence(

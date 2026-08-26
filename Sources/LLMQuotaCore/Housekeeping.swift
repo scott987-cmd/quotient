@@ -65,19 +65,31 @@ public enum Housekeeping {
     /// 共享证据目录只增不减:分支落地之后,它那几张图/几段录屏还留着。
     /// 实测 2026-08-22:64 个文件 46MB,而当前待审只引用 11 个 ——
     /// 53 个是垃圾,却每天在 iCloud 上来回同步,手机端也要为它们排队。
-    /// 判据:不在任何一条待审记录里的,删。
+    /// 判据:不在任何一条待审记录、也不被仍需消费证据的任务引用,删。
+    ///
+    /// 视觉任务的提示词保存的是共享目录里的文件名。任务排队期间若只看
+    /// publishedDigests，半小时后清理器会先删证据、随后验收必然报“没有读到”。
     @discardableResult
-    static func sweepOrphanEvidence() -> Int {
-        let dir = Review.evidenceDir
+    static func sweepOrphanEvidence(
+        directory dir: URL = Review.evidenceDir,
+        digests: [Review.Digest] = Review.publishedDigests(),
+        tasks: [WorkTask] = TaskStore.all(),
+        now: Date = Date()
+    ) -> Int {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return 0 }
-        let live = Set(Review.publishedDigests().flatMap(\.evidenceFiles))
+        var live = Set(digests.flatMap(\.evidenceFiles))
+        for task in tasks where task.state == .queued || task.state == .running || task.state == .blocked {
+            live.formUnion(MiniMaxMediaRunner.visualFiles(in: task.prompt).map {
+                URL(fileURLWithPath: $0).lastPathComponent
+            })
+        }
         var removed = 0
         for n in names where !live.contains(n) {
             // 刚抽出来还没发布的别删 —— 半小时宽限。
             let p = (dir.path as NSString).appendingPathComponent(n)
             let m = (try? fm.attributesOfItem(atPath: p))?[.modificationDate] as? Date
-            guard Date().timeIntervalSince(m ?? .distantPast) > 1800 else { continue }
+            guard now.timeIntervalSince(m ?? .distantPast) > 1800 else { continue }
             if (try? fm.removeItem(atPath: p)) != nil { removed += 1 }
         }
         return removed
