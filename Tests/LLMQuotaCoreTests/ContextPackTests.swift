@@ -635,4 +635,131 @@ final class ContextPackTests: XCTestCase {
         XCTAssertFalse(recorded?.refusedReason?.isEmpty ?? true,
             "台账里的记录必须带着拒绝原因")
     }
+    // MARK: - 直接依赖产物是 P1（设计 6.2）
+
+    /// 重压下直接依赖的产物不能当 P2 丢掉 —— 下一棒拿不到它就会重复工作。
+    func testDirectDependencySurvivesBudgetPressureNeverDropped() throws {
+        let review = visualReview(id: "revd", repo: repoA, observation: "画面观察短句")
+        var upstream = task("t-up", prompt: "上游产出开火节奏表", repo: repoA)
+        upstream.graphID = "g-dep"
+        upstream.state = .done
+        upstream.outputs = ["DEPMARK-fire-rate.md", "spread-table.md"]
+        upstream.branch = "agent/graph/g-dep"
+        var source = task("t1", prompt: "依据上一步调整开火节奏", repo: repoA)
+        source.visualRemediationReviewID = "revd"
+        source.dependsOn = ["t-up"]
+        try publishEvent(id: "noise-q", project: repoA, taskID: nil,
+                         sender: "human", kind: .question, summary: "QHOLD-占位问题")
+        for i in 0..<40 {
+            try publishEvent(id: String(format: "dd%02d", i), project: repoA,
+                             taskID: "t1", sender: "codex.architect",
+                             summary: "裁决\(i)：" + String(repeating: "保持灰盒路线。", count: 8))
+        }
+
+        // 文本 Runner（不能折叠成它读不了的引用）：要么全文在场，要么拒派，
+        // 绝不允许静默丢弃。
+        let denied = build(task: source, all: [source, upstream, review],
+                           runnerID: "minimax.text", platform: .minimax,
+                           canReadFiles: false, budget: 12_000)
+        if !denied.refused {
+            XCTAssertTrue(denied.manifest.includedFactIDs.contains("dep:t-up"),
+                "直接依赖产物是 P1，不能被降级丢弃")
+            XCTAssertTrue(denied.text.contains("DEPMARK-fire-rate.md"),
+                "依赖的产出文件名必须在包里")
+            XCTAssertFalse(denied.manifest.droppedFacts.contains { $0.id == "dep:t-up" })
+        } else {
+            XCTAssertTrue(denied.refusedReason?.hasPrefix("insufficientContextCapability") == true)
+        }
+
+        // 重压档：40 条常规决定挤压共享池。dep 作为 P1 必须先于它们落座，
+        // 绝不允许进丢弃清单。
+        let pressured = build(task: source, all: [source, upstream, review],
+                              runnerID: "minimax.text", platform: .minimax,
+                              canReadFiles: false, budget: 5_500)
+        let accounted = pressured.manifest.includedFactIDs.contains("dep:t-up")
+            || pressured.manifest.referencedFactIDs.contains("dep:t-up")
+        XCTAssertTrue(accounted || pressured.refused,
+            "重压下直接依赖只能全文在场、合法引用或整体拒派，不能消失")
+        XCTAssertFalse(pressured.manifest.droppedFacts.contains { $0.id == "dep:t-up" },
+            "P1 依赖产物不允许进入丢弃清单")
+        XCTAssertLessThanOrEqual(pressured.manifest.totalCharacters, 5_500)
+    }
+
+    /// 文本 Runner 读不了引用：依赖语义装不下时必须派发前拒绝。
+    func testTextRunnerRefusedWhenDependencySemanticsCannotFit() throws {
+        let probe = task("probe", prompt: "探针", repo: repoA)
+        let contracts = build(task: probe, all: [probe], runnerID: "claude.code",
+                              platform: .claude, canReadFiles: true)
+            .manifest.charactersBySection["contracts"] ?? 623
+
+        var upstream = task("t-up", prompt: "上游步骤的标题比较长一点", repo: repoA)
+        upstream.state = .done
+        upstream.outputs = ["fire-rate.md"]
+        var source = task("t1", prompt: "接着干", repo: repoA)
+        source.dependsOn = ["t-up"]
+
+        // 探针测出固定段（契约+产品约束）的真实长度，再留一个
+        // 「装得下引用、装不下全文」也容不下的极小尾巴。
+        let probeBase = build(task: probe, all: [probe], runnerID: "minimax.text",
+                              platform: .minimax, canReadFiles: false)
+            .manifest.charactersBySection
+        let fixed = (probeBase["contracts"] ?? 0) + (probeBase["product"] ?? 0)
+        let denied = build(task: source, all: [source, upstream],
+                           runnerID: "minimax.text", platform: .minimax,
+                           canReadFiles: false, budget: fixed + 60)
+        XCTAssertNotNil(denied.refusedReason,
+            "文本 Runner 不能拿着读不了的引用开工，缺依赖语义就该拒")
+        XCTAssertTrue(denied.refusedReason?.hasPrefix("insufficientContextCapability") == true)
+    }
+
+    /// 文件型 Runner 的依赖事实必须带折叠引用形式（全文装不下时的
+    /// 合法出口）；文本 Runner 没有引用形式 —— 只能全文或拒派。
+    func testDependencyFactCarriesFoldFormOnlyForFileReaders() {
+        var upstream = task("t-up", prompt: "上游步骤的标题比较长一点", repo: repoA)
+        upstream.state = .done
+        upstream.outputs = ["fire-rate.md"]
+        var source = task("t1", prompt: "接着干", repo: repoA)
+        source.dependsOn = ["t-up"]
+
+        let projection = ContextProjection(project: repoA.path,
+                                           tasks: [source, upstream], events: [])
+        let forReader: (String, Bool) -> ContextPackBuilder.FactItem? = { runner, files in
+            ContextPackBuilder.factItems(
+                projection: projection,
+                request: ContextPackBuilder.Request(
+                    task: source, allTasks: [source, upstream], events: [],
+                    runnerID: runner, platform: .claude,
+                    canReadFiles: files, workspacePath: self.repoA.path,
+                    handoff: nil, resumedAnswer: nil, resumedAsk: nil,
+                    mayAsk: false, askFile: nil, tier: .standard,
+                    sessionAction: "fresh"))
+            .first { $0.id == "dep:t-up" }
+        }
+        let fileReader = forReader("claude.code", true)
+        XCTAssertEqual(fileReader?.essential, true, "依赖产物必须是 P1 essential")
+        XCTAssertTrue(fileReader?.referenceLine?.contains("[dep:t-up]") == true,
+            "文件型 Runner 的折叠引用要带得上 dep 标识")
+        let textOnly = forReader("minimax.text", false)
+        XCTAssertNil(textOnly?.referenceLine,
+            "文本 Runner 不能被塞一个它读不了的引用当出口")
+        XCTAssertTrue(textOnly?.line.contains("fire-rate.md") == true)
+    }
+
+    /// 一条异常/恶意的超长 output 不能制造巨型提示词行。
+    func testGiantOutputNameIsClampedPerItem() {
+        var upstream = task("t-up", prompt: "上游", repo: repoA)
+        upstream.state = .done
+        upstream.outputs = [String(repeating: "X", count: 50_000)]
+        var source = task("t1", prompt: "接着干", repo: repoA)
+        source.dependsOn = ["t-up"]
+
+        let pack = build(task: source, all: [source, upstream],
+                         runnerID: "claude.code", platform: .claude,
+                         canReadFiles: true)
+        XCTAssertNil(pack.refusedReason)
+        XCTAssertFalse(pack.text.contains(String(repeating: "X", count: 5_000)),
+            "单个输出名必须按项钳长，不能整段灌进提示词")
+        XCTAssertLessThanOrEqual(pack.manifest.totalCharacters,
+                                 ContextPackBuilder.defaultBudget)
+    }
 }

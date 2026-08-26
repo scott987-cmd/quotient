@@ -164,7 +164,7 @@ public enum ContextPackBuilder {
             return refusal(request: request, detail: error.localizedDescription)
         }
 
-        appendDependencies(projection: projection, request: request, to: &assembler)
+        appendHandoff(request: request, to: &assembler)
         appendGraphPosition(projection: projection, request: request, to: &assembler)
         appendRepoMap(request: request, to: &assembler)
 
@@ -271,7 +271,7 @@ public enum ContextPackBuilder {
         var referenceLine: String?
     }
 
-    private static func factItems(projection: ContextProjection,
+    static func factItems(projection: ContextProjection,
                                   request: Request) -> [FactItem] {
         var items: [FactItem] = []
 
@@ -289,6 +289,28 @@ public enum ContextPackBuilder {
                 essential: essential,
                 referenceLine: essential ? nil
                     : "- [\(event.id)]（预算内折叠为引用；可用 collaboration_get_context 按 ID 展开）"))
+        }
+
+        // 直接依赖的产物是 P1（设计 6.2）：下一棒拿不到它就会把同样的活
+        // 重做一遍。排在未解决问题之后、常规决定之前；单个输出名按项钳长，
+        // 一条异常/恶意的超长 output 不许制造巨型提示词行。能读文件的
+        // Runner 放不下时可折叠为明确的 dep 引用；文本 Runner 读不了引用，
+        // 装不下就走 essential refusal。
+        for upstream in projection.directDependencies(of: request.task) {
+            let title = upstream.stepTitle ?? String(upstream.prompt.prefix(40))
+            var line = "- [dep:\(upstream.id)] \(title)"
+            if !upstream.outputs.isEmpty {
+                line += "，产出：" + upstream.outputs.prefix(10)
+                    .map { String($0.prefix(120)) }.joined(separator: "、")
+            }
+            if let branch = upstream.branch { line += "，分支 \(branch)" }
+            line = String(line.prefix(600))
+            let reference: String? = request.canReadFiles
+                ? "- [dep:\(upstream.id)]（预算内折叠为引用；"
+                    + "用 git diff 和产出路径自查）"
+                : nil
+            items.append(FactItem(id: "dep:\(upstream.id)", line: line,
+                                  essential: true, referenceLine: reference))
         }
 
         // 视觉否决：Review/Finding/Evidence 经 visualRemediationReviewID 关联。
@@ -383,42 +405,28 @@ public enum ContextPackBuilder {
                          includedIDs: included, referencedIDs: referenced)
     }
 
-    // MARK: P2 依赖与交接
+    // MARK: P2 接力说明
 
-    private static func appendDependencies(projection: ContextProjection,
-                                           request: Request,
-                                           to assembler: inout Assembler) {
-        var lines: [String] = []
-        var ids: [String] = []
-        if let handoff = request.handoff {
-            lines.append(handoff.briefing().trimmingCharacters(in: .whitespacesAndNewlines))
-            ids.append("handoff")
-        }
-        for upstream in projection.directDependencies(of: request.task) {
-            var line = "- [dep:\(upstream.id)] "
-                + (upstream.stepTitle ?? String(upstream.prompt.prefix(40)))
-            if !upstream.outputs.isEmpty {
-                line += "，产出：" + upstream.outputs.prefix(10).joined(separator: "、")
-            }
-            if let branch = upstream.branch { line += "，分支 \(branch)" }
-            lines.append(line)
-            ids.append("dep:\(upstream.id)")
-        }
-        guard !lines.isEmpty else { return }
-        let header = "\n\n【依赖与交接（改动都在工作区里，别推倒重来）】\n"
-        let full = header + lines.joined(separator: "\n")
+    /// 只装 handoff。直接依赖的产物**不是**这一段 —— 它们是 P1 事实
+    /// （见 factItems 的 dep 循环），预算紧时不允许像接力说明这样让位：
+    /// 丢一次依赖清单，下一棒就会把上游做过的活重做一遍。
+    private static func appendHandoff(request: Request,
+                                      to assembler: inout Assembler) {
+        guard let handoff = request.handoff else { return }
+        let full = "\n\n【依赖与交接（改动都在工作区里，别推倒重来）】\n"
+            + handoff.briefing().trimmingCharacters(in: .whitespacesAndNewlines)
         if full.count <= assembler.remaining {
-            assembler.append(section: .dependencies, content: full, includedIDs: ids)
+            assembler.append(section: .dependencies, content: full,
+                             includedIDs: ["handoff"])
             return
         }
         // 超限时改为引用（设计 6.2）：只保留「有什么」，细节让 agent 自查。
-        let compact = "\n\n【依赖与交接（预算内折叠为引用，细节用 git diff 自查）】\n"
-            + ids.map { "- [\($0)]" }.joined(separator: "\n")
+        let compact = "\n\n【依赖与交接（预算内折叠为引用，细节用 git diff 自查）】\n- [handoff]"
         if compact.count <= assembler.remaining {
             assembler.append(section: .dependencies, content: compact,
-                             referencedIDs: ids)
+                             referencedIDs: ["handoff"])
         } else {
-            for id in ids { assembler.drop(id: id, reason: "总预算不足（P2 让位）") }
+            assembler.drop(id: "handoff", reason: "总预算不足（P2 让位）")
         }
     }
 
