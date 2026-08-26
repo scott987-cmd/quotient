@@ -440,6 +440,22 @@ public enum TaskStore {
     }
 }
 
+/// `llmq work run [任务ID]` 的目标选择。
+///
+/// 手动点名任务和后台队列循环是两种不同语义：后台循环应跳过暂时无人可接的
+/// 队头继续利用其他平台；手动点名则必须只尝试那一个任务，不能把“运行 A”
+/// 悄悄解释成“从全队列随便运行一个”。
+public enum WorkRunTarget {
+    public static func explicitID(arguments: [String]) -> String? {
+        arguments.first { !$0.hasPrefix("-") }
+    }
+
+    public static func select(ready: [WorkTask], explicitID: String?) -> [WorkTask] {
+        guard let explicitID else { return ready }
+        return ready.filter { $0.id == explicitID }
+    }
+}
+
 // MARK: - 调度
 
 /// 挑一个平台来跑这个任务。

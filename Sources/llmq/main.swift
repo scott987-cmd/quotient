@@ -1302,7 +1302,9 @@ func cmdWork(_ args: [String]) throws {
         }
 
     case "run":
-        try runOneTask(dryRun: rest.contains("--dry-run"))
+        try runOneTask(
+            dryRun: rest.contains("--dry-run"),
+            onlyTaskID: WorkRunTarget.explicitID(arguments: rest))
 
     case "loop":
         try cmdWorkLoop(rest)
@@ -2049,7 +2051,8 @@ func publishCollaboration(_ event: CollaborationEvent) -> Bool {
     }
 }
 
-func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
+func runOneTask(dryRun: Bool, quiet: Bool = false,
+                onlyTaskID: String? = nil) throws -> RunOutcome {
     // **修队头阻塞：不再只看队头。**
     //
     // 老版只取 nextQueued() 一个：排头那个没人能接（比如常规风险
@@ -2068,11 +2071,29 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
             rateLimited: false, lowDisk: true, pendingLanding: 0), quiet: quiet)
     }
 
-    refillIfIdle()
+    // 手动点名是精确执行，不应顺带补队列；否则目标暂时不可跑时，新增任务
+    // 反而可能被本次命令启动，进一步掩盖“指定任务没有运行”的事实。
+    if onlyTaskID == nil { refillIfIdle() }
 
-    let rawQueue = TaskStore.readyQueue()
+    let allReady = TaskStore.readyQueue()
+    let rawQueue = WorkRunTarget.select(ready: allReady, explicitID: onlyTaskID)
     guard !rawQueue.isEmpty else {
         let all = TaskStore.all()
+        if let onlyTaskID {
+            if let target = all.first(where: { $0.id == onlyTaskID }) {
+                let reason: String
+                switch target.state {
+                case .queued:
+                    reason = "任务仍在排队，但依赖或前提尚未就绪"
+                default:
+                    reason = "任务当前状态是 \(target.state.rawValue)，不是可运行的 queued"
+                }
+                if !quiet { print(Ansi.yellow("没有运行 \(onlyTaskID)：") + Ansi.dim(reason)) }
+            } else if !quiet {
+                print(Ansi.red("找不到任务 \(onlyTaskID)"))
+            }
+            return .noTask
+        }
         let queuedTotal = all.filter { $0.state == .queued }.count
         let stuck = RepoRegistry.all().reduce(0) {
             $0 + Review.list(repo: NSString(string: $1.localPath).expandingTildeInPath).count
