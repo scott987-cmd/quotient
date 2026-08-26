@@ -82,6 +82,22 @@ public enum ContextPackRollout {
         }) else { return false }
         return config.enabledAliases.contains(entry.alias)
     }
+
+    /// 把名单拆成「登记表里真实存在、可以叫已启用」和「配置里有但登记表
+    /// 里查不到」两组。展示层必须只把 valid 叫已启用，ignored 单独提示 ——
+    /// 调度虽然 fail-closed，但界面上把幽灵别名说成「已启用」会误导人。
+    public static func partitionEnabled(
+        _ aliases: [String], registry: [RepoAlias]
+    ) -> (valid: [String], ignored: [String]) {
+        let known = Set(registry.map(\.alias))
+        var valid: [String] = []
+        var ignored: [String] = []
+        for alias in aliases {
+            if known.contains(alias) { valid.append(alias) }
+            else { ignored.append(alias) }
+        }
+        return (valid, ignored)
+    }
 }
 
 /// 派发提示词的选择层：新 pack 始终构建并记录，实际派发哪份由灰度决定。
@@ -100,7 +116,8 @@ public enum ContextDispatchPrompt {
         public var refused: Bool
     }
 
-    /// `legacy` 闭包返回影子模式实际派发的旧拼装提示词。
+    /// `legacy` 闭包返回影子模式实际派发的旧拼装提示词，
+    /// **恰好执行一次**（影子派发用它，记账也从它算）。
     /// 由调用方注入而不是在这里重新拼装 —— 旧逻辑收口在
     /// LegacyContextPromptBuilder，选择层只做选择。
     public static func build(request: ContextPackBuilder.Request,
@@ -112,11 +129,36 @@ public enum ContextDispatchPrompt {
         manifest.rolloutMode = mode.rawValue
 
         if mode == .active {
+            // active 拒绝 = 什么都没派发，dispatchedSystemCharacters 记 nil；
+            // 非拒绝时实际派发的就是新包，等于 totalCharacters。
+            manifest.dispatchedSystemCharacters =
+                pack.refused ? nil : pack.manifest.totalCharacters
             return Outcome(prompt: pack.text, pack: pack, mode: .active,
                            manifest: manifest, refused: pack.refused)
         }
+        // 影子：legacy 恰好执行一次；派发它，并把它的系统注入量记下来。
+        let legacyPrompt = legacy()
+        let userMaterial: String
+        if let answer = request.resumedAnswer, let ask = request.resumedAsk {
+            userMaterial = answer.briefing(for: ask)
+        } else {
+            userMaterial = ""
+        }
+        manifest.dispatchedSystemCharacters = dispatchedSystemCharacters(
+            legacyPrompt: legacyPrompt,
+            taskBody: VisualQualityGate.compactRemediationPrompt(request.task.prompt),
+            userMaterial: userMaterial)
         // 影子：新 pack 的拒绝只记账，绝不拦住真实派发。
-        return Outcome(prompt: legacy(), pack: pack, mode: .shadow,
+        return Outcome(prompt: legacyPrompt, pack: pack, mode: .shadow,
                        manifest: manifest, refused: false)
+    }
+
+    /// 影子的系统注入字符数：旧拼装总长 − 任务正文 − 用户答复。
+    /// handoff/地图/产品约束/条款/图位置/协作账/提问契约全算系统注入；
+    /// 答复是用户提供的材料，不算。纯函数，异常输入钳到 0 不出负数。
+    static func dispatchedSystemCharacters(
+        legacyPrompt: String, taskBody: String, userMaterial: String
+    ) -> Int {
+        max(0, legacyPrompt.count - taskBody.count - userMaterial.count)
     }
 }

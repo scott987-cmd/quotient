@@ -505,6 +505,14 @@ public struct ContextPackManifest: Codable, Sendable {
     public var refusedReason: String?
     /// 灰度模式（shadow/active）。旧记录没有这个字段，解码降级为 nil。
     public var rolloutMode: String?
+    /// 实际派发那一份提示词里的**系统注入**字符数。
+    ///
+    /// 影子模式派发的是旧拼装：这里记 legacy 总长 − 任务正文 − 用户答复
+    /// （handoff/地图/产品约束/条款/图位置/协作账/提问契约都算系统注入），
+    /// 否则新旧 P50/P95 和节省率没法比 —— 这是设计阶段 0 的核心对照数据。
+    /// active 非拒绝 = totalCharacters（派发的就是新包）；active 拒绝 =
+    /// nil（什么都没派发，别拿候选包充数）。旧记录缺字段降级为 nil。
+    public var dispatchedSystemCharacters: Int?
     public var createdAt: Date
 
     public init(taskID: String, runnerID: String, totalCharacters: Int,
@@ -524,6 +532,7 @@ public struct ContextPackManifest: Codable, Sendable {
         self.sessionAction = sessionAction
         self.refusedReason = nil
         self.rolloutMode = nil
+        self.dispatchedSystemCharacters = nil
         self.createdAt = createdAt
     }
 
@@ -547,6 +556,8 @@ public struct ContextPackManifest: Codable, Sendable {
         sessionAction = try c.decodeIfPresent(String.self, forKey: .sessionAction)
         refusedReason = try c.decodeIfPresent(String.self, forKey: .refusedReason)
         rolloutMode = try c.decodeIfPresent(String.self, forKey: .rolloutMode)
+        dispatchedSystemCharacters = try c.decodeIfPresent(
+            Int.self, forKey: .dispatchedSystemCharacters)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? .distantPast
     }
 }

@@ -2607,7 +2607,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false) throws -> RunOutcome {
                 workspacePath: ws.path, handoff: handoff ?? task.handoff,
                 resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
                 mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil) })
-        var effectivePrompt = outcome.prompt
+        let effectivePrompt = outcome.prompt
         // 台账每次构建恰好记一笔，且必须发生在拒绝分支之前 —— 拒绝的
         // manifest 不进台账，context miss 和拒绝率就永远统计不出来。
         ContextTelemetry.record(outcome.manifest)
@@ -4088,23 +4088,34 @@ func cmdContextPack(_ args: [String]) throws {
     let sub = Array(args.dropFirst())
     switch (sub.first, sub.count) {
     case ("list", 1):
-        let enabled = Set(ContextPackRollout.load().enabledAliases)
+        let config = ContextPackRollout.load()
+        // 名单里的别名可能已经从登记表删掉了 —— 调度上它们 fail-closed
+        // 不生效，界面上也绝不能说成「已启用」，单独提示被忽略。
+        let (valid, ignored) = ContextPackRollout.partitionEnabled(
+            config.enabledAliases, registry: RepoRegistry.all())
         let repos = RepoRegistry.all()
-        if repos.isEmpty && enabled.isEmpty {
+        if repos.isEmpty && valid.isEmpty {
             print("还没有登记任何仓库，也没有启用任何新上下文包。")
             print(Ansi.dim("一切照旧：所有任务都用旧提示词派发。"))
             return
         }
-        if enabled.isEmpty {
+        if valid.isEmpty {
             print("当前没有仓库启用新上下文包 —— 全部任务照旧用旧提示词派发，"
                 + "系统只在后台记录新包的样子作对比。")
         } else {
             print(Ansi.bold("已启用新上下文包的仓库"))
-            for alias in ContextPackRollout.load().enabledAliases.sorted() {
+            for alias in valid.sorted() {
                 print("  " + Ansi.green(alias))
             }
         }
-        let unlisted = repos.filter { !enabled.contains($0.alias) }
+        if !ignored.isEmpty {
+            print()
+            print(Ansi.yellow("配置中有已忽略的未知仓库："
+                + ignored.sorted().joined(separator: "、")))
+            print(Ansi.dim("这些名字不在登记表里，不生效。清理可用："
+                + "llmq context-pack rollout disable <别名>"))
+        }
+        let unlisted = repos.filter { !valid.contains($0.alias) }
         if !unlisted.isEmpty {
             print()
             print(Ansi.dim("仍在影子模式的登记仓库：" +

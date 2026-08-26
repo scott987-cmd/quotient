@@ -35,6 +35,9 @@ final class ContextPackRolloutTests: XCTestCase {
         ContextTelemetry.fileOverride = nil
         CollaborationStore.directoryOverride = nil
         Paths.appSupportOverride = nil
+        for repo in [repoA, repoB].compactMap({ $0 }) {
+            try? FileManager.default.removeItem(at: repo)
+        }
         try? FileManager.default.removeItem(at: scratch)
         super.tearDown()
     }
@@ -223,6 +226,78 @@ final class ContextPackRolloutTests: XCTestCase {
         let m = try SnapshotCoding.decoder().decode(ContextPackManifest.self,
                                                     from: Data(json.utf8))
         XCTAssertNil(m.rolloutMode, "旧记录缺 rolloutMode 必须能解码且读成 nil")
+        XCTAssertNil(m.dispatchedSystemCharacters,
+            "旧记录缺 dispatchedSystemCharacters 必须能解码且读成 nil")
+    }
+
+    // MARK: - 影子记账：实际派发的系统注入字符数
+
+    func testShadowManifestRecordsLegacySystemInjectionExactly() {
+        var legacyCalls = 0
+        let systemSection = "SYS-INJECT-固定长度的旧拼装系统段"
+        let outcome = ContextDispatchPrompt.build(
+            request: request(task: WorkTask(id: "t", prompt: "任务正文XYZ",
+                                            repo: repoA.path)),
+            legacy: {
+                legacyCalls += 1
+                return "任务正文XYZ" + systemSection
+            })
+
+        XCTAssertEqual(legacyCalls, 1, "legacy 闭包必须恰好执行一次")
+        XCTAssertEqual(outcome.manifest.rolloutMode, "shadow")
+        XCTAssertEqual(outcome.manifest.dispatchedSystemCharacters,
+                       systemSection.count,
+            "影子必须记录旧拼装的系统注入字符数（扣除任务正文），"
+                + "否则新旧 P50/P95 和节省率没法比")
+        XCTAssertEqual(outcome.manifest.totalCharacters,
+                       outcome.pack.manifest.totalCharacters,
+            "totalCharacters 必须仍是新包的量，两套数字不能混")
+    }
+
+    func testShadowSubtractsResumedAnswerFromSystemInjection() {
+        // 用户答复是用户材料，不算系统注入 —— 扣除逻辑收在纯函数里。
+        // （Ask 结构要 taskID/machineID/轮次等一整套字段，
+        // 端到端构造成本不成比例；这里钉死算术，build() 只负责喂参数。）
+        XCTAssertEqual(ContextDispatchPrompt.dispatchedSystemCharacters(
+            legacyPrompt: "正文" + "系统段" + "用户答复段",
+            taskBody: "正文",
+            userMaterial: "用户答复段"), "系统段".count)
+        // 防御：legacy 异常短于正文时不得报负数。
+        XCTAssertEqual(ContextDispatchPrompt.dispatchedSystemCharacters(
+            legacyPrompt: "短", taskBody: "很长的任务正文", userMaterial: ""), 0)
+    }
+
+    func testActiveRecordsNewPackSizeAndRefusalRecordsNothing() throws {
+        enable(["alpha"])
+        let plain = ContextDispatchPrompt.build(
+            request: request(task: WorkTask(id: "t", prompt: "正文", repo: repoA.path)),
+            legacy: { "LEGACY" })
+        XCTAssertEqual(plain.mode, .active)
+        XCTAssertEqual(plain.manifest.dispatchedSystemCharacters,
+                       plain.manifest.totalCharacters,
+            "active 非拒绝时实际派发的就是新包")
+
+        enable(["alpha"])
+        let denied = ContextDispatchPrompt.build(
+            request: refuserRequest(repo: repoA), legacy: { "LEGACY" })
+        XCTAssertTrue(denied.refused)
+        XCTAssertNil(denied.manifest.dispatchedSystemCharacters,
+            "active 拒绝时没有派发任何提示词 —— 记 nil，别拿候选包充数")
+    }
+
+    // MARK: - list 的有效/忽略名单
+
+    func testPartitionEnabledSplitsRegisteredFromGhost() {
+        let registry = [
+            RepoAlias(alias: "alpha", path: "/tmp/a"),
+            RepoAlias(alias: "beta", path: "/tmp/b"),
+        ]
+        let split = ContextPackRollout.partitionEnabled(
+            ["beta", "ghost", "alpha"], registry: registry)
+        XCTAssertEqual(split.valid, ["beta", "alpha"],
+            "只有登记表里的别名才算已启用")
+        XCTAssertEqual(split.ignored, ["ghost"],
+            "幽灵别名单独归入忽略名单，绝不能显示成已启用")
     }
 
     // MARK: - QUALITY.md 尾部验收条款
