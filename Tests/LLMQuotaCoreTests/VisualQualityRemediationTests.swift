@@ -2,6 +2,28 @@ import XCTest
 @testable import LLMQuotaCore
 
 final class VisualQualityRemediationTests: XCTestCase {
+    func testFailedVisualReviewRetriesAreCappedPerCommit() {
+        let branch = "agent/minimax/grip"
+        let head = "c43c026"
+        var attempts = (1...3).map { index in
+            var task = visual(id: "failed-\(index)", branch: branch, head: head,
+                              verdict: "未达标", endedAt: Date())
+            task.state = .failed
+            task.outputs = []
+            return task
+        }
+        XCTAssertTrue(VisualQualityGate.exhausted(
+            branch: branch, head: head, tasks: attempts))
+
+        attempts.removeLast()
+        XCTAssertFalse(VisualQualityGate.exhausted(
+            branch: branch, head: head, tasks: attempts),
+            "第一次失败后仍应允许两次正常重试")
+        XCTAssertFalse(VisualQualityGate.exhausted(
+            branch: branch, head: "new-head", tasks: attempts),
+            "实现产生新提交后必须重新允许视觉验收")
+    }
+
     func testPromptKeepsOnlyLatestVisualRemediation() {
         let prompt = "原始任务\n\n【视觉整改：old】\n旧问题"
             + "\n\n【视觉整改：new】\n新问题"

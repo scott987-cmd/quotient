@@ -84,6 +84,20 @@ public enum VisualQualityGate {
         latestStatus(branch: branch, tasks: tasks) == .approved
     }
 
+    /// 同一版画面连续三次连结论都没产出，就停止自动重派。
+    ///
+    /// 正常抖动仍有两次重试机会；WorkspaceBusy、媒体解析失败等系统性故障
+    /// 不会因此每轮生成一张新票，直到队列被淹没。新提交的 head 不同，计数
+    /// 会自然归零，不会阻止修正后的版本重新验收。
+    static func exhausted(branch: String, head: String, tasks: [WorkTask]) -> Bool {
+        let prefix = marker(branch: branch, head: head)
+        let attempts = tasks.filter {
+            $0.prompt.hasPrefix(prefix)
+                && ($0.state == .done || $0.state == .failed)
+        }.count
+        return attempts >= 3
+    }
+
     @discardableResult
     public static func dispatch(item: Review.Item, repo: String,
                                 tasks: [WorkTask]) -> String? {
@@ -91,6 +105,8 @@ public enum VisualQualityGate {
         // 在跑不该让其他项目连排队都排不进去；旧全局互斥会让一条卡住的录屏
         // 验收静默冻结全网。
         guard status(branch: item.branch, head: item.head, tasks: tasks) == .missing
+        else { return nil }
+        guard !exhausted(branch: item.branch, head: item.head, tasks: tasks)
         else { return nil }
         let visual = item.evidence.filter {
             Review.isImageName($0) || Review.isVideoName($0)

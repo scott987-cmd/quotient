@@ -2180,11 +2180,46 @@ public enum GitWorkspace {
     /// 在 worktrees/flint-openrouter 里又跑了 88 分钟；与此同时新 worker
     /// 把同一个目录切到了另一条任务的分支 agent/openrouter/74726e09。
     /// 两个 agent 同时往一个工作区里写，孤儿的产出会落到错误的分支上。
+    static func isAgentOccupantCommand(_ command: String) -> Bool {
+        // MiniMax 视觉执行器由 zsh 编排抽帧和多模态调用，进程名只是 zsh；
+        // 脚本里的专用变量是比“任意 shell”更精确的身份标记。
+        if command.contains("LLMQ_MMX") { return true }
+        let allowed = Set(["claude", "codex", "gemini", "kimi", "mmx",
+                           "opencode", "qwen", "zcode"])
+        // npm 安装的 CLI 在进程表里通常是 `node /path/to/mmx ...`，所以既看
+        // 真正可执行文件，也看紧随其后的脚本路径；任务正文里的同名单词
+        // 位置更靠后，不能把它误当执行器。
+        return command.split(whereSeparator: { $0.isWhitespace }).prefix(3).contains {
+            let token = String($0).trimmingCharacters(
+                in: CharacterSet(charactersIn: "'\""))
+            return allowed.contains(URL(fileURLWithPath: token)
+                .lastPathComponent.lowercased())
+        }
+    }
+
+    static func agentOccupants(fromLsof output: String,
+                               commandForPID: (Int32) -> String?) -> [Int32] {
+        output.split(separator: "\n").compactMap {
+            guard $0.hasPrefix("p"), let pid = Int32($0.dropFirst()),
+                  let command = commandForPID(pid),
+                  isAgentOccupantCommand(command) else { return nil }
+            return pid
+        }
+    }
+
     public static var occupantsProbe: (String) -> [Int32] = { path in
+        // lsof 会把继承了 cwd 的 Xcode 后台服务也列出来。现场的 DTServiceHub
+        // 已经没有任何 agent 父进程，却让 flint-minimax 永久报 WorkspaceBusy，
+        // 每轮又派生一批失败的验收票。占用闸保护的是“仍在该目录写代码的
+        // agent”，所以同时读取进程名，只保留真实执行器；普通工具/系统服务
+        // 即使 cwd 没归位，也不能永久锁死整条平台泳道。
         let out = Proc.run("/usr/sbin/lsof", ["-a", "-d", "cwd", "-Fp", "--", path],
                            cwd: nil, env: [:], timeout: 10).stdout
-        return out.split(separator: "\n").compactMap {
-            $0.hasPrefix("p") ? Int32($0.dropFirst()) : nil
+        return agentOccupants(fromLsof: out) { pid in
+            let result = Proc.run("/bin/ps", ["-p", String(pid), "-o", "command="],
+                                  cwd: nil, env: [:], timeout: 5)
+            guard result.exitCode == 0 else { return nil }
+            return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
 

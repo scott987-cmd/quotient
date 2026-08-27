@@ -45,6 +45,37 @@ final class WorkspaceBusyTests: XCTestCase {
         XCTAssertTrue(GitWorkspace.occupantsProbe("/tmp/wt").isEmpty)
     }
 
+    func test_Xcode后台服务不算Agent占用() {
+        XCTAssertFalse(GitWorkspace.isAgentOccupantCommand("DTServiceHub"))
+        XCTAssertFalse(GitWorkspace.isAgentOccupantCommand("CoreSimulatorService"))
+        XCTAssertTrue(GitWorkspace.isAgentOccupantCommand("claude"))
+        XCTAssertTrue(GitWorkspace.isAgentOccupantCommand("opencode"))
+        XCTAssertTrue(GitWorkspace.isAgentOccupantCommand("/usr/local/bin/qwen"))
+        XCTAssertTrue(GitWorkspace.isAgentOccupantCommand(
+            "/usr/local/bin/node /Users/me/.hermes/bin/mmx text chat"),
+            "Node 包装的 MiniMax 也是真实 Agent")
+        XCTAssertTrue(GitWorkspace.isAgentOccupantCommand(
+            "/bin/zsh -c export PATH=...; run_mmx() { $LLMQ_MMX vision describe; }"),
+            "视觉执行器的 zsh 编排进程也必须保护")
+
+        let lsof = """
+        p49226
+        fcwd
+        p50123
+        fcwd
+        p50124
+        fcwd
+        """
+        let commands: [Int32: String] = [
+            49226: "/Applications/Xcode.app/DTServiceHub",
+            50123: "/usr/local/bin/claude -p task",
+            50124: "/usr/local/bin/node /Users/me/.hermes/bin/mmx text chat",
+        ]
+        XCTAssertEqual(GitWorkspace.agentOccupants(
+            fromLsof: lsof, commandForPID: { commands[$0] }), [50123, 50124],
+                       "必须从真实 lsof 格式里排除 Xcode 遗留服务")
+    }
+
     func test_切换复用工作区前_真实经过占用闸() throws {
         let repo = scratch.appendingPathComponent("repo")
         try FileManager.default.createDirectory(at: repo,
