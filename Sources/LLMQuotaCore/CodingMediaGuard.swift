@@ -18,10 +18,13 @@ public enum CodingMediaGuard {
         "mov", "m4v", "mp4", "avi", "mkv", "webm",
     ]
 
-    /// 同时覆盖工作区相对路径和 Claude Code 的绝对路径规则。
+    /// 同时覆盖工作区相对路径和 Claude Code 的绝对路径规则。另禁掉最常见的
+    /// shell 旁路；代码 Agent 读文本应使用 Read，不需要用 cat/base64 绕过媒体门。
     public static let disallowedReadTools: [String] = extensions.flatMap { ext in
         ["Read(**/*.\(ext))", "Read(//**/*.\(ext))"]
-    }
+    } + [
+        "Bash(cat *)", "Bash(base64 *)", "Bash(xxd *)", "Bash(hexdump *)",
+    ]
 
     /// 这类服务端拒绝不是代码能力失败，而是媒体附件污染了持久会话。
     public static func poisonedSession(_ output: String) -> Bool {

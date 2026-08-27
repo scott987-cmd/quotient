@@ -6,6 +6,8 @@ final class CodingMediaGuardTests: XCTestCase {
         XCTAssertTrue(CodingMediaGuard.disallowedReadTools.contains("Read(**/*.png)"))
         XCTAssertTrue(CodingMediaGuard.disallowedReadTools.contains("Read(//**/*.png)"))
         XCTAssertTrue(CodingMediaGuard.disallowedReadTools.contains("Read(**/*.m4v)"))
+        XCTAssertTrue(CodingMediaGuard.disallowedReadTools.contains("Bash(cat *)"))
+        XCTAssertTrue(CodingMediaGuard.disallowedReadTools.contains("Bash(base64 *)"))
         XCTAssertTrue(CodingMediaGuard.systemPrompt.contains("独立多模态验收文字"))
     }
 
