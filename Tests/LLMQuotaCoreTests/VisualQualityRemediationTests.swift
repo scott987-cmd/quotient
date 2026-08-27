@@ -2,6 +2,22 @@ import XCTest
 @testable import LLMQuotaCore
 
 final class VisualQualityRemediationTests: XCTestCase {
+    func testVisualRemediationCannotCompleteFromHistoricalBranchOutputAlone() {
+        var task = WorkTask(id: "grip", prompt: "继续整改握枪", repo: "/flint")
+        task.visualRemediationReviewID = "rejected-grip"
+
+        XCTAssertNotNil(VisualQualityGate.completionBlockReason(
+            task: task, attemptChangedFiles: 0, attemptNewCommits: 0),
+            "视觉整改本轮零增量时，不能拿分支历史成果冒充本轮完成")
+        XCTAssertNil(VisualQualityGate.completionBlockReason(
+            task: task, attemptChangedFiles: 1, attemptNewCommits: 0))
+
+        task.visualRemediationReviewID = nil
+        XCTAssertNil(VisualQualityGate.completionBlockReason(
+            task: task, attemptChangedFiles: 0, attemptNewCommits: 0),
+            "普通核验任务仍可诚实确认已有成果，不能扩大成全局零改动禁令")
+    }
+
     func testFailedVisualReviewRetriesAreCappedPerCommit() {
         let branch = "agent/minimax/grip"
         let head = "c43c026"

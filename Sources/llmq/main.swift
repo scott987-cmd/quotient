@@ -3256,11 +3256,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     : GitWorkspace.git(["status", "--porcelain"], in: ws.path)
 
                 if c.exitCode == 0 {
-                    task.state = .done
-                    // 收尾也要立刻重发：不然任务已经跑完，手机上还挂着
-                    // 「正在干」直到下一次采集（约 2 分钟）。
-                    // 开跑和收尾两头都发，「进行中」的显示才和事实同步。
-                    defer { TaskBoardStore.publishNow() }
                     // **把执行器的 stdout 存进 outputs。**
                     //
                     // 审核执行器把结论行回显到 stdout（见 Work.swift 里
@@ -3284,29 +3279,45 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                         .split(separator: "\n", omittingEmptySubsequences: true)
                         .suffix(20)
                         .map { String($0.prefix(500)) }
-                    // **把「这一轮谁干的」和「分支上一共有什么」分开说。**
-                    //
-                    // 合并成一句「改了 N 个文件」会稳定地把前人的成果记到
-                    // 最后一棒头上 —— 而多 agent 接力里，事后最想回答的问题
-                    // 恰恰是「这段代码谁写的」。
-                    let didSomething = (mine ?? changed) > 0
-                    if didSomething {
-                        task.note = "改了 \(mine ?? changed) 个文件"
-                            + (v.ran ? "，\(v.summary)" : "")
-                            + "，已提交到 \(ws.branch)"
-                            + (myCommits > 0 ? "（\(myCommits) 个提交是它自己打的）" : "")
+                    if let reason = VisualQualityGate.completionBlockReason(
+                        task: task,
+                        attemptChangedFiles: mine ?? changed,
+                        attemptNewCommits: myCommits) {
+                        task.state = .failed
+                        task.note = reason
+                        print(Ansi.red("  " + reason))
+                        // 失败状态也要立即同步到手机，不能继续显示“运行中”。
+                        TaskBoardStore.publishNow()
                     } else {
-                        // 接手时活就已经干完了。说实话比凑一句好看的强。
-                        task.note = "它自己没有产生改动"
-                            + (v.ran ? "，但\(v.summary)" : "")
-                            + "，分支 \(ws.branch) 上已有的成果判定为完成"
-                    }
-                    if changed != (mine ?? changed) {
-                        task.note! += "（分支相对 main 一共 \(changed) 个文件"
-                            + "、\(alreadyCommitted) 个提交，含前面几棒的）"
-                    }
-                    if let h = handoff {
-                        task.note! += "（接手 \(h.fromPlatform.displayName)）"
+                        task.state = .done
+                        // 收尾也要立刻重发：不然任务已经跑完，手机上还挂着
+                        // 「正在干」直到下一次采集（约 2 分钟）。
+                        // 开跑和收尾两头都发，「进行中」的显示才和事实同步。
+                        defer { TaskBoardStore.publishNow() }
+                        // **把「这一轮谁干的」和「分支上一共有什么」分开说。**
+                        //
+                        // 合并成一句「改了 N 个文件」会稳定地把前人的成果记到
+                        // 最后一棒头上 —— 而多 agent 接力里，事后最想回答的问题
+                        // 恰恰是「这段代码谁写的」。
+                        let didSomething = (mine ?? changed) > 0
+                        if didSomething {
+                            task.note = "改了 \(mine ?? changed) 个文件"
+                                + (v.ran ? "，\(v.summary)" : "")
+                                + "，已提交到 \(ws.branch)"
+                                + (myCommits > 0 ? "（\(myCommits) 个提交是它自己打的）" : "")
+                        } else {
+                            // 接手时活就已经干完了。说实话比凑一句好看的强。
+                            task.note = "它自己没有产生改动"
+                                + (v.ran ? "，但\(v.summary)" : "")
+                                + "，分支 \(ws.branch) 上已有的成果判定为完成"
+                        }
+                        if changed != (mine ?? changed) {
+                            task.note! += "（分支相对 main 一共 \(changed) 个文件"
+                                + "、\(alreadyCommitted) 个提交，含前面几棒的）"
+                        }
+                        if let h = handoff {
+                            task.note! += "（接手 \(h.fromPlatform.displayName)）"
+                        }
                     }
                 } else {
                     task.state = .failed

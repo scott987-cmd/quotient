@@ -7,6 +7,16 @@ import Foundation
 public enum VisualQualityGate {
     private static let remediationMarker = "【视觉整改："
 
+    /// 被视觉否决后重新打开的实现任务，必须在这一轮产生新的实现增量。
+    /// 分支上已有历史提交只能作为接力基线，不能证明本轮已处理否决意见。
+    public static func completionBlockReason(task: WorkTask,
+                                             attemptChangedFiles: Int,
+                                             attemptNewCommits: Int) -> String? {
+        guard task.visualRemediationReviewID != nil,
+              attemptChangedFiles == 0, attemptNewCommits == 0 else { return nil }
+        return "视觉整改本轮没有产生新改动，不能用分支历史成果判定完成"
+    }
+
     /// 历史否决不能永久堆进任务正文。每次整改只需要“原始任务 + 最新一票”；
     /// 更早的票已经被后续实现取代，重复发送只会扩大上下文并诱导 Agent 重做。
     public static func compactRemediationPrompt(_ prompt: String) -> String {
