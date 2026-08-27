@@ -2332,7 +2332,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         } ?? RunnerRegistry.all
         var d = scheduler.decide(
             dashboard: dash, runners: eligibleRunners,
-            task: cand, history: history)
+            task: cand, history: history,
+            bypassHumanActivityGrace: onlyTaskID != nil)
         var releaseIsManual = false
         if (cand.ownerRunnerID == nil) != (cand.ownerPlatform == nil) {
             cand.state = .blocked
@@ -2356,7 +2357,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 continue
             }
             let ownerDecision = scheduler.decide(
-                dashboard: dash, runners: [owner], task: cand, history: history)
+                dashboard: dash, runners: [owner], task: cand, history: history,
+                bypassHumanActivityGrace: onlyTaskID != nil)
             if let ownerPick = ownerDecision.pick {
                 // owner 仍能接就永远排第一；历史 triedPlatforms 不得把它自己挡掉。
                 d.candidates.removeAll { $0.runner.runnerID == owner.runnerID }

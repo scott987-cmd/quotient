@@ -547,7 +547,8 @@ public struct WorkScheduler: Sendable {
     public func decide(
         dashboard: Dashboard, runners: [AgentRunner], now: Date = Date(),
         task: WorkTask? = nil, history: [WorkTask] = [],
-        requiresEditing: Bool = true
+        requiresEditing: Bool = true,
+        bypassHumanActivityGrace: Bool = false
     ) -> Decision {
         var rejected: [Rejection] = []
         var dispatcherPlatform: Platform?
@@ -741,7 +742,8 @@ public struct WorkScheduler: Sendable {
                 }
                 return ranByUs ? nil : t
             }
-            if let last, now.timeIntervalSince(last) < humanIdleGrace {
+            if !bypassHumanActivityGrace,
+               let last, now.timeIntervalSince(last) < humanIdleGrace {
                 rejected.append(Rejection(
                     platform: p,
                     reason: "你 \(Int(now.timeIntervalSince(last) / 60)) 分钟前还在用它，先让着你"))
