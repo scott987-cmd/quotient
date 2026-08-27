@@ -119,9 +119,32 @@ public enum WorkProgressStore {
             material.append(0)
         }
         add(GitWorkspace.headSHA(in: repo) ?? "no-head")
-        add(GitWorkspace.git(["status", "--porcelain=v1"], in: repo).stdout)
-        add(GitWorkspace.git(["diff", "--binary", "HEAD"], in: repo).stdout)
-        add(GitWorkspace.git(["diff", "--binary", "main...HEAD"], in: repo).stdout)
+        let status = GitWorkspace.git(["status", "--porcelain=v1", "-z"], in: repo).stdout
+        add(status)
+
+        // HEAD already fingerprints every committed byte.  Serialising a full binary patch here
+        // made a branch with a large evidence video block the worker before the model could start.
+        // For pending work, the index blob IDs plus each changed file's metadata are sufficient to
+        // detect a new checkpoint without copying media into memory.
+        add(GitWorkspace.git(
+            ["diff", "--cached", "--raw", "--full-index", "-z", "HEAD"], in: repo
+        ).stdout)
+        let changed = GitWorkspace.git(
+            ["diff", "--name-only", "-z", "HEAD"], in: repo
+        ).stdout + GitWorkspace.git(
+            ["ls-files", "--others", "--exclude-standard", "-z"], in: repo
+        ).stdout
+        for path in Set(changed.split(separator: "\0").map(String.init)).sorted() {
+            add(path)
+            let url = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: repo))
+                .standardizedFileURL
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path) {
+                add(String(describing: attrs[.size] ?? "missing-size"))
+                add(String(describing: attrs[.modificationDate] ?? "missing-date"))
+            } else {
+                add("missing")
+            }
+        }
 
         for raw in evidence.sorted() {
             let url = URL(fileURLWithPath: raw, relativeTo: URL(fileURLWithPath: repo))
