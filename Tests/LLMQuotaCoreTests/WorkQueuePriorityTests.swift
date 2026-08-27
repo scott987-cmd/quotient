@@ -93,6 +93,27 @@ final class WorkQueuePriorityTests: XCTestCase {
                 "grip-reload-hands-closeup.png",
                 "grip-reload-end-hands-closeup.png",
                 "infection-match.mov",
+        ])
+    }
+
+    func testCurrentRevisionEvidencePrecedesHistoricalEvidence() {
+        let historical = [
+            "docs/evidence/v1/face.png",
+            "docs/evidence/v1/old-match.mov",
+            "docs/evidence/v2/grip-idle.png",
+            "docs/evidence/v2/new-match.mov",
+        ]
+        XCTAssertEqual(Review.newestRevisionEvidenceFirst(
+            historical,
+            newestRevisionFiles: [
+                "docs/evidence/v2/grip-idle.png",
+                "docs/evidence/v2/new-match.mov",
+                "README.md",
+            ]), [
+                "docs/evidence/v2/grip-idle.png",
+                "docs/evidence/v2/new-match.mov",
+                "docs/evidence/v1/face.png",
+                "docs/evidence/v1/old-match.mov",
             ])
     }
 

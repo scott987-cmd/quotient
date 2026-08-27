@@ -239,6 +239,10 @@ public enum Review {
             let log = GitWorkspace.git(
                 ["log", "-1", "--format=%s%n%cI%n%h", b], in: repo).stdout
                 .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            let allEvidence = stat.files.filter(EvidenceGate.isEvidenceFile)
+            let newestFiles = GitWorkspace.git(
+                ["show", "--pretty=format:", "--name-only", "--first-parent", b],
+                in: repo).stdout.split(separator: "\n").map(String.init)
 
             items.append(Item(
                 branch: b, taskID: taskID, platform: platform,
@@ -265,7 +269,8 @@ public enum Review {
                 // 少一条会被忘掉的规矩。
                 // 判定在 EvidenceGate.isEvidenceFile —— 和「什么算证据」的
                 // 条款同一个家。原来内联在这里，条款改了它不会跟着改。
-                evidence: stat.files.filter(EvidenceGate.isEvidenceFile)))
+                evidence: newestRevisionEvidenceFirst(
+                    allEvidence, newestRevisionFiles: newestFiles)))
         }
 
         // 交叉比对文件重叠。O(n²) 但 n 是待审分支数，几十个顶天了。
@@ -1374,6 +1379,20 @@ extension Review {
         if images > 0 && videos > 0 { return "\(images) 张图片 · \(videos) 个视频" }
         if images > 0 { return "\(images) 张图片" }
         return "\(videos) 个视频"
+    }
+
+    /// 同一分支会积累多轮证据；终审必须先看当前 HEAD 新增的那一轮。
+    /// 否则 `main...branch` 的历史文件顺序会让最早的四张图永久占满限额，
+    /// 新提交的整改截图和录屏虽然进了 Git，却永远到不了视觉 Agent/手机。
+    public static func newestRevisionEvidenceFirst(
+        _ files: [String], newestRevisionFiles: [String]
+    ) -> [String] {
+        let allowed = Set(files)
+        var seen = Set<String>()
+        let newest = newestRevisionFiles.filter {
+            allowed.contains($0) && seen.insert($0).inserted
+        }
+        return newest + files.filter { seen.insert($0).inserted }
     }
 
     /// 从可能很长的证据清单里挑手机首屏最值得看的内容。

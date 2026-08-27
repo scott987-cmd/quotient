@@ -114,7 +114,9 @@ public enum VisualQualityGate {
         guard !visual.isEmpty else { return nil }
         let extracted = Review.extractEvidence(
             repo: repo, branch: item.branch, files: visual,
-            digestID: repo + "|quality|" + item.branch + "|" + item.head)
+            digestID: repo + "|quality|" + item.branch + "|" + item.head,
+            revision: item.head,
+            context: [item.subject, item.prompt ?? ""].joined(separator: "\n"))
         guard !extracted.isEmpty else { return nil }
         let prompt = """
         \(marker(branch: item.branch, head: item.head)) 的视觉质量是否达到项目契约。
