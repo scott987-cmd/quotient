@@ -144,6 +144,23 @@ public enum WorkAttemptStore {
             .sorted { $0.index < $1.index }
             .map(\.attempt)
     }
+
+    /// 同一任务和 Runner 最近一次已经收尾的尝试。
+    ///
+    /// 每次尝试会先写 `running`、结束后再用同一个 attemptID 追加终态，
+    /// 所以必须先按 attemptID 折叠。尤其不能直接找“历史上最后一个 failed”：
+    /// 后续成功创建的新会话已经证明旧失败失效，再翻出旧失败会把好会话误删。
+    public static func latestTerminal(taskID: String, runnerID: String) -> WorkAttempt? {
+        var latest: [String: (index: Int, attempt: WorkAttempt)] = [:]
+        for (index, attempt) in all().enumerated()
+        where attempt.taskID == taskID && attempt.runnerID == runnerID {
+            latest[attempt.attemptID] = (index, attempt)
+        }
+        return latest.values
+            .filter { $0.attempt.outcome != .running }
+            .max { $0.index < $1.index }?
+            .attempt
+    }
 }
 
 public enum WorkAttemptMetrics {
