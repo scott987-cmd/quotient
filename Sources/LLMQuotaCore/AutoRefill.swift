@@ -59,6 +59,10 @@ public enum AutoRefill {
         let busy = latest.values.contains { t in
             if t.state == .queued || t.state == .running { return true }
             guard t.state == .blocked else { return false }
+            // `pause` 也落成 blocked，但语义是主动封存：保留分支/会话供未来
+            // 恢复，并没有人在处理或等待答复。把它算忙会让一个已冻结的旧
+            // 方向永久堵住同仓库后续主线。
+            if t.pausedAt != nil { return false }
             guard let up = t.frozenBy.flatMap({ latest[$0] }) else { return true } // 等人,算忙
             return !(up.state == .failed || up.discardedAt != nil)               // 上游活着才算忙
         }
@@ -220,6 +224,14 @@ public enum AutoRefill {
 
     static func goalDoc(repo: String) -> String? {
         for f in goalFiles {
+            // 保存仓库不保证正检出在 main：架构师、本地人工修复都可能临时
+            // 占着其他分支。续活任务却一定从主线建立，目标也必须读主线；
+            // 否则当前工作分支上的旧 PLAN 会让项目误判为已完成或走错方向。
+            let main = GitWorkspace.git(["show", "main:\(f)"], in: repo)
+            if main.exitCode == 0, !main.stdout.isEmpty {
+                return f + "\n\n" + String(main.stdout.prefix(6000))
+            }
+            // 非 Git 仓库、还没有 main，或目标文件尚未提交时保留原有回退。
             let p = (repo as NSString).appendingPathComponent(f)
             if let s = try? String(contentsOfFile: p, encoding: .utf8), !s.isEmpty {
                 return f + "\n\n" + String(s.prefix(6000))

@@ -57,4 +57,38 @@ extension AutoRefillTests {
         var t = WorkTask(id: "b", prompt: "x", repo: "/f"); t.state = .blocked; t.frozenBy = nil
         XCTAssertFalse(AutoRefill.isIdle(repo: "/f", tasks: [t]))
     }
+
+    /// 明确暂停封存的任务不是“正在等人答复”。它保留分支和上下文供未来恢复，
+    /// 但不能永久占住项目忙碌位，阻止功能主线续活。
+    func testExplicitlyPausedBlockedTaskDoesNotPreventRefill() {
+        var t = WorkTask(id: "frozen-art", prompt: "冻结的美术", repo: "/f")
+        t.state = .blocked
+        t.pausedAt = Date()
+        t.note = "用户已决定停止美术；冻结供未来恢复"
+        XCTAssertTrue(AutoRefill.isIdle(repo: "/f", tasks: [t]))
+    }
+
+    /// 保存仓库可能正检出在某条开发分支；续活目标必须来自 main，否则一个
+    /// 临时工作分支上的旧 PLAN 会让整个项目误判为“没有下一段”。
+    func testGoalDocumentComesFromMainInsteadOfCheckedOutBranch() throws {
+        let repo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("refill-main-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        func git(_ args: [String]) -> Proc.Result { GitWorkspace.git(args, in: repo.path) }
+        XCTAssertEqual(git(["init", "-q", "-b", "main"]).exitCode, 0)
+        XCTAssertEqual(git(["config", "user.email", "test@example.com"]).exitCode, 0)
+        XCTAssertEqual(git(["config", "user.name", "Test"]).exitCode, 0)
+        try "## ⭐ 续活主线\n8. 【功能 Beta】爆破闭环\n".write(
+            to: repo.appendingPathComponent("PLAN.md"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(git(["add", "PLAN.md"]).exitCode, 0)
+        XCTAssertEqual(git(["commit", "-qm", "main plan"]).exitCode, 0)
+        XCTAssertEqual(git(["checkout", "-qb", "stale-work"]).exitCode, 0)
+        try "## ⭐ 续活主线\n7. 【旧计划】— 已完成\n".write(
+            to: repo.appendingPathComponent("PLAN.md"), atomically: true, encoding: .utf8)
+
+        let goal = AutoRefill.goalDoc(repo: repo.path)
+        XCTAssertTrue(goal?.contains("爆破闭环") == true, "应该读 main 的新目标：\(goal ?? "nil")")
+        XCTAssertFalse(goal?.contains("旧计划") == true)
+    }
 }
