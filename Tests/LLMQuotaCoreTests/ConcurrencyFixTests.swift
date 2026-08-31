@@ -44,11 +44,24 @@ final class ConcurrencyFixTests: XCTestCase {
                        "另一台机器在 2 小时内不该抢到同一仓库的续活")
     }
 
-    /// 自己上一轮的 claim 不挡自己(幂等重试)。
-    func testOwnClaimDoesNotBlockSelf() {
+    /// 同机两个前台都看见空队列时，第二个不能凭“是自己”再派一份。
+    func testOwnFreshClaimBlocksDuplicateRefill() {
         let now = Date()
         XCTAssertTrue(AutoRefill.claimRefill(repo: "/dev/Maw", now: now))
-        XCTAssertTrue(AutoRefill.claimRefill(repo: "/dev/Maw", now: now.addingTimeInterval(60)),
-                      "同一台机器重试不该被自己上一轮的 claim 挡住")
+        XCTAssertFalse(AutoRefill.claimRefill(repo: "/dev/Maw", now: now.addingTimeInterval(60)),
+                       "同一台机器的第二个前台不能重复派同一块主线")
+    }
+
+    /// 本机并发抢同一仓库，只能有一个成功。
+    func testConcurrentLocalRefillClaimHasSingleWinner() {
+        let now = Date()
+        let lock = NSLock()
+        var winners = 0
+        DispatchQueue.concurrentPerform(iterations: 20) { _ in
+            if AutoRefill.claimRefill(repo: "/dev/Flint", now: now) {
+                lock.lock(); winners += 1; lock.unlock()
+            }
+        }
+        XCTAssertEqual(winners, 1)
     }
 }

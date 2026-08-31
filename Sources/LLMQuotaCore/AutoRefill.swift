@@ -20,6 +20,10 @@ import Foundation
 /// 直接让干活的 agent 读目标文档、自己挑下一块 —— 它本来就有这个能力
 /// (老板 2026-08-22:「kimi 不比你差」)。一条任务,粗粒度,自带方向。
 public enum AutoRefill {
+    /// `flock` 负责跨进程；同一进程里的多个前台线程还需要这一层。
+    /// Darwin 的 advisory lock 是进程级语义，不能拿线程测试代替互斥锁。
+    private static let refillClaimLock = NSLock()
+
     /// 同一个仓库两次自动补活至少隔这么久。
     ///
     /// 不设间隔的话,一个跑得快的仓库会被连续补活,把别的仓库挤没;
@@ -100,8 +104,23 @@ public enum AutoRefill {
 
     /// 续活的跨机认领。写进同步目录(config,双向同步),别的机器读得到。
     /// 文件里存认领时间;新鲜(< minInterval)就算别人占着。
-    /// 用 machineID 标认领者,自己上一轮写的不挡自己(幂等重试)。
+    /// 用 machineID 标认领者，供审计看是谁抢到；新鲜认领连本机自己也挡。
+    /// 幂等由 `lastRefillAt` 和任务账本负责，不能靠“自己不挡自己”——两个
+    /// 前台进程会在同一秒都读到空队列，各派一份完全相同的任务。
     static func claimRefill(repo: String, now: Date) -> Bool {
+        refillClaimLock.lock()
+        defer { refillClaimLock.unlock() }
+
+        // 同机的“读 claim → 写 claim”必须放进内核锁。只改下面的新鲜时间
+        // 判断仍有竞态：两个进程都可能在任一方写入前读到不存在。
+        let lease = LocalExecutionLease(
+            scope: .repo,
+            key: "auto-refill:\(repo)",
+            root: Paths.appSupport.appendingPathComponent(
+                "refill-claim-leases", isDirectory: true))
+        guard lease.acquire() else { return false }
+        defer { lease.release() }
+
         let dir = Paths.sharedRoot.appendingPathComponent("config/refill-claims",
                                                           isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -109,12 +128,11 @@ public enum AutoRefill {
         let f = dir.appendingPathComponent(safe + ".json")
         let me = Paths.machineID()
         let iso = ISO8601DateFormatter()
-        // 已有新鲜 claim 且不是自己 → 让开。
+        // 已有新鲜 claim → 让开。本机也必须让开，否则并发前台会重复派活。
         if let d = try? Data(contentsOf: f),
            let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
            let at = (obj["at"] as? String).flatMap({ iso.date(from: $0) }),
-           now.timeIntervalSince(at) < minInterval,
-           (obj["by"] as? String) != me {
+           now.timeIntervalSince(at) < minInterval {
             return false
         }
         let payload: [String: Any] = ["repo": repo, "by": me, "at": iso.string(from: now)]
