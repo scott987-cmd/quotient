@@ -38,4 +38,31 @@ final class DeadIdentityNoiseTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("taskboards/ME.json").path))
         XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("reviews/NEW.json").path))
     }
+
+    func test_活机器的办公室分片也不能夹带旧身份事件() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("office-shard-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        for d in ["presence", "office"] {
+            try fm.createDirectory(at: root.appendingPathComponent(d),
+                                   withIntermediateDirectories: true)
+        }
+        let presence: [String: Any] = [
+            "machineID": "LIVE", "machineName": "MacBook Pro",
+            "updatedAt": "2026-09-01T12:00:00Z",
+        ]
+        try JSONSerialization.data(withJSONObject: presence)
+            .write(to: root.appendingPathComponent("presence/LIVE.json"))
+        try SnapshotCoding.prettyEncoder().encode([ev("DEAD", 1), ev("LIVE", 2)])
+            .write(to: root.appendingPathComponent("office/LIVE.json"))
+
+        _ = StaleIdentitySweep.run(
+            sharedRoot: root, iCloudRoot: nil, localSnapshotsDir: nil)
+
+        let cleaned = try SnapshotCoding.decoder().decode(
+            [OfficeEvent].self,
+            from: Data(contentsOf: root.appendingPathComponent("office/LIVE.json")))
+        XCTAssertEqual(cleaned.map(\.machineID), ["LIVE"],
+                       "分片文件名已经声明当前身份，里面的旧 ID 不能靠自身长期存活")
+    }
 }

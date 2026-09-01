@@ -43,6 +43,26 @@ final class OfficeContractTests: XCTestCase {
         XCTAssertEqual(after, 10, "没超长就不许动本地日志 —— 更不许清空")
     }
 
+    func testPublishDoesNotCarryPreviousMachineIdentityIntoCurrentOfficeShard() throws {
+        let current = Paths.machineID()
+        OfficeLog.record(OfficeEvent(
+            kind: .finished, taskID: "old", platform: .kimi,
+            detail: "旧身份事件", taskTitle: "x", at: Date(timeIntervalSince1970: 1),
+            machineID: "D127-OLD"))
+        OfficeLog.record(OfficeEvent(
+            kind: .dispatched, taskID: "new", platform: .kimi,
+            detail: "当前身份事件", taskTitle: "x", at: Date(timeIntervalSince1970: 2),
+            machineID: current))
+
+        OfficeLog.publish()
+
+        let file = OfficeLog.perMachineDir.appendingPathComponent(current + ".json")
+        let events = try SnapshotCoding.decoder().decode(
+            [OfficeEvent].self, from: Data(contentsOf: file))
+        XCTAssertEqual(events.map(\.machineID), [current],
+                       "当前机器的办公室分片不能继续发布旧 machineID 的历史")
+    }
+
     /// **下发页动作办成后要记进同一个台账**,卡片才会消失。
     func testMarkDecidedHidesFromPending() {
         XCTAssertFalse(Review.decidedBranches().contains("/r|agent/a/b"))

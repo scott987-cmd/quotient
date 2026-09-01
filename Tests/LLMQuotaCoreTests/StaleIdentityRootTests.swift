@@ -33,11 +33,43 @@ final class StaleIdentityRootTests: XCTestCase {
             try write(d, "NEW", "MacBook Pro", "2026-08-23T05:00:00Z")
         }
         let n = StaleIdentitySweep.run(sharedRoot: base.appendingPathComponent("local"),
-                                       iCloudRoot: base.appendingPathComponent("cloud"))
+                                       iCloudRoot: base.appendingPathComponent("cloud"),
+                                       localSnapshotsDir: nil)
         XCTAssertEqual(n, 1)
         XCTAssertFalse(fm.fileExists(atPath: local.appendingPathComponent("OLD.json").path), "本地旧身份要删")
         XCTAssertFalse(fm.fileExists(atPath: cloud.appendingPathComponent("OLD.json").path), "云端孪生也要删,否则下一轮又被拉回来")
         XCTAssertTrue(fm.fileExists(atPath: local.appendingPathComponent("NEW.json").path))
         XCTAssertTrue(fm.fileExists(atPath: cloud.appendingPathComponent("NEW.json").path))
+    }
+
+    func test_run也清理真正参与看板汇总的本地镜像快照() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("local-mirror-\(UUID().uuidString)")
+        Paths.appSupportOverride = base.appendingPathComponent("support")
+        defer {
+            Paths.appSupportOverride = nil
+            try? fm.removeItem(at: base)
+        }
+        let localSnapshots = Paths.localSnapshotsDir
+        try fm.createDirectory(at: localSnapshots, withIntermediateDirectories: true)
+        func write(_ id: String, _ at: String) throws {
+            let obj: [String: Any] = [
+                "machineID": id, "machineName": "MacBook Pro", "generatedAt": at,
+            ]
+            try JSONSerialization.data(withJSONObject: obj)
+                .write(to: localSnapshots.appendingPathComponent(id + ".json"))
+        }
+        try write("D127-OLD", "2026-08-22T23:00:00Z")
+        try write("9FBD-NEW", "2026-09-01T12:00:00Z")
+
+        _ = StaleIdentitySweep.run(
+            sharedRoot: Paths.sharedRoot, iCloudRoot: nil,
+            localSnapshotsDir: localSnapshots)
+
+        XCTAssertFalse(fm.fileExists(
+            atPath: localSnapshots.appendingPathComponent("D127-OLD.json").path),
+            "看板读取的是 appSupport/snapshots；只扫 shared/snapshots 会让旧机器永久展示")
+        XCTAssertTrue(fm.fileExists(
+            atPath: localSnapshots.appendingPathComponent("9FBD-NEW.json").path))
     }
 }

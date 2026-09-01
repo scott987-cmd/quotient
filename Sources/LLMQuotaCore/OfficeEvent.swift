@@ -211,11 +211,17 @@ public enum OfficeLog {
     }
 
     public static func publish() {
-        let mine = Array(all().suffix(keep))
+        let machineID = Paths.machineID()
+        // machineID 曾经会漂移；本地 append-only 日志因此可能同时带着旧 ID
+        // 和当前 ID。每机分片只能发布当前身份（空串是老格式，仍兼容），否则
+        // 一个名为 9FBD 的文件里继续携带 D127，办公室会再次长出幽灵工位。
+        let mine = Array(all().filter {
+            $0.machineID.isEmpty || $0.machineID == machineID
+        }.suffix(keep))
         // ① 本机那份(给别的机器拉)
         try? FileManager.default.createDirectory(at: perMachineDir, withIntermediateDirectories: true)
         if let d = try? SnapshotCoding.prettyEncoder().encode(mine) {
-            ICloudSafe.write(d, to: perMachineDir.appendingPathComponent(Paths.machineID() + ".json"))
+            ICloudSafe.write(d, to: perMachineDir.appendingPathComponent(machineID + ".json"))
         }
         // ② 根上合并的那份(手机读的)
         if let out = publishedFile,

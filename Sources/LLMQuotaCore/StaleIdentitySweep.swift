@@ -90,6 +90,37 @@ public enum StaleIdentitySweep {
     /// 按「有没有对应的 presence」判死活 —— 一台活着的机器每轮都写 presence。
     static let orphanDirs = ["office", "reviews", "taskboards", "snapshots"]
 
+    /// `office/<machineID>.json` 是数组，不能用 `identity(of:)` 判断内部身份。
+    /// 机器 ID 漂移后，当前分片可能还夹着旧 ID 的历史；如果不按文件名收口，
+    /// 旧事件会在每次镜像和合并时重新进入办公室。
+    @discardableResult
+    static func sanitizeOfficeShards(sharedRoot: URL) -> Int {
+        let fm = FileManager.default
+        let dir = sharedRoot.appendingPathComponent("office", isDirectory: true)
+        guard let files = try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        ) else { return 0 }
+        let decoder = SnapshotCoding.decoder()
+        let encoder = SnapshotCoding.prettyEncoder()
+        var changed = 0
+        for file in files where file.pathExtension == "json" {
+            let ownerID = file.deletingPathExtension().lastPathComponent
+            guard !ownerID.isEmpty,
+                  let data = try? Data(contentsOf: file),
+                  let events = try? decoder.decode([OfficeEvent].self, from: data)
+            else { continue }
+            let filtered = events.filter {
+                $0.machineID.isEmpty || $0.machineID == ownerID
+            }
+            guard filtered.count != events.count,
+                  let clean = try? encoder.encode(filtered),
+                  ICloudSafe.write(clean, to: file)
+            else { continue }
+            changed += 1
+        }
+        return changed
+    }
+
     /// 删掉这些目录里 `<id>.json` 的 id 已经没有 presence、且文件超过 `olderThan` 没更新的。
     /// 返回删掉的文件名(带目录)。新机器刚起来还没写 presence 的那一两轮,文件是新的,不会被误删。
     public static func sweepOrphanNames(sharedRoot: URL, selfID: String = Paths.machineID(),
@@ -119,16 +150,24 @@ public enum StaleIdentitySweep {
     /// 扫所有按机器分文件的共享目录。
     @discardableResult
     public static func run(sharedRoot: URL = Paths.sharedRoot,
-                           iCloudRoot: URL? = defaultICloudRoot) -> Int {
+                           iCloudRoot: URL? = defaultICloudRoot,
+                           localSnapshotsDir: URL? = Paths.localSnapshotsDir) -> Int {
         var total = 0
+        // dashboard() 同时读取 shared/snapshots 和 appSupport/snapshots。后者是
+        // MirrorService 的本地副本，旧身份即使已经从共享区和 iCloud 删除，仍会
+        // 从这里被汇总成第二台机器。过去的清理器漏了这条真实读路径。
+        if let localSnapshotsDir {
+            total += sweepDirNames(localSnapshotsDir).count
+        }
         // 先按 presence 判死活,清没有身份可读的那几类目录(事件流/验收摘要/任务板/快照)。
         // 老板 2026-08-23:「办公室出现了一台未知的机器」—— 旧 ID 的 reviews/office 文件
         // 一直没人清,presence 一清它们就成了无名氏。云端孪生同样要删。
         let orphans = sweepOrphanNames(sharedRoot: sharedRoot)
         total += orphans.count
         if let root = iCloudRoot {
-            for rel in orphans { try? FileManager.default.removeItem(at: root.appendingPathComponent(rel)) }
+                for rel in orphans { try? FileManager.default.removeItem(at: root.appendingPathComponent(rel)) }
         }
+        total += sanitizeOfficeShards(sharedRoot: sharedRoot)
         for sub in perMachineDirs {
             let names = sweepDirNames(sharedRoot.appendingPathComponent(sub, isDirectory: true))
             total += names.count
