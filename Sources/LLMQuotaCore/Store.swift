@@ -464,6 +464,15 @@ public enum LLMQuota {
 
         result.iCloudSync = try SnapshotStore.write(result.snapshot)
 
+        // 上限学习原先只有手工 `llmq collect` / `learn --apply` 才会生效，
+        // 后台 work loop 等于从不学。现在每轮先恢复日志里的真实 429，捕获撞顶
+        // 用量，再由 20 分钟节流的模型更新；失败只影响估算，不能拖垮调度。
+        Watchdog.run("quota.adaptive-learn", timeout: 12) {
+            _ = QuotaSignal.learnFromLogs(now: now)
+            _ = QuotaCeiling.capture(dashboard: dashboard(now: now), now: now)
+            _ = try? AdaptiveQuotaModel.refreshIfNeeded(now: now)
+        }
+
         // ↓ 下面全是 iCloud 上的事，**每一件都关进看门狗**。
         //
         // 采集本身到上面这行就已经完成了（本地快照已落盘）。剩下的都是
@@ -527,7 +536,8 @@ public enum LLMQuota {
 
     /// 读取所有机器的快照，算出仪表盘。不触发采集，所以很快 —— 菜单栏刷新用这个。
     public static func dashboard(now: Date = Date()) -> Dashboard {
-        let engine = QuotaEngine(config: PlansStore.load())
+        let config = AdaptiveQuotaModel.applying(to: PlansStore.load(), now: now)
+        let engine = QuotaEngine(config: config)
         return engine.buildDashboard(snapshots: SnapshotStore.loadAll(), now: now)
     }
 

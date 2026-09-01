@@ -1919,6 +1919,33 @@ public struct MiniMaxCodeRunner: AgentRunner {
             env
         )
     }
+
+    /// Agent 间的辅助委派只能读仓库、返回结论，不能借 Claude Code 工具外壳
+    /// 绕过仓库级写租约。模型和额度仍明确走 MiniMax Token Plan。
+    func readOnlyCommand(
+        prompt: String, cwd: String, session: GraphSession.Mode
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
+        let model = RunnerConfigStore.load().model(for: platform) ?? "MiniMax-M3"
+        var args = ["-p", prompt, "--add-dir", cwd,
+                    "--tools", "Read,Glob,Grep", "--permission-mode", "default",
+                    "--model", model]
+        switch session {
+        case .fresh, .projectResume: break
+        case .create(let id): args += ["--session-id", id]
+        case .resume(let id): args += ["--resume", id]
+        }
+        var env = [
+            "ANTHROPIC_MODEL": model,
+            "ANTHROPIC_SMALL_FAST_MODEL": model,
+            "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
+        ]
+        if let credential = Self.credentials() {
+            env["ANTHROPIC_BASE_URL"] = credential.baseURL
+            env["ANTHROPIC_AUTH_TOKEN"] = credential.apiKey
+            env["ANTHROPIC_API_KEY"] = ""
+        }
+        return (binaryPath ?? "claude", args, env)
+    }
 }
 
 /// MiniMax 的媒体执行器：把任务提示词里的资产清单变成真文件。

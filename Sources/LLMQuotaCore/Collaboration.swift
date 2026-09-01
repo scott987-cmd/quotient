@@ -619,6 +619,7 @@ public enum AgentConsultation {
     static func supportsReadOnlyConsultation(_ runner: AgentRunner) -> Bool {
         runner.runnerID == CodexRunner().runnerID
             || runner.runnerID == ClaudeRunner().runnerID
+            || runner is MiniMaxCodeRunner
             || runner is OpenCodeRunner
     }
 
@@ -824,6 +825,10 @@ public enum AgentConsultation {
             case .fresh, .projectResume: break
             }
             return (target.binaryPath ?? "claude", args, [:])
+        }
+        if let minimax = target as? MiniMaxCodeRunner {
+            return minimax.readOnlyCommand(
+                prompt: prompt, cwd: cwd, session: session)
         }
         if target is OpenCodeRunner {
             var args = ["run", "--dir", cwd, "--agent", "plan"]

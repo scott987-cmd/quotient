@@ -78,6 +78,8 @@ public enum ContextPackBuilder {
         public var askFile: String?
         public var tier: TaskProfile.Tier?
         public var sessionAction: String?
+        /// 调度器本轮已经算好的额度余量。builder 只消费，不自行重算看板。
+        public var helperHeadroom: [Platform: Double]
         public var budget: Int
 
         public init(task: WorkTask, allTasks: [WorkTask],
@@ -87,6 +89,7 @@ public enum ContextPackBuilder {
                     handoff: Handoff?, resumedAnswer: AskAnswer?,
                     resumedAsk: Ask?, mayAsk: Bool, askFile: String?,
                     tier: TaskProfile.Tier?, sessionAction: String?,
+                    helperHeadroom: [Platform: Double] = [:],
                     budget: Int = ContextPackBuilder.defaultBudget) {
             self.task = task
             self.allTasks = allTasks
@@ -102,6 +105,7 @@ public enum ContextPackBuilder {
             self.askFile = askFile
             self.tier = tier
             self.sessionAction = sessionAction
+            self.helperHeadroom = helperHeadroom
             self.budget = budget
         }
     }
@@ -267,11 +271,21 @@ public enum ContextPackBuilder {
                 graphID: request.task.graphID, runnerID: request.runnerID)
         var ids = ["contract:progress", "contract:collaboration"]
         if !evidence.isEmpty { ids.insert("contract:evidence", at: 0) }
-        if let smart = SmartConsultationPolicy.instruction(
+        let smart = SmartConsultationPolicy.instruction(
             task: request.task, runnerID: request.runnerID,
-            events: events, tier: request.tier) {
+            events: events, tier: request.tier)
+        if let smart {
             content += smart.clause
             ids.append("contract:smart-consultation")
+        }
+        // 架构裁决优先于低价值辅助；同一轮只给一个定向动作，避免两个问题
+        // 同时抢占协作通道。架构问题闭环后的下一次上下文才会出现辅助委派。
+        if smart == nil, let helper = LowValueDelegationPolicy.instruction(
+            task: request.task, runnerID: request.runnerID,
+            events: events, tier: request.tier,
+            headroom: request.helperHeadroom) {
+            content += helper.clause
+            ids.append("contract:low-value-delegation")
         }
         if request.mayAsk, let askFile = request.askFile, !askFile.isEmpty {
             content += AskContract.clause(askFile: askFile)

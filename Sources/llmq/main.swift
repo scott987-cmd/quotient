@@ -2989,12 +2989,16 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,
                 tier: task.profile?.tier,
                 sessionAction: WorkAttempt.SessionAction.from(session).rawValue,
+                helperHeadroom: LowValueDelegationPolicy.currentHeadroom(
+                    dashboard: dash),
                 budget: contextBudget),
             legacy: { LegacyContextPromptBuilder.build(
                 task: task, allTasks: allTasks, runnerID: pick.runner.runnerID,
                 workspacePath: ws.path, handoff: handoff ?? task.handoff,
                 resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
-                mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil) })
+                mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,
+                helperHeadroom: LowValueDelegationPolicy.currentHeadroom(
+                    dashboard: dash)) })
         let effectivePrompt = outcome.prompt
         // 台账每次构建恰好记一笔，且必须发生在拒绝分支之前 —— 拒绝的
         // manifest 不进台账，context miss 和拒绝率就永远统计不出来。

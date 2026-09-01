@@ -13,16 +13,24 @@ public enum LegacyContextPromptBuilder {
                              runnerID: String, workspacePath: String,
                              handoff: Handoff?,
                              resumedAnswer: AskAnswer?, resumedAsk: Ask?,
-                             mayAsk: Bool, askFile: String?) -> String {
+                             mayAsk: Bool, askFile: String?,
+                             helperHeadroom: [Platform: Double] = [:]) -> String {
         // Runner/CLI 可能在自己的入口再次钳制超长提示词。协作能力若留在
         // 任意长的任务正文之后，会最先从尾部消失，Agent 便只能交接、不能
         // 向另一岗位提问。固定协作契约必须先交付，再给任务正文。
         var effectivePrompt = CollaborationStore.contract(
             project: task.repo, taskID: task.id, graphID: task.graphID,
             runnerID: runnerID)
-        if let smart = SmartConsultationPolicy.instruction(
-            task: task, runnerID: runnerID, events: CollaborationStore.all()) {
+        let events = CollaborationStore.all()
+        let smart = SmartConsultationPolicy.instruction(
+            task: task, runnerID: runnerID, events: events)
+        if let smart {
             effectivePrompt += smart.clause
+        }
+        if smart == nil, let helper = LowValueDelegationPolicy.instruction(
+            task: task, runnerID: runnerID, events: events,
+            headroom: helperHeadroom) {
+            effectivePrompt += helper.clause
         }
         effectivePrompt += "\n\n---\n## 当前任务\n\n"
             + VisualQualityGate.compactRemediationPrompt(task.prompt)
