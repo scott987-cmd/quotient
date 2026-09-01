@@ -198,7 +198,13 @@ public enum PlatformHealth {
     /// 低置信本地扫描不能覆盖仍新鲜的真实任务事实。
     public static func mergedEntries(incoming: [Entry], previous: [Entry],
                                      now: Date = Date()) -> [Entry] {
-        let previousByKey = Dictionary(uniqueKeysWithValues: previous.map { ($0.key, $0) })
+        // 升级前的报告没有 runnerID/capability。同一平台的多条旧记录解码后
+        // 都会降级成 `legacy.<platform>|text`；旧脏数据只能降级，不能让
+        // 已经验证通过的任务在写健康状态时因重复 key 杀掉调度进程。
+        let previousByKey = Dictionary(previous.map { ($0.key, $0) },
+                                       uniquingKeysWith: { a, b in
+            (a.observedAt ?? .distantPast) >= (b.observedAt ?? .distantPast) ? a : b
+        })
         return incoming.map { entry in
             guard entry.source == .localConfiguration,
                   let old = previousByKey[entry.key],

@@ -145,6 +145,22 @@ final class ContextPackTests: XCTestCase {
                        1, "进度契约不能重复注入并浪费上下文")
     }
 
+    func testAskContractIsInjectedExactlyOnce() {
+        let source = task("ask-once", prompt: "需要时向用户提问", repo: repoA)
+        let marker = "/tmp/llmq-ask-once.json"
+        let pack = ContextPackBuilder.build(.init(
+            task: source, allTasks: [source], events: [],
+            runnerID: "kimi.code", platform: .kimi,
+            canReadFiles: true, workspacePath: source.repo,
+            handoff: nil, resumedAnswer: nil, resumedAsk: nil,
+            mayAsk: true, askFile: marker, tier: .standard,
+            sessionAction: "fresh"))
+
+        XCTAssertEqual(pack.text.components(separatedBy: marker).count - 1, 1,
+                       "同一份提问契约不能重复注入并浪费上下文")
+        XCTAssertEqual(pack.manifest.includedFactIDs.filter { $0 == "contract:ask" }.count, 1)
+    }
+
     func testFactsFromOtherProjectsNeverEnterThePack() throws {
         try publishEvent(id: "foreign-decision", project: repoB, taskID: "t1",
                          sender: "kimi.code", summary: "B项目专属决定不得串线")

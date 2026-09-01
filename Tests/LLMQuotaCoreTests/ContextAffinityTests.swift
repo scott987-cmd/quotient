@@ -66,7 +66,7 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertTrue(MiniMaxCodeRunner().canEdit)
     }
 
-    func testStableSessionsAreProjectScopedWithinTheAgentWorkspace() {
+    func testStableSessionsAreTaskScopedWithinTheAgentWorkspace() {
         let a = GraphSession.Context(taskID: "task-a", graphID: nil,
                                      capability: .coding, runnerID: "claude.code",
                                      machineID: "machine")
@@ -76,10 +76,10 @@ final class ContextAffinityTests: XCTestCase {
         guard case .create(let aid) = GraphSession.mode(
             context: a, support: .stableID, workspace: "/tmp/repo")
         else { return XCTFail("task-a 首次应创建会话") }
-        guard case .resume(let bid) = GraphSession.mode(
+        guard case .create(let bid) = GraphSession.mode(
             context: b, support: .stableID, workspace: "/tmp/repo")
-        else { return XCTFail("同一 Agent 工作区的新任务应续接项目会话") }
-        XCTAssertEqual(bid, aid)
+        else { return XCTFail("同一 Agent 工作区的新任务应创建轻量会话") }
+        XCTAssertNotEqual(bid, aid)
         XCTAssertEqual(GraphSession.mode(
             context: a, support: .stableID, workspace: "/tmp/repo"), .resume(aid))
 
@@ -106,7 +106,7 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertTrue(GraphSession.load().isEmpty)
     }
 
-    func testProjectLatestFollowsTheAgentWorkspaceAcrossTasks() {
+    func testProjectLatestResumesOnlyTheSameTask() {
         let a = GraphSession.Context(taskID: "task-a", graphID: nil,
                                      capability: .coding, runnerID: "qwen.code",
                                      machineID: "machine")
@@ -120,25 +120,41 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertEqual(GraphSession.mode(
             context: a, support: .projectLatest, workspace: "/tmp/shared"), .projectResume)
         XCTAssertEqual(GraphSession.mode(
-            context: b, support: .projectLatest, workspace: "/tmp/shared"), .projectResume)
+            context: b, support: .projectLatest, workspace: "/tmp/shared"), .fresh)
         XCTAssertEqual(GraphSession.mode(
             context: b, support: .projectLatest, workspace: "/tmp/other"), .fresh)
     }
 
-    func testLegacyRepoAffinityBootstrapsTheStableAgentWorkspace() throws {
+    func testLegacyRepoAffinityDoesNotLeakIntoANewTask() throws {
         let context = GraphSession.Context(
             taskID: "new-task", graphID: nil, capability: .coding,
             runnerID: "kimi.code", machineID: "machine")
         let legacy = ["repo:/tmp/flint|kimi": "old-project-marker"]
         try JSONEncoder().encode(legacy).write(to: GraphSession.fileOverride!)
 
-        GraphSession.migrateLegacyProject(
-            context: context, support: .projectLatest,
-            workspace: "/tmp/flint-kimi", repo: "/tmp/flint", platform: .kimi)
-
         XCTAssertEqual(GraphSession.mode(
             context: context, support: .projectLatest,
-            workspace: "/tmp/flint-kimi"), .projectResume)
+            workspace: "/tmp/flint-kimi"), .fresh)
+    }
+
+    func testGraphStepsShareOnlyTheirGraphSession() {
+        let a = GraphSession.Context(taskID: "g-step-1", graphID: "graph-1",
+                                     capability: .coding, runnerID: "kimi.code",
+                                     machineID: "machine")
+        let b = GraphSession.Context(taskID: "g-step-2", graphID: "graph-1",
+                                     capability: .coding, runnerID: "kimi.code",
+                                     machineID: "machine")
+        let other = GraphSession.Context(taskID: "g-step-1", graphID: "graph-2",
+                                         capability: .coding, runnerID: "kimi.code",
+                                         machineID: "machine")
+        XCTAssertEqual(GraphSession.mode(
+            context: a, support: .projectLatest, workspace: "/tmp/shared"), .fresh)
+        GraphSession.markLaunched(context: a, support: .projectLatest,
+                                  workspace: "/tmp/shared")
+        XCTAssertEqual(GraphSession.mode(
+            context: b, support: .projectLatest, workspace: "/tmp/shared"), .projectResume)
+        XCTAssertEqual(GraphSession.mode(
+            context: other, support: .projectLatest, workspace: "/tmp/shared"), .fresh)
     }
 
     func testResetSessionAlsoRemovesLegacySourceSoItCannotResurrect() throws {
@@ -147,16 +163,9 @@ final class ContextAffinityTests: XCTestCase {
             runnerID: "opencode.volcark.code", machineID: "machine")
         let legacy = ["repo:/tmp/flint|volcark": "old-project-marker"]
         try JSONEncoder().encode(legacy).write(to: GraphSession.fileOverride!)
-        GraphSession.migrateLegacyProject(
-            context: context, support: .projectLatest,
-            workspace: "/tmp/flint-volcark", repo: "/tmp/flint", platform: .volcark)
-
         GraphSession.forget(
             context: context, workspace: "/tmp/flint-volcark",
             repo: "/tmp/flint", platform: .volcark)
-        GraphSession.migrateLegacyProject(
-            context: context, support: .projectLatest,
-            workspace: "/tmp/flint-volcark", repo: "/tmp/flint", platform: .volcark)
 
         XCTAssertEqual(GraphSession.mode(
             context: context, support: .projectLatest,

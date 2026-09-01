@@ -2953,9 +2953,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             taskID: task.id, graphID: task.graphID,
             capability: TaskCapabilityLane.classify(task.prompt),
             runnerID: pick.runner.runnerID, machineID: Paths.machineID())
-        GraphSession.migrateLegacyProject(
-            context: sessionContext, support: pick.runner.sessionSupport,
-            workspace: ws.path, repo: task.repo, platform: pick.platform)
         if let previous = WorkAttemptStore.latestTerminal(
             taskID: task.id, runnerID: pick.runner.runnerID),
            previous.outcome == .failed {

@@ -763,9 +763,6 @@ public enum AgentConsultation {
         let context = GraphSession.Context(
             taskID: request.taskID ?? consultID, graphID: request.graphID,
             capability: lane, runnerID: target.runnerID, machineID: Paths.machineID())
-        GraphSession.migrateLegacyProject(
-            context: context, support: target.sessionSupport, workspace: workspace.path,
-            repo: project, platform: target.platform)
         let session = GraphSession.mode(
             context: context, support: target.sessionSupport, workspace: workspace.path)
         let briefing = CollaborationStore.briefing(

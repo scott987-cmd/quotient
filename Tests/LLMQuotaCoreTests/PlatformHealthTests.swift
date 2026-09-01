@@ -238,6 +238,30 @@ final class PlatformHealthTests: XCTestCase {
         XCTAssertEqual(merged.first?.source, .taskAttempt)
     }
 
+    func testMergedEntriesToleratesDuplicateLegacyKeys() {
+        let now = Date()
+        let older = PlatformHealth.Entry(
+            platform: "MiniMax", runnerID: "legacy.minimax", capability: .text,
+            state: .available, source: .taskAttempt,
+            observedAt: now.addingTimeInterval(-20),
+            expiresAt: now.addingTimeInterval(300), detail: "旧事实")
+        let newer = PlatformHealth.Entry(
+            platform: "MiniMax", runnerID: "legacy.minimax", capability: .text,
+            state: .available, source: .taskAttempt,
+            observedAt: now.addingTimeInterval(-10),
+            expiresAt: now.addingTimeInterval(300), detail: "较新事实")
+        let scan = PlatformHealth.Entry(
+            platform: "MiniMax", runnerID: "legacy.minimax", capability: .text,
+            state: .unknown, source: .localConfiguration,
+            observedAt: now, expiresAt: now.addingTimeInterval(300), detail: "本地扫描")
+
+        let merged = PlatformHealth.mergedEntries(
+            incoming: [scan], previous: [older, newer], now: now)
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged[0].detail, "较新事实")
+    }
+
     func testRunnerCooldownDoesNotHideSiblingRunnerFailure() {
         let now = Date()
         let review = PlatformHealth.Entry(

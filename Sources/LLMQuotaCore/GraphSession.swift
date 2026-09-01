@@ -2,12 +2,12 @@ import Foundation
 
 /// 原生 CLI 会话的本机映射。
 ///
-/// 原生会话跟随「机器 × Runner × 稳定工作区 × 能力泳道」。
+/// 原生会话跟随「机器 × Runner × 稳定工作区 × 任务/任务图 × 能力泳道」。
 ///
-/// 稳定工作区本身已经是「仓库 × Agent」隔离的，因此同一个 Agent 在同一项目
-/// 接到新任务时应继续项目会话，而不是因为 taskID 变化就从零开始。不同 Runner、
-/// 不同仓库和不同能力泳道仍然隔离；长期且需要跨工具保存的事实继续写进
-/// AGENTS.md / STATUS / briefing，不能只押在聊天记录上。
+/// 同一任务失败重试、同一任务图的后续步骤应继续原会话；不同任务必须从压缩过的
+/// Context Pack 开新会话。否则一个已经结束的长任务会把几十万 token 的工具输出
+/// 带进下一项工作。长期且需要跨工具保存的事实继续写进 AGENTS.md / STATUS /
+/// briefing，不能只押在聊天记录上。
 public enum GraphSession {
     public static var fileOverride: URL?
     private static let lock = NSLock()
@@ -76,28 +76,12 @@ public enum GraphSession {
     private static func projectKey(_ workspace: String, _ context: Context) -> String {
         let path = URL(fileURLWithPath: NSString(string: workspace).expandingTildeInPath)
             .standardizedFileURL.path
-        return "v3|machine:\(Context.escaped(context.machineID))|runner:"
+        let scope = context.graphID.map { "graph:" + Context.escaped($0) }
+            ?? "task:" + Context.escaped(context.taskID)
+        return "v4|machine:\(Context.escaped(context.machineID))|runner:"
             + Context.escaped(context.runnerID) + "|lane:"
-            + context.capability.rawValue + "|workspace:" + Context.escaped(path)
-    }
-
-    /// 阶段 3a 之前使用 `repo:<主仓库>|<平台>` 保存项目会话。升级到稳定
-    /// Agent 工作区后路径变了，但上下文没有失效：精确 ID 执行器沿用旧 ID，
-    /// `-c/--last` 型执行器把它当成“这个项目已有历史”的可信启动标记。
-    public static func migrateLegacyProject(
-        context: Context, support: SessionSupport, workspace: String,
-        repo: String, platform: Platform
-    ) {
-        guard support != .none else { return }
-        lock.lock(); defer { lock.unlock() }
-        var m = load()
-        let target = projectKey(workspace, context)
-        guard m[target] == nil else { return }
-        let source = "repo:" + NSString(string: repo).expandingTildeInPath
-            + "|" + platform.rawValue
-        guard let legacy = m[source] else { return }
-        m[target] = support == .projectLatest ? "project" : legacy
-        save(m)
+            + context.capability.rawValue + "|" + scope
+            + "|workspace:" + Context.escaped(path)
     }
 
     /// 决定本轮会话方式。stableID 的新 ID 在启动前落盘：进程被杀后仍知道该恢复谁。
@@ -239,7 +223,9 @@ public enum GraphSession {
             || key.hasPrefix(graphID + "|") {
             m.removeValue(forKey: key)
         }
-        let live = Set(m.keys.filter { $0.hasPrefix("v2|") || $0.hasPrefix("v3|") })
+        let live = Set(m.keys.filter {
+            $0.hasPrefix("v2|") || $0.hasPrefix("v3|") || $0.hasPrefix("v4|")
+        })
         for key in Array(m.keys) where key.hasPrefix("workspace|")
             && !live.contains(m[key] ?? "") {
             m.removeValue(forKey: key)
