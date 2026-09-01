@@ -74,4 +74,37 @@ final class MachineDedupeTests: XCTestCase {
         XCTAssertEqual(Set(status.map { Array($0.byMachine.keys) } ?? []),
                        ["Mac mini · hardware-A", "Mac mini · hardware-B"])
     }
+
+    func testLivePresenceSuppressesStaleIdentityWithSameMachineName() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let presence = ClusterPresence(
+            machineID: "current", machineName: "Mac mini", nodeName: nil,
+            lanIP: nil, port: 8443, serving: true, boundAddress: nil,
+            lanRouteInterface: nil, firewallOn: false, canReach: [:],
+            updatedAt: now, version: "1")
+
+        let result = SnapshotStore.reconcileIdentities(
+            [snap("stale", "Mac mini", at: now.addingTimeInterval(-3600)),
+             snap("current", "Mac mini", at: now)],
+            presences: [presence], now: now)
+
+        XCTAssertEqual(result.map(\.machineID), ["current"])
+    }
+
+    func testTwoLiveSameNamedMachinesAreBothPreserved() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        func presence(_ id: String) -> ClusterPresence {
+            ClusterPresence(
+                machineID: id, machineName: "Mac mini", nodeName: nil,
+                lanIP: nil, port: 8443, serving: true, boundAddress: nil,
+                lanRouteInterface: nil, firewallOn: false, canReach: [:],
+                updatedAt: now, version: "1")
+        }
+
+        let result = SnapshotStore.reconcileIdentities(
+            [snap("A", "Mac mini", at: now), snap("B", "Mac mini", at: now)],
+            presences: [presence("A"), presence("B")], now: now)
+
+        XCTAssertEqual(Set(result.map(\.machineID)), ["A", "B"])
+    }
 }

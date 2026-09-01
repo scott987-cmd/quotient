@@ -186,7 +186,35 @@ public enum SnapshotStore {
                 found[snap.machineID] = snap
             }
         }
-        return found.values.sorted { $0.machineName < $1.machineName }
+        return reconcileIdentities(
+            Array(found.values), presences: ClusterPresenceStore.all())
+            .sorted { $0.machineName < $1.machineName }
+    }
+
+    /// 读取路径上的最后一道身份闸。
+    ///
+    /// 旧机器 ID 可能仍留在另一台电脑的本地快照目录里；即使共享目录已经清干净，
+    /// 那台电脑下一次生成 dashboard 时仍会把旧 ID 全部重新写回根文件。磁盘清理
+    /// 负责最终删除，这里负责在清理尚未运行、旧版本仍在线的过渡期里不让脏数据
+    /// 进入用户看到的汇总。
+    ///
+    /// 不能简单按 machineName 合并：两台真实机器完全可能同名。只有同名组里存在
+    /// 当前 presence 时，才把没有当前 presence 的成员视为漂移身份；如果没有任何
+    /// 在线证据，全部保留，避免误删两台都暂时离线的真机器。
+    public static func reconcileIdentities(
+        _ snapshots: [MachineSnapshot],
+        presences: [ClusterPresence],
+        now: Date = Date()
+    ) -> [MachineSnapshot] {
+        let liveIDs = Set(presences.filter { !$0.isStale(now: now) }.map(\.machineID))
+        guard !liveIDs.isEmpty else { return snapshots }
+
+        let groups = Dictionary(grouping: snapshots, by: \.machineName)
+        return groups.values.flatMap { group in
+            guard group.count > 1 else { return group }
+            let live = group.filter { liveIDs.contains($0.machineID) }
+            return live.isEmpty ? group : live
+        }
     }
 
     /// 最近一次 loadAll 里解不出来的快照。诊断用（`llmq mirror`）。

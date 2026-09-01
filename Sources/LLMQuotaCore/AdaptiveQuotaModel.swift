@@ -213,7 +213,7 @@ public enum AdaptiveQuotaModel {
         try? FileManager.default.createDirectory(
             at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard let data = try? SnapshotCoding.prettyEncoder().encode(document) else { return }
-        try? data.write(to: path, options: .atomic)
+        _ = ICloudSafe.write(data, to: path)
     }
 
     private static func withLock<T>(_ body: () -> T) -> T {
