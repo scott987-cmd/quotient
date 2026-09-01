@@ -24,6 +24,8 @@ public struct ProjectContract: Codable, Sendable {
     public var routes: [Route]
     public var criteria: [Criterion]
     public var goldenSamples: [GoldenSample]
+    /// 不允许实现者自行放宽的数值门槛。契约保存批准值，分支只能保持或收紧。
+    public var qualityGuardrails: [QualityGuardrail]
 
     public init(schema: Int = 1, profile: String = "generic",
                 outcomeSummary: String, requiredOutcomes: [String] = [],
@@ -32,7 +34,8 @@ public struct ProjectContract: Codable, Sendable {
                 qualityFile: String = "QUALITY.md", referenceFile: String? = nil,
                 productionFile: String? = nil, referenceFiles: [String] = [],
                 referenceDimensions: [String] = [], routes: [Route] = [],
-                criteria: [Criterion] = [], goldenSamples: [GoldenSample] = []) {
+                criteria: [Criterion] = [], goldenSamples: [GoldenSample] = [],
+                qualityGuardrails: [QualityGuardrail] = []) {
         self.schema = schema
         self.profile = profile
         self.outcomeSummary = outcomeSummary
@@ -49,6 +52,7 @@ public struct ProjectContract: Codable, Sendable {
         self.routes = routes
         self.criteria = criteria
         self.goldenSamples = goldenSamples
+        self.qualityGuardrails = qualityGuardrails
     }
 
     public init(from decoder: Decoder) throws {
@@ -77,6 +81,8 @@ public struct ProjectContract: Codable, Sendable {
         criteria = try c.decodeIfPresent([Criterion].self, forKey: .criteria) ?? []
         goldenSamples = try c.decodeIfPresent([GoldenSample].self,
                                                forKey: .goldenSamples) ?? []
+        qualityGuardrails = try c.decodeIfPresent(
+            [QualityGuardrail].self, forKey: .qualityGuardrails) ?? []
     }
 
     public struct Route: Codable, Sendable {
@@ -161,6 +167,32 @@ public struct ProjectContract: Codable, Sendable {
                                                      forKey: .deliverableKind) ?? ""
             criterionIDs = try c.decodeIfPresent([String].self,
                                                   forKey: .criterionIDs) ?? []
+        }
+    }
+
+    public struct QualityGuardrail: Codable, Sendable, Equatable {
+        public enum Bound: String, Codable, Sendable {
+            case minimum, maximum, exact
+        }
+
+        public var file: String
+        public var symbol: String
+        public var bound: Bound
+        public var value: Double
+
+        public init(file: String, symbol: String, bound: Bound, value: Double) {
+            self.file = file
+            self.symbol = symbol
+            self.bound = bound
+            self.value = value
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            file = try c.decodeIfPresent(String.self, forKey: .file) ?? ""
+            symbol = try c.decodeIfPresent(String.self, forKey: .symbol) ?? ""
+            bound = try c.decodeIfPresent(Bound.self, forKey: .bound) ?? .exact
+            value = try c.decodeIfPresent(Double.self, forKey: .value) ?? 0
         }
     }
 }
@@ -405,6 +437,32 @@ public enum ProjectDoctor {
            !contract.criteria.contains(where: { $0.layer == "experience" }) {
             issues.append(Issue(.error, "criterion.experience.missing",
                                 "项目要求体验验收，但没有 experience 层条款"))
+        }
+        let forbidsRelaxation = contract.criteria.contains {
+            $0.rejectConditions.contains("quality-gate-relaxed-to-pass")
+        }
+        if forbidsRelaxation && contract.qualityGuardrails.isEmpty {
+            issues.append(Issue(.error, "quality-guardrail.missing",
+                                "契约禁止放宽质量门槛，但没有登记可执行的 qualityGuardrails"))
+        }
+        let duplicateGuardrails = duplicates(contract.qualityGuardrails.map {
+            $0.file + "|" + $0.symbol
+        })
+        for key in duplicateGuardrails {
+            issues.append(Issue(.error, "quality-guardrail.duplicate",
+                                "质量门槛重复登记：" + key))
+        }
+        for guardrail in contract.qualityGuardrails {
+            if guardrail.file.isEmpty || guardrail.symbol.isEmpty {
+                issues.append(Issue(.error, "quality-guardrail.invalid",
+                                    "质量门槛缺少文件或符号名"))
+            } else {
+                inspectRequiredFile(guardrail.file, root: root, issues: &issues)
+            }
+            if !guardrail.value.isFinite {
+                issues.append(Issue(.error, "quality-guardrail.value.invalid",
+                                    "质量门槛 \(guardrail.symbol) 的批准值不是有限数字"))
+            }
         }
 
         if contract.goldenSampleRequired && contract.goldenSamples.isEmpty {

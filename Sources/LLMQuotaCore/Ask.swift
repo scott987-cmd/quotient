@@ -557,6 +557,9 @@ public enum StuckAsk {
     @discardableResult
     public static func raise(task: WorkTask, reason: String) -> Bool {
         guard task.pendingAsk == nil else { return false }
+        // 已知额度冷却会自行到期，不是需要用户决策的“卡死”。即使调用方顺序
+        // 回归，也不能再给手机推一张无意义的重试/放弃问题。
+        guard task.terminalFailureKind != .quotaExhausted else { return false }
         var t = task
         let recovery = recoveryOption(for: t)
         let ask = Ask(
@@ -574,12 +577,27 @@ public enum StuckAsk {
             progressNote: "系统代发：卡死等确认，不是 agent 在提问")
         t.pendingAsk = ask
         t.state = .blocked
+        t.waitReason = .humanAnswer
         // 固定负责人继续时保留失败史；owner 本身有明确豁免，别的候选仍不能
         // 借一次手机点击绕过历史。只有真正的「换人再来」才清空名单。
         if recovery.platform == nil { t.triedPlatforms = [] }
         t.interruptedCount = nil
-        guard (try? TaskStore.append(t)) != nil else { return false }
-        try? AskStore.publish(ask)
-        return true
+        do {
+            try AskStore.publish(ask)
+            do {
+                _ = try TaskStore.transition(
+                    t, actor: "stuck-ask", reason: "任务卡死，等待人工选择恢复或放弃")
+                return true
+            } catch {
+                AskStore.retract(taskID: t.id, machine: ask.machineID)
+                let message = "卡死提问状态落盘失败 [\(t.id)]：\(error.localizedDescription)\n"
+                FileHandle.standardError.write(Data(message.utf8))
+                return false
+            }
+        } catch {
+            let message = "卡死提问发布失败 [\(t.id)]：\(error.localizedDescription)\n"
+            FileHandle.standardError.write(Data(message.utf8))
+            return false
+        }
     }
 }

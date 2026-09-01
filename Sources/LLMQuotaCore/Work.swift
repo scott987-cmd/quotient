@@ -15,11 +15,51 @@ public struct WorkTask: Codable, Sendable {
         case blocked
     }
 
+    /// blocked 只是阶段，不能再靠 note 猜“在等什么”。旧记录在解码时会从
+    /// pendingAsk / frozenBy / pausedAt / production 等结构化事实补出该字段。
+    public enum WaitReason: String, Codable, Sendable {
+        case humanAnswer
+        case humanApproval
+        case dependency
+        case ownerUnavailable
+        case productionGate
+        case paused
+        case architectureReview
+    }
+
+    /// 任务为什么进入失败终态。不能只靠 `note` 猜：note 是给人看的自由文本，
+    /// 质量对账若把“额度用尽”误认成“视觉整改失败”，会把失败任务重新排队。
+    public enum TerminalFailureKind: String, Codable, Sendable {
+        case quotaExhausted
+        case authenticationFailed
+        case environmentBroken
+        case platformUnavailable
+        case timedOut
+        case agentFailed
+        case sessionInvalid
+        case verificationFailed
+        case qualityGate
+        case postRunGate
+        case interrupted
+
+        /// 基础设施/账号状态优先于历史派生工单，不能被自动改回 queued。
+        public var blocksDerivedRequeue: Bool {
+            switch self {
+            case .quotaExhausted, .authenticationFailed, .environmentBroken,
+                 .platformUnavailable:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     public var id: String
     public var prompt: String
     /// 仓库路径。agent 在它的一个独立 worktree 里干活，不碰你的工作区。
     public var repo: String
     public var state: State
+    public var waitReason: WaitReason?
     public var createdAt: Date
     public var startedAt: Date?
     public var endedAt: Date?
@@ -31,6 +71,11 @@ public struct WorkTask: Codable, Sendable {
     public var exitCode: Int32?
     public var changedFiles: Int?
     public var note: String?
+    public var terminalFailureKind: TerminalFailureKind?
+    /// 已知会自行恢复的终态（目前是额度）最早何时可以重新入队。
+    /// 与冷却账本同时落在任务上，避免账本暂时读不到时立刻重试，也避免到期后
+    /// 任务永久躺在 failed。
+    public var retryNotBefore: Date?
     /// 入队时分析一次的画像。拿不到就是 nil，调度退化成纯额度排序。
     public var profile: TaskProfile?
     /// 已经在这个任务上失败过的平台，避免接力时又转回去。
@@ -71,6 +116,12 @@ public struct WorkTask: Codable, Sendable {
     /// 人手写的任务这里是 nil。有值时它就是去重键 —— 见
     /// `ReservePool.pending`：同一个事实不重复生成，但被你丢弃过的允许重来。
     public var origin: String?
+
+    /// 外部请求的稳定身份。文件重扫、网络重试或协调器重启都必须命中同一条
+    /// 任务，而不是每次重新生成随机 ID。它和 `origin` 不同：origin 表示业务
+    /// 事实，intakeKey 表示这一次请求。
+    public var intakeKey: String?
+    public var intakeSource: String?
 
     /// 你在手机的办公室里点名让谁干。只影响排序，不绕过任何一道闸门。
     public var preferredPlatform: Platform?
@@ -144,11 +195,26 @@ public struct WorkTask: Codable, Sendable {
     /// 黄金样板生产关系。nil = 旧任务/普通任务，不受阶段 1 的批量扩张闸影响。
     public var production: ProductionContext?
 
-    /// 最近一次把这条任务重新打开的视觉否决任务 ID。
+    /// 最近一次把这条任务重新打开的质量否决任务 ID。
     ///
-    /// 视觉验收失败后必须让原任务、原 owner、原会话接着整改，而不是另造一条
-    /// 从零认识项目的任务。它也是对账幂等键：同一份否决只能重开一次。
+    /// 视觉验收或唯一架构终审失败后必须让原任务、原 owner、原会话接着整改，
+    /// 而不是另造一条从零认识项目的任务。它也是对账幂等键：同一份否决只能
+    /// 重开一次。字段名保留 visual 前缀以兼容已有跨版本任务记录。
     public var visualRemediationReviewID: String?
+
+    /// 人工或质量闸主动暂停。暂停复用 `.blocked` 状态，因此调度器天然不会
+    /// 领取；单独字段用于区别“等答复”和“保留现场、不要继续烧额度”。
+    /// 分支、owner、稳定工作区和会话映射都不清理。
+    public var pausedAt: Date?
+    public var pauseReason: String?
+
+    /// 暂停后需要由控制面先完成架构重审。它和 `pausedAt` 分开：普通人工暂停
+    /// 不应凭空创建 Claude 任务；只有质量不收敛/门槛违规才进入这条闭环。
+    public var architectureReviewRequestedAt: Date?
+
+    /// 当前黄金样板连续被退回的次数。每次明确恢复后清零；达到上限时暂停，
+    /// 不再因为新提交或新视觉票自动从头计数。
+    public var qualityRejectionCount: Int = 0
 
     /// 跑到一半被打断过几次（worker 重启、进程被杀）。
     ///
@@ -157,6 +223,14 @@ public struct WorkTask: Codable, Sendable {
     /// Qwen 产出、一次 26 分钟的图节点，全都白跑。
     /// 有了这个计数就能默认重排、又不至于让「每次都跑一半就死」的任务无限循环。
     public var interruptedCount: Int?
+
+    /// 最近一次受控转换的审计信息。tasks.jsonl 本身保留每个 revision，因此
+    /// 每条历史记录都能回答“谁、为什么、从什么状态改过来”。
+    public var transitionActor: String?
+    public var transitionReason: String?
+    public var transitionPreviousState: State?
+    public var transitionConfigVersion: String?
+    public var transitionedAt: Date?
 
     /// 哪个进程正在跑它。
     ///
@@ -168,6 +242,15 @@ public struct WorkTask: Codable, Sendable {
     /// 有 pid 就能精确判断：进程还在 → 别动；进程没了 → 孤儿。
     /// pid 被复用会让我们误判成「还在」，那是安全的方向（只是晚回收一轮）。
     public var runnerPID: Int32?
+
+    /// 协调器在启动子进程前写下的短租约。任务领取、限速凭据和本轮调度快照
+    /// 绑定在同一个 revision 上；子进程只能凭同一个 leaseID 把 queued 转为
+    /// running。协调器崩溃时租约到期，任务自动回到候选集。
+    public var dispatchLeaseID: String?
+    public var dispatchLeaseOwnerPID: Int32?
+    public var dispatchLeaseExpiresAt: Date?
+    public var quotaReservationID: String?
+    public var dispatchSnapshotID: String?
 
     /// 这一步产出的、要交给下游的东西（文件路径，相对仓库根）。
     ///
@@ -198,6 +281,7 @@ public struct WorkTask: Codable, Sendable {
         prompt = try c.decode(String.self, forKey: .prompt)
         repo = try c.decode(String.self, forKey: .repo)
         state = try c.decode(State.self, forKey: .state)
+        waitReason = try c.decodeIfPresent(WaitReason.self, forKey: .waitReason)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
         endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
@@ -206,6 +290,9 @@ public struct WorkTask: Codable, Sendable {
         exitCode = try c.decodeIfPresent(Int32.self, forKey: .exitCode)
         changedFiles = try c.decodeIfPresent(Int.self, forKey: .changedFiles)
         note = try c.decodeIfPresent(String.self, forKey: .note)
+        terminalFailureKind = try c.decodeIfPresent(
+            TerminalFailureKind.self, forKey: .terminalFailureKind)
+        retryNotBefore = try c.decodeIfPresent(Date.self, forKey: .retryNotBefore)
         profile = try c.decodeIfPresent(TaskProfile.self, forKey: .profile)
         triedPlatforms = try c.decodeIfPresent([Platform].self, forKey: .triedPlatforms) ?? []
         ownerPlatform = try c.decodeIfPresent(Platform.self, forKey: .ownerPlatform)
@@ -215,6 +302,8 @@ public struct WorkTask: Codable, Sendable {
         automaticHandoffCount = try c.decodeIfPresent(Int.self,
             forKey: .automaticHandoffCount) ?? 0
         origin = try c.decodeIfPresent(String.self, forKey: .origin)
+        intakeKey = try c.decodeIfPresent(String.self, forKey: .intakeKey)
+        intakeSource = try c.decodeIfPresent(String.self, forKey: .intakeSource)
         landedAt = try c.decodeIfPresent(Date.self, forKey: .landedAt)
         discardedAt = try c.decodeIfPresent(Date.self, forKey: .discardedAt)
         discardReason = try c.decodeIfPresent(String.self, forKey: .discardReason)
@@ -235,17 +324,59 @@ public struct WorkTask: Codable, Sendable {
         stepTitle = try c.decodeIfPresent(String.self, forKey: .stepTitle)
         outputs = try c.decodeIfPresent([String].self, forKey: .outputs) ?? []
         runnerPID = try c.decodeIfPresent(Int32.self, forKey: .runnerPID)
+        dispatchLeaseID = try c.decodeIfPresent(String.self, forKey: .dispatchLeaseID)
+        dispatchLeaseOwnerPID = try c.decodeIfPresent(
+            Int32.self, forKey: .dispatchLeaseOwnerPID)
+        dispatchLeaseExpiresAt = try c.decodeIfPresent(
+            Date.self, forKey: .dispatchLeaseExpiresAt)
+        quotaReservationID = try c.decodeIfPresent(
+            String.self, forKey: .quotaReservationID)
+        dispatchSnapshotID = try c.decodeIfPresent(
+            String.self, forKey: .dispatchSnapshotID)
         frozenBy = try c.decodeIfPresent(String.self, forKey: .frozenBy)
         production = try c.decodeIfPresent(ProductionContext.self, forKey: .production)
         visualRemediationReviewID = try c.decodeIfPresent(
             String.self, forKey: .visualRemediationReviewID)
+        pausedAt = try c.decodeIfPresent(Date.self, forKey: .pausedAt)
+        pauseReason = try c.decodeIfPresent(String.self, forKey: .pauseReason)
+        architectureReviewRequestedAt = try c.decodeIfPresent(
+            Date.self, forKey: .architectureReviewRequestedAt)
+        qualityRejectionCount = try c.decodeIfPresent(
+            Int.self, forKey: .qualityRejectionCount) ?? 0
         stepIndex = try c.decodeIfPresent(Int.self, forKey: .stepIndex)
         interruptedCount = try c.decodeIfPresent(Int.self, forKey: .interruptedCount)
+        transitionActor = try c.decodeIfPresent(String.self, forKey: .transitionActor)
+        transitionReason = try c.decodeIfPresent(String.self, forKey: .transitionReason)
+        transitionPreviousState = try c.decodeIfPresent(
+            State.self, forKey: .transitionPreviousState)
+        transitionConfigVersion = try c.decodeIfPresent(
+            String.self, forKey: .transitionConfigVersion)
+        transitionedAt = try c.decodeIfPresent(Date.self, forKey: .transitionedAt)
+        normalizeWaitReason()
     }
 
     public var duration: TimeInterval? {
         guard let s = startedAt, let e = endedAt else { return nil }
         return e.timeIntervalSince(s)
+    }
+
+    fileprivate mutating func normalizeWaitReason() {
+        guard state == .blocked else {
+            waitReason = nil
+            return
+        }
+        guard waitReason == nil else { return }
+        if pausedAt != nil {
+            waitReason = architectureReviewRequestedAt == nil ? .paused : .architectureReview
+        } else if pendingAsk != nil {
+            waitReason = .humanAnswer
+        } else if frozenBy != nil {
+            waitReason = .dependency
+        } else if production?.blockedReason != nil {
+            waitReason = .productionGate
+        } else {
+            waitReason = .humanApproval
+        }
     }
 }
 
@@ -266,6 +397,42 @@ public struct StaleWrite: Error, CustomStringConvertible {
     }
 }
 
+public struct MissingTask: Error, CustomStringConvertible, Sendable {
+    public let id: String
+
+    public init(id: String) {
+        self.id = id
+    }
+
+    public var description: String {
+        "找不到要修改的任务：\(id)"
+    }
+}
+
+public struct DuplicateTask: Error, CustomStringConvertible, Sendable {
+    public let id: String
+
+    public init(id: String) {
+        self.id = id
+    }
+
+    public var description: String { "任务 \(id) 已存在，拒绝重复创建" }
+}
+
+public struct InvalidTaskTransition: Error, CustomStringConvertible, Sendable {
+    public let id: String
+    public let reason: String
+
+    public init(id: String, reason: String) {
+        self.id = id
+        self.reason = reason
+    }
+
+    public var description: String {
+        "任务 \(id) 状态转换被拒：\(reason)"
+    }
+}
+
 public enum TaskStore {
     /// **写 tasks.jsonl 的进程内锁。**
     ///
@@ -277,20 +444,51 @@ public enum TaskStore {
     /// verifyMerge 要同步跑整套测试,这个重叠窗口有好几分钟,不是理论风险。
     private static let writeLock = NSLock()
 
+    /// 进程内最新状态索引。tasks.jsonl 是 append-only，但读取方只使用每个 id
+    /// 的最新一条；工作循环过去每轮四十多次把 166MB 全文件重新解码，哪怕没有
+    /// 模型进程也能空转两个 CPU 核。文件大小变化时自动失效，仍能看见其它进程
+    /// 的追加；本进程 append 后直接推进索引，不再重复扫描历史。
+    private static var cachedPath: String?
+    private static var cachedSize: Int64 = -1
+    private static var cachedLatest: [String: WorkTask] = [:]
+    private static var cachedSkippedLines = 0
+
     public static var file: URL { Paths.appSupport.appendingPathComponent("tasks.jsonl") }
 
     /// 上一次 all() 里有几行没解出来。非 0 说明任务记录有损坏。
     public private(set) static var skippedLines = 0
 
     public static func all() -> [WorkTask] {
-        skippedLines = 0
+        writeLock.lock(); defer { writeLock.unlock() }
+        loadCacheLocked()
+        skippedLines = cachedSkippedLines
+        var result = cachedLatest.values.sorted { $0.createdAt < $1.createdAt }
+        // 每次读取都代表一份新的内存快照。不能把缓存对象的 snapshotToken
+        // 一起复用，否则两个独立调用会被误认成“同一控制流连续写入”。
+        for index in result.indices { result[index].snapshotToken = UUID() }
+        return result
+    }
+
+    private static func sizeOfFile() -> Int64 {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: file.path)
+        return (attrs?[.size] as? NSNumber)?.int64Value ?? -1
+    }
+
+    /// 调用方必须持有 writeLock。
+    private static func loadCacheLocked() {
+        let path = file.path
+        let size = sizeOfFile()
+        guard cachedPath != path || cachedSize != size else { return }
+        cachedPath = path
+        cachedSize = size
+        cachedLatest = [:]
+        cachedSkippedLines = 0
         // 走 ICloudSafe：这个文件今天在本地（appSupport 不同步、也不受 TCC 管），
         // 它认出本地路径就直接读、零开销。但**看板现在每次构建都要读它**，
         // 而看板在工作循环里每轮都构建 —— 万一哪天这条路径挪到 iCloud 下，
         // 一次不返回的 open() 就足够把整条流水线冻住，和之前那四次一模一样。
-        guard let data = ICloudSafe.read(file) else { return [] }
+        guard let data = ICloudSafe.read(file) else { return }
         let dec = SnapshotCoding.decoder()
-        var latest: [String: WorkTask] = [:]
         for line in data.split(separator: UInt8(ascii: "\n")) {
             guard let t = try? dec.decode(WorkTask.self, from: Data(line)) else {
                 // **解不出来的行要计数。**
@@ -307,17 +505,16 @@ public enum TaskStore {
                 //
                 // 空行不算损坏：文件末尾天然有一个。
                 if !line.allSatisfy({ $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\r") }) {
-                    skippedLines += 1
+                    cachedSkippedLines += 1
                 }
                 continue
             }
             // 新版按 revision 折叠；同 revision 才保留旧版“后写获胜”的兼容语义。
             // 否则一个还没升级、只会写 rev=0 的旧进程仍能靠更晚的文件位置
             // 覆盖新版状态，revision 形同虚设。
-            if let current = latest[t.id], current.rev > t.rev { continue }
-            latest[t.id] = t
+            if let current = cachedLatest[t.id], current.rev > t.rev { continue }
+            cachedLatest[t.id] = t
         }
-        return latest.values.sorted { $0.createdAt < $1.createdAt }
     }
 
     /// 这个进程给每条任务写过的最新 rev。
@@ -332,6 +529,10 @@ public enum TaskStore {
     public static func resetWrittenRevForTests() {
         writeLock.lock(); defer { writeLock.unlock() }
         writtenRev = [:]
+        cachedPath = nil
+        cachedSize = -1
+        cachedLatest = [:]
+        cachedSkippedLines = 0
     }
 
     /// 谁的写入被判过期了。**必须出声**，不能静默丢：
@@ -340,19 +541,266 @@ public enum TaskStore {
 
     /// 扫出这条任务在盘上的最新 rev。调用方必须已经持有文件锁。
     private static func currentRev(of id: String) -> Int {
-        guard let data = try? Data(contentsOf: file) else { return -1 }
-        let dec = SnapshotCoding.decoder()
-        var best = -1
-        for line in data.split(separator: UInt8(ascii: "\n")) {
-            guard let t = try? dec.decode(WorkTask.self, from: Data(line)),
-                  t.id == id else { continue }
-            best = max(best, t.rev)
+        loadCacheLocked()
+        return cachedLatest[id]?.rev ?? -1
+    }
+
+    /// POSIX `write` 允许短写。任务账本的一条 JSON 如果只落了一半，读取端会
+    /// 跳过坏行，任务就可能退回旧状态；所以必须写满，或者明确失败。
+    ///
+    /// `writer` 单独注入，只为让测试能稳定制造短写和零进展；产品调用始终传
+    /// 系统 `write(2)`。它不能返回超过请求长度的数字。
+    static func writeCompletely(
+        _ data: Data,
+        writer: (_ baseAddress: UnsafeRawPointer, _ count: Int) -> Int
+    ) throws {
+        try data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress, !raw.isEmpty else { return }
+            var offset = 0
+            while offset < raw.count {
+                let remaining = raw.count - offset
+                let written = writer(base.advanced(by: offset), remaining)
+                if written < 0, errno == EINTR { continue }
+                guard written > 0, written <= remaining else {
+                    let code = written < 0 ? errno : EIO
+                    throw NSError(
+                        domain: NSPOSIXErrorDomain,
+                        code: Int(code),
+                        userInfo: [NSLocalizedDescriptionKey:
+                            "任务账本写入失败：已写 \(offset)/\(raw.count) 字节"])
+                }
+                offset += written
+            }
         }
-        return best
+    }
+
+    /// 把一整条 JSONL 记录追加成一个可回滚事务。
+    ///
+    /// 即使 `write(2)` 已经写进一部分后才失败，也要把文件截回开始位置；否则
+    /// 读端会看见半行并退回旧 revision，看板表现成“任务状态倒流/消失”。调用方
+    /// 必须已经持有这个文件描述符对应的排他 `flock`。
+    static func appendCompletely(
+        _ data: Data,
+        to fd: Int32,
+        writer: (_ baseAddress: UnsafeRawPointer, _ count: Int) -> Int
+    ) throws {
+        let start = lseek(fd, 0, SEEK_END)
+        guard start >= 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
+                          userInfo: [NSLocalizedDescriptionKey: "无法定位任务账本末尾"])
+        }
+        do {
+            try writeCompletely(data, writer: writer)
+        } catch {
+            let original = error
+            guard ftruncate(fd, start) == 0 else {
+                throw NSError(
+                    domain: "TaskStore", code: 3,
+                    userInfo: [NSLocalizedDescriptionKey:
+                        "任务账本写入失败且回滚失败；原错误：\(original)"])
+            }
+            throw original
+        }
+    }
+
+    /// 在同一个进程锁和跨进程文件锁内重读最新任务、修改并落下一条新 revision。
+    ///
+    /// 闭包只能做快速、确定性的字段修改，不能在里面跑测试、网络或其它 I/O；
+    /// 锁住的是整本本机任务账。调用方只修改自己拥有的字段，不能再拿几分钟前的
+    /// 完整快照覆盖用户答复、质量结论等并发更新。
+    @discardableResult
+    public static func mutate(
+        id: String,
+        _ update: (inout WorkTask) throws -> Void
+    ) throws -> WorkTask {
+        try Paths.ensureDirectories()
+        writeLock.lock()
+        defer { writeLock.unlock() }
+
+        let fd = open(file.path, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { throw NSError(
+            domain: "TaskStore", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "任务库打不开：\(file.path)"]) }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX) == 0 else { throw NSError(
+            domain: "TaskStore", code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "任务库加锁失败"]) }
+        defer { flock(fd, LOCK_UN) }
+
+        // 获取文件锁之后再刷新：别的进程可能刚在我们等锁时追加了新 revision。
+        loadCacheLocked()
+        guard var task = cachedLatest[id] else { throw MissingTask(id: id) }
+        try update(&task)
+        task.normalizeWaitReason()
+        task.rev += 1
+        task.snapshotToken = UUID()
+
+        var data = try SnapshotCoding.encoder().encode(task)
+        data.append(UInt8(ascii: "\n"))
+        try appendCompletely(data, to: fd) { write(fd, $0, $1) }
+
+        cachedPath = file.path
+        cachedSize = sizeOfFile()
+        cachedLatest[id] = task
+        return task
+    }
+
+    /// 业务状态修改的唯一入口。actor/reason 会和新 revision 一起原子落盘；
+    /// expectedRevision 用于需要按完整快照转换的路径，冲突必须重算或显式失败。
+    @discardableResult
+    public static func transition(
+        id: String,
+        expectedRevision: Int? = nil,
+        actor: String,
+        reason: String,
+        configVersion: String? = nil,
+        _ update: (inout WorkTask) throws -> Void
+    ) throws -> WorkTask {
+        try mutate(id: id) { latest in
+            if let expectedRevision, latest.rev != expectedRevision {
+                staleRejections.append((id, expectedRevision, latest.rev))
+                throw StaleWrite(id: id, mine: expectedRevision, onDisk: latest.rev)
+            }
+            let previous = latest.state
+            try update(&latest)
+            if latest.state == .done || latest.state == .failed
+                || (previous != .queued && latest.state == .queued) {
+                latest.clearDispatchLease()
+            }
+            latest.transitionActor = actor
+            latest.transitionReason = reason
+            latest.transitionPreviousState = previous
+            latest.transitionConfigVersion = configVersion
+            latest.transitionedAt = Date()
+        }
+    }
+
+    /// 对已经基于某一 revision 算好的完整结果做 CAS 转换。不会覆盖并发新状态；
+    /// 冲突时由调用方重新读取、重算，而不是偷偷把旧快照写回去。
+    @discardableResult
+    public static func transition(
+        _ candidate: WorkTask,
+        actor: String,
+        reason: String,
+        configVersion: String? = nil
+    ) throws -> WorkTask {
+        try transition(
+            id: candidate.id, expectedRevision: candidate.rev,
+            actor: actor, reason: reason, configVersion: configVersion
+        ) { latest in
+            latest = candidate
+        }
+    }
+
+    /// 原子领取一个仍可执行的排队任务。
+    ///
+    /// 规划只是一张快照；真正启动模型前必须走这里重新验证。这样暂停、丢弃、
+    /// 另一个协调器抢先领取都会得到明确拒绝，而不是由旧快照覆盖成 running。
+    @discardableResult
+    public static func claimForExecution(id: String, runnerPID: Int32,
+                                         dispatchLeaseID: String? = nil,
+                                         at: Date = Date()) throws -> WorkTask {
+        try transition(
+            id: id, actor: "scheduler", reason: "原子领取任务执行权"
+        ) { latest in
+            guard latest.state == .queued, latest.pausedAt == nil,
+                  latest.discardedAt == nil else {
+                throw InvalidTaskTransition(
+                    id: latest.id, reason: "计划生成后任务已不再可领取")
+            }
+            if let claimed = latest.dispatchLeaseID,
+               latest.dispatchLeaseExpiresAt.map({ $0 > at }) == true,
+               claimed != dispatchLeaseID {
+                throw InvalidTaskTransition(
+                    id: latest.id, reason: "任务已由另一份派发租约预占")
+            }
+            latest.state = .running
+            latest.terminalFailureKind = nil
+            latest.retryNotBefore = nil
+            latest.runnerPID = runnerPID
+            latest.startedAt = at
+        }
+    }
+
+    /// 在真正创建子进程前，把任务 revision、限速凭据和执行租约一次写入。
+    @discardableResult
+    public static func claimForDispatch(
+        id: String,
+        expectedRevision: Int,
+        coordinatorPID: Int32,
+        snapshotID: String,
+        quotaReservationID: String,
+        leaseID: String = UUID().uuidString.lowercased(),
+        at: Date = Date(),
+        leaseSeconds: TimeInterval = 120
+    ) throws -> WorkTask {
+        try transition(
+            id: id, expectedRevision: expectedRevision,
+            actor: "scheduler", reason: "原子提交任务、限速凭据与派发租约"
+        ) { latest in
+            guard latest.state == .queued, latest.pausedAt == nil,
+                  latest.discardedAt == nil else {
+                throw InvalidTaskTransition(
+                    id: latest.id, reason: "任务已不再可派发")
+            }
+            if latest.dispatchLeaseID != nil,
+               latest.dispatchLeaseExpiresAt.map({ $0 > at }) == true {
+                throw InvalidTaskTransition(
+                    id: latest.id, reason: "任务已有未到期派发租约")
+            }
+            latest.dispatchLeaseID = leaseID
+            latest.dispatchLeaseOwnerPID = coordinatorPID
+            latest.dispatchLeaseExpiresAt = at.addingTimeInterval(leaseSeconds)
+            latest.quotaReservationID = quotaReservationID
+            latest.dispatchSnapshotID = snapshotID
+        }
+    }
+
+    @discardableResult
+    public static func releaseDispatchLease(
+        id: String,
+        leaseID: String,
+        reason: String
+    ) throws -> WorkTask {
+        try transition(id: id, actor: "scheduler", reason: reason) { latest in
+            guard latest.state == .queued, latest.dispatchLeaseID == leaseID else {
+                throw InvalidTaskTransition(
+                    id: latest.id, reason: "派发租约已变更或任务已经启动")
+            }
+            latest.clearDispatchLease()
+        }
+    }
+
+    /// 新任务只能从“不存在”进入 queued/blocked。和 transition 分开，避免调用方
+    /// 把“更新现有任务”误写成一次没有 expected revision 的覆盖。
+    @discardableResult
+    public static func create(
+        _ candidate: WorkTask,
+        actor: String,
+        reason: String,
+        configVersion: String? = nil
+    ) throws -> WorkTask {
+        var task = candidate
+        task.transitionActor = actor
+        task.transitionReason = reason
+        task.transitionPreviousState = nil
+        task.transitionConfigVersion = configVersion
+        task.transitionedAt = Date()
+        task.normalizeWaitReason()
+        return try appendSnapshot(task, requireMissing: true)
     }
 
     public static func append(_ task: WorkTask) throws {
-        var task = task
+        _ = try appendSnapshot(task, requireMissing: false)
+    }
+
+    @discardableResult
+    private static func appendSnapshot(
+        _ input: WorkTask,
+        requireMissing: Bool
+    ) throws -> WorkTask {
+        var task = input
+        task.normalizeWaitReason()
         try Paths.ensureDirectories()
         writeLock.lock()
         defer { writeLock.unlock() }
@@ -372,6 +820,9 @@ public enum TaskStore {
         defer { flock(lockFD, LOCK_UN) }
 
         let onDisk = currentRev(of: task.id)
+        if requireMissing, onDisk >= 0 {
+            throw DuplicateTask(id: task.id)
+        }
         // 判据：**盘上这条最新记录是不是我自己写的。**
         //
         // 是我写的 → 这是我一轮里的连续写入（runOneTask 会对同一个 task
@@ -392,21 +843,13 @@ public enum TaskStore {
         writtenRev[task.snapshotToken] = (task.id, task.rev)
         var data = try SnapshotCoding.encoder().encode(task)
         data.append(UInt8(ascii: "\n"))
-        if FileManager.default.fileExists(atPath: file.path) {
-            // O_APPEND:内核保证每次 write 原子追加到末尾,即便另一个
-            // **进程**(worker 和菜单栏 App 都可能跑到 collect/落地)也在写。
-            // 进程内的 writeLock 挡同进程多线程,O_APPEND 挡跨进程 —— 两层都要。
-            let fd = open(file.path, O_WRONLY | O_APPEND)
-            if fd >= 0 {
-                defer { close(fd) }
-                _ = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
-            } else {
-                let fh = try FileHandle(forWritingTo: file)
-                try fh.seekToEnd(); try fh.write(contentsOf: data); try fh.close()
-            }
-        } else {
-            try data.write(to: file)
-        }
+        // `lockFD` 本来就是 O_APPEND 打开的同一个文件。直接在持锁 fd 上写，
+        // 避免第二次 open 失败时换到一个不受当前 flock 保护的 FileHandle。
+        try appendCompletely(data, to: lockFD) { write(lockFD, $0, $1) }
+        cachedPath = file.path
+        cachedSize = sizeOfFile()
+        cachedLatest[task.id] = task
+        return task
     }
 
     /// 下一个该跑的任务。
@@ -417,7 +860,7 @@ public enum TaskStore {
     /// 绝大多数任务仍然走完全一样的路，图那套东西一旦有 bug，
     /// 爆炸半径被限制在少数任务上。
     public static func nextQueued() -> WorkTask? {
-        TaskGraph.nextReady(all())
+        readyQueue().first
     }
 
     /// 所有**就绪**的排队任务（图内依赖已满足的才算），按队列顺序。
@@ -426,17 +869,36 @@ public enum TaskStore {
     /// 修「队头阻塞」用（一个没人能接的任务堵死整条队，
     /// 排在后面的媒体任务明明 MiniMax 闲着也轮不到）。
     public static func readyQueue() -> [WorkTask] {
+        readyQueue(from: all())
+    }
+
+    /// 从调用方已经冻结的任务 revision 集合计算候选。调度快照必须用这一版，
+    /// 不能先读 allTasks 做容量判断、再读一次全局队列得到另一代任务。
+    public static func readyQueue(from snapshot: [WorkTask]) -> [WorkTask] {
         var out: [WorkTask] = []
-        var pool = all()
+        var pool = snapshot
         // nextReady 每次给一个；把它临时标记成非 queued 再要下一个，
         // 复用图依赖判定逻辑而不是在这里重写一遍。
+        let now = Date()
         while let t = TaskGraph.nextReady(pool), out.count < 32 {
-            out.append(t)
+            let leaseIsLive = t.dispatchLeaseID != nil
+                && t.dispatchLeaseExpiresAt.map { $0 > now } == true
+            if !leaseIsLive { out.append(t) }
             for i in pool.indices where pool[i].id == t.id {
                 pool[i].state = .running
             }
         }
         return out
+    }
+}
+
+private extension WorkTask {
+    mutating func clearDispatchLease() {
+        dispatchLeaseID = nil
+        dispatchLeaseOwnerPID = nil
+        dispatchLeaseExpiresAt = nil
+        quotaReservationID = nil
+        dispatchSnapshotID = nil
     }
 }
 
@@ -558,9 +1020,19 @@ public struct WorkScheduler: Sendable {
         let isMediaTask = TaskKind.isMedia(task?.prompt ?? "")
         let isReviewTask = TaskKind.isReview(task?.prompt ?? "")
         let isArchitectReviewTask = TaskKind.isArchitectReview(task?.prompt ?? "")
+        let isTechnicalDispositionTask = TaskKind.isTechnicalDisposition(task?.prompt ?? "")
+        let isControlReviewTask = isArchitectReviewTask || isTechnicalDispositionTask
         let needsEyes = TaskKind.needsEyes(task?.prompt ?? "")
         for runner in runners {
             let p = runner.platform
+
+            // 架构师是控制面岗位，不是一个拥有高风险权限的普通开发候选。
+            // 角色配置把 Codex 提升为架构师后，如果这里只看 maxRisk，它会在
+            // 非指挥机器上反而抢到高危实现任务，角色迁移就只完成了一半。
+            if p == AgentRoles.architectPlatform(), !isControlReviewTask {
+                dispatcherPlatform = p
+                continue
+            }
 
             // **媒体任务和编码任务是两个世界，方向都要闸。**
             //
@@ -583,14 +1055,13 @@ public struct WorkScheduler: Sendable {
             // 以前第二条故意留了兜底，结果 MiniMax 暂时不可用时会偷偷烧
             // Claude/Kimi 的额度。现在宁可排队等 MiniMax 恢复，也不跨岗。
             // 【看效果】在上面的媒体闸单独处理，不走这里。
-            if isArchitectReviewTask,
-               p != .claude || runner.runnerID != ClaudeRunner().runnerID {
+            if isControlReviewTask, p != AgentRoles.architectPlatform() {
                 rejected.append(Rejection(
-                    platform: p, reason: "负面评审只交给架构师复核",
+                    platform: p, reason: "控制面复核只交给角色配置中的架构师",
                     kind: .permanent))
                 continue
             }
-            if !needsEyes, !isArchitectReviewTask,
+            if !needsEyes, !isControlReviewTask,
                runner.reviewOnly != isReviewTask {
                 rejected.append(Rejection(
                     platform: p,
@@ -668,11 +1139,11 @@ public struct WorkScheduler: Sendable {
             // 这台机器上把它留给别的用途了。
             //
             // 比这个更细的自动判断（「人最近在不在用」）也有，见下面一条。
-            // 但静音是**常驻策略**，不是猜：比如这台 Mac 的 Claude 是控制面，
+            // 但静音是**常驻策略**，不是猜：比如这台 Mac 的 Codex 是控制面，
             // 派活给它等于饿死那个决定「该干什么」的环节。
             // **指挥不进候选枚举。** 它不是「接不了」，它是发活的那个。
             // 记在 Decision.dispatcher 上，诊断里单独一行。
-            if AgentRoles.isDispatcher(p), !isArchitectReviewTask {
+            if AgentRoles.isDispatcher(p), !isControlReviewTask {
                 dispatcherPlatform = p
                 continue
             }
@@ -798,25 +1269,27 @@ public struct WorkScheduler: Sendable {
 
         var ordered = candidates.sorted { $0.1 > $1.1 }.map(\.0)
 
-        // **高危无人接时，指挥亲自上。**
+        // **高危无人接时，非架构师指挥可以亲自上。**
         //
-        // 角色规则里高危只有架构师（Claude）能接，而本机 Claude 是指挥、
-        // 不参与竞选 —— 于是每个高危任务都「没有平台能接」，转人工。
+        // 旧配置里高危可能只有指挥能接，而指挥默认不参与竞选，
+        // 于是每个高危任务都「没有平台能接」，转人工。
         // 更糟的是储备池还自动生成碰构建脚本的维护任务：
         // 系统自己制造它自己干不了的活，然后堆给人。实测一次堆了 5 个，
         // 用户的原话是「不是 auto 模式，为啥有这么多需要我确认的」。
         //
         // 指挥不竞选的本意是保住控制面的额度，不是让高危活饿死 ——
-        // 高危任务本来稀少，兜底不动摇那个初衷。
+        // 高危任务本来稀少，兜底不动摇那个初衷。但 Codex 架构师必须始终
+        // 留在控制面，不能因为普通开发暂时不可用就被降级成实现者。
         // 兜底同样过角色的风险闸：指挥自己的 maxRisk 也够不着时，
         // 该转人工就转人工，不能因为「总得有人干」硬塞。
         if ordered.isEmpty,
            task?.profile?.risk == .sensitive,
            let dp = dispatcherPlatform,
+           dp != AgentRoles.architectPlatform(),
            AgentRoles.accepts(.sensitive, platform: dp),
            let dr = runners.first(where: { $0.platform == dp && $0.canEdit && !$0.mediaOnly }) {
             ordered.append(Pick(platform: dp, runner: dr,
-                reason: "高危只有架构师能接，其余角色都够不着 —— 指挥兼任"))
+                reason: "高危无人可接，具备权限的非架构师指挥兼任"))
         }
         return Decision(candidates: ordered, rejected: rejected,
                         dispatcher: dispatcherPlatform)
@@ -1365,6 +1838,87 @@ public struct MiniMaxRunner: AgentRunner {
     }
 }
 
+/// MiniMax Token Plan 的真正编码执行器。
+///
+/// `mmx text chat` 仍然只是纯文本通道；编码能力由 Claude Code 提供工具外壳，
+/// 模型和额度则通过 MiniMax 官方的 Anthropic-compatible 端点提供。这样既能
+/// 读写隔离 worktree、运行测试和延续会话，又不会消耗 Claude 订阅额度。
+public struct MiniMaxCodeRunner: AgentRunner {
+    public let platform: Platform = .minimax
+    public let runnerID = "minimax.code"
+    public let sessionSupport: SessionSupport = .stableID
+    public let binaryName = "claude"
+    public init() {}
+
+    nonisolated(unsafe) public static var configPathOverride: String?
+
+    static var configPath: String {
+        configPathOverride ?? (NSHomeDirectory() + "/.mmx/config.json")
+    }
+
+    /// 只把凭据传给子进程；调用方不得打印或持久化返回值。
+    static func credentials() -> (baseURL: String, apiKey: String)? {
+        guard let data = FileManager.default.contents(atPath: configPath),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let apiKey = object["api_key"] as? String, !apiKey.isEmpty
+        else { return nil }
+        // `mmx config show` 会展示推导后的 base_url，但磁盘文件通常只存
+        // region。不能拿展示字段当持久化契约，否则已登录账号会被误判没凭据。
+        let rawBase = (object["base_url"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? ((object["region"] as? String) == "cn"
+                ? "https://api.minimaxi.com" : "https://api.minimax.io")
+        let base = rawBase.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return (base + "/anthropic", apiKey)
+    }
+
+    public var binaryPath: String? {
+        guard Self.credentials() != nil else { return nil }
+        return Proc.which(binaryName)
+    }
+
+    public func command(
+        prompt: String, cwd: String
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd, session: .fresh)
+    }
+
+    public func command(
+        prompt: String, cwd: String, session: GraphSession.Mode
+    ) -> (launchPath: String, args: [String], env: [String: String]) {
+        // M3 已在本机 Token Plan + Anthropic 兼容端点实测通过；仍允许账号级
+        // runners.json 显式覆盖，便于以后无代码切换到 highspeed/新型号。
+        let model = RunnerConfigStore.load().model(for: platform) ?? "MiniMax-M3"
+        var extra = [
+            "--model", model,
+            "--append-system-prompt", CodingMediaGuard.systemPrompt,
+            "--disallowedTools", CodingMediaGuard.disallowedReadTools.joined(separator: ","),
+        ]
+        switch session {
+        case .fresh, .projectResume: break
+        case .create(let id): extra += ["--session-id", id]
+        case .resume(let id): extra += ["--resume", id]
+        }
+        var env = [
+            "ANTHROPIC_MODEL": model,
+            "ANTHROPIC_SMALL_FAST_MODEL": model,
+            "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
+        ]
+        if let credential = Self.credentials() {
+            env["ANTHROPIC_BASE_URL"] = credential.baseURL
+            env["ANTHROPIC_AUTH_TOKEN"] = credential.apiKey
+            // Proc.run 会把这组值覆盖到继承环境；给空值可避免本机残留的
+            // Claude API key 抢占 Token Plan 身份。
+            env["ANTHROPIC_API_KEY"] = ""
+        }
+        return (
+            binaryPath ?? "claude",
+            ["-p", prompt, "--add-dir", cwd,
+             "--dangerously-skip-permissions"] + extra,
+            env
+        )
+    }
+}
+
 /// MiniMax 的媒体执行器：把任务提示词里的资产清单变成真文件。
 ///
 /// # 为什么终于要接这条通路
@@ -1399,6 +1953,15 @@ public struct MiniMaxMediaRunner: AgentRunner {
     /// mmx 的本事里就有图片/视频理解 —— 全系统唯一看得见的一个。
     public var canSeeMedia: Bool { true }
     public init() {}
+
+    /// 派发时看到的是原始任务，执行器收到的却是 ContextPack 包装后的提示词。
+    /// 因此这里只要求视觉标记出现在独立一行，不能再要求它是第一个字符。
+    /// 普通媒体任务即使正文提到“看效果”也不会命中没有前缀括号的自然语言。
+    static func isVisualReviewPrompt(_ prompt: String) -> Bool {
+        prompt.components(separatedBy: .newlines).contains {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix("【看效果】")
+        }
+    }
 
     /// `【看效果】` 的文件清单是系统自己生成的，格式固定为“都在 <目录> 下”
     /// 加若干 `- 文件名`。抽成纯函数，避免视觉任务再次被媒体 DSL 当成 0 项。
@@ -1524,7 +2087,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
     public func command(
         prompt: String, cwd: String
     ) -> (launchPath: String, args: [String], env: [String: String]) {
-        if TaskKind.needsEyes(prompt) {
+        if Self.isVisualReviewPrompt(prompt) {
             return visualReviewCommand(prompt: prompt,
                                        files: Self.visualFiles(in: prompt))
         }
@@ -1766,7 +2329,9 @@ public struct CodexRunner: AgentRunner {
         // --approve-for-me = 自动审批 + workspace-write 沙箱，同义替代。
         let args: [String]
         if case .projectResume = session {
-            args = ["exec", "resume", "--last", "--approve-for-me", prompt]
+            // `--approve-for-me` 属于 `exec`，不属于 `exec resume`。放在
+            // `resume` 后面会被新版 CLI 当成未知子命令参数，直接以 rc 2 退出。
+            args = ["exec", "--approve-for-me", "resume", "--last", prompt]
         } else {
             args = ["exec", "--approve-for-me", prompt]
         }
@@ -1786,8 +2351,8 @@ public enum RunnerRegistry {
     /// GeminiRunner 的代码保留，哪天换成 Antigravity 或企业版把它加回来即可。
     public static let all: [AgentRunner] = [
         ClaudeRunner(), QwenRunner(), KimiRunner(), CodexRunner(),
-        OpenCodeRunner(), OpenCodeRunner(platform: .openrouter),
-        MiniMaxMediaRunner(), MiniMaxReviewRunner(),
+        OpenCodeRunner(),
+        MiniMaxCodeRunner(), MiniMaxMediaRunner(), MiniMaxReviewRunner(),
         // 装了 ZCode 的机器才接得到 GLM 的活（binaryPath 会自己判）。
         ZcodeRunner()
     ]
@@ -1795,8 +2360,7 @@ public enum RunnerRegistry {
     /// 能做纯推理（分类、总结）的执行器，包含改不了文件的那些。
     /// MiniMax 排第一：它的额度最富余，而分类正是"高频、单次极小"的活。
     public static let reasoning: [AgentRunner] = [
-        MiniMaxRunner(), ClaudeRunner(), QwenRunner(), KimiRunner(), OpenCodeRunner(),
-        OpenCodeRunner(platform: .openrouter)
+        MiniMaxRunner(), ClaudeRunner(), QwenRunner(), KimiRunner(), OpenCodeRunner()
     ]
 
     /// 恢复持久化 owner。先认稳定 ID；旧 ID 不认识时，只在同平台、同能力泳道
@@ -1824,6 +2388,55 @@ public enum RunnerRegistry {
 // MARK: - 进程
 
 public enum Proc {
+    /// 从一份 pid→ppid 快照里找出 root 的全部后代（父在前、深层在后）。
+    /// 纯函数单独暴露给测试，避免拿真实系统进程做危险断言。
+    static func descendants(of rootPID: Int32, parents: [Int32: Int32]) -> [Int32] {
+        guard rootPID > 1 else { return [] }
+        var out: [Int32] = []
+        var frontier = [rootPID]
+        while let parent = frontier.first {
+            frontier.removeFirst()
+            let children = parents.compactMap { pid, ppid in
+                ppid == parent && pid > 1 ? pid : nil
+            }.sorted()
+            out.append(contentsOf: children)
+            frontier.append(contentsOf: children)
+        }
+        return out
+    }
+
+    private static func processParents() -> [Int32: Int32] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,ppid="]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [:] }
+        process.waitUntilExit()
+        let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        var parents: [Int32: Int32] = [:]
+        for line in text.split(separator: "\n") {
+            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard fields.count >= 2,
+                  let pid = Int32(fields[0]), let ppid = Int32(fields[1]) else { continue }
+            parents[pid] = ppid
+        }
+        return parents
+    }
+
+    /// 终止一个模型进程及其工具/MCP 子进程。只使用明确 PID，绝不发进程组信号。
+    public static func terminateProcessTree(rootPID: Int32,
+                                            grace: TimeInterval = 0.8) {
+        guard rootPID > 1 else { return }
+        let children = descendants(of: rootPID, parents: processParents())
+        let targets = children.reversed() + [rootPID]
+        for pid in targets { _ = kill(pid, SIGTERM) }
+        if grace > 0 { Thread.sleep(forTimeInterval: grace) }
+        for pid in targets where kill(pid, 0) == 0 { _ = kill(pid, SIGKILL) }
+    }
+
     /// 这些 CLI 装在哪。`which` 和子进程的 PATH 共用同一份清单 ——
     /// 分成两份的话，早晚会出现「找得到、跑不起来」。
     static let toolDirs = [
@@ -1986,8 +2599,7 @@ public enum Proc {
             //
             // 只杀这一个子进程，而且先确认 pid 是正数。
             let pid = p.processIdentifier
-            if pid > 0 { kill(pid, SIGKILL) }
-            p.terminate()
+            terminateProcessTree(rootPID: pid)
         }
         p.waitUntilExit()
         // `group.wait()` 不能无限期等。
@@ -2325,7 +2937,7 @@ public enum GitWorkspace {
         _ = git(["worktree", "remove", "--force", path], in: repo)
         try? FileManager.default.removeItem(atPath: path)
 
-        var r = git(["worktree", "add", "-b", branch, path, "HEAD"], in: repo,
+        var r = git(["worktree", "add", "-b", branch, path, base], in: repo,
                     timeout: timeoutUsed)
 
         // **分支已经存在时要接着用，不能报错退出。**
@@ -2631,6 +3243,24 @@ public enum GitWorkspace {
             branch: r.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// 找到「仓库 × 平台」的稳定工作区。普通任务的目录从 2026-08 起已经
+    /// 不再用 taskID 命名；接力代码若仍拿 taskID 查，会永远误判为不存在。
+    public static func existingWorkspace(repo: String, platform: Platform,
+                                         graphID: String? = nil) -> Workspace? {
+        existingWorkspace(taskID: graphID ?? stableKey(repo: repo, platform: platform))
+    }
+
+    /// 终局失败时能不能删除分支。
+    ///
+    /// `touchedFiles == 0` 只说明这一轮 agent 没留下新文件，不代表接手前的
+    /// checkpoint 不存在。分支领先 main 或交接记录里有 checkpoint 时删除，
+    /// 会把上一位 agent 的全部成果一起删掉。
+    public static func shouldPreserveFailedBranch(
+        touchedFiles: Int, commitsAheadOfMain: Int, handoffCommit: String?
+    ) -> Bool {
+        touchedFiles > 0 || commitsAheadOfMain > 0 || handoffCommit != nil
+    }
+
     public static func commit(in dir: String, message: String) -> Proc.Result {
         _ = git(["add", "-A"], in: dir)
         return git([
@@ -2726,7 +3356,10 @@ public enum FailureClassifier {
         // 额度类走统一的双条件判定。放在这里而不是塞进 platformMarkers，
         // 是因为它需要区分「服务端说打满了」和「agent 随口提了句 quota」——
         // 单纯的字符串包含做不到这件事。
-        if CooldownLedger.classify(text) == .quotaExhausted {
+        // 只让本次终端失败摘要参与额度判定。stdout 里会包含上下文、历史
+        // 提交标题和被审报告；它们可能原样引用别的平台额度错误，不能拿来
+        // 判断这一次 Runner 是否耗尽。
+        if CooldownLedger.classify(brief) != nil {
             return .platformUnavailable(brief)
         }
         return .agentFailed("退出码 \(exitCode)：" + brief)
@@ -2946,6 +3579,24 @@ public struct MiniMaxReviewRunner: AgentRunner {
         …（材料截断）"
         fi
 
+        # 合入审核还必须知道当前仓库的常设规则。任务专属范围已经由
+        # MergeReview.reviewPrompt 内联；这里补的是下一级仓库契约，不能反过来
+        # 覆盖任务明确写出的非目标。
+        review_rules=""
+        [ -f AGENTS.md ] && review_rules="$review_rules
+        ## AGENTS.md
+        $(<AGENTS.md)"
+        [ -f QUALITY.md ] && review_rules="$review_rules
+        ## QUALITY.md
+        $(<QUALITY.md)"
+        [ -f docs/no-faking.md ] && review_rules="$review_rules
+        ## docs/no-faking.md
+        $(<docs/no-faking.md)"
+        if [ ${#review_rules} -gt 30000 ]; then
+          review_rules="${review_rules[1,30000]}
+        …（仓库通用规则截断；以任务专属契约的范围为先）"
+        fi
+
         case "$LLMQ_PROMPT" in
           【测试*) kind=测试 ;;
           *合入*) kind=合入 ;;
@@ -2985,7 +3636,10 @@ public struct MiniMaxReviewRunner: AgentRunner {
             git diff "main...$br" > "$tmpd/dfull.txt" 2>/dev/null
           fi
           dfull="$(<$tmpd/dfull.txt)"
-          material="## 改动概览
+          material="## 当前仓库通用规则
+        $review_rules
+
+        ## 改动概览
         $(<$tmpd/dstat.txt)
 
         ## 完整改动（前 40000 字符）
@@ -3026,6 +3680,10 @@ public struct MiniMaxReviewRunner: AgentRunner {
         没有就写「没有」。
 
         判断标准：
+        - 范围与质量门槛严格按待审提示中的优先级：任务专属契约 > 当前阶段
+          契约 > 仓库通用 QUALITY；不弄虚作假、安全和离线边界始终有效。
+        - 任务明确列为非目标的质量不能单独否决；修改冻结目录、真实功能
+          缺陷和虚假验收声明仍可否决。不要把两者混为一谈。
         - **不合入**的理由必须是**这段改动本身有问题**：会出错、偷工、
           破坏别的东西。风格不合、命名不好、"我会写得不一样"都不是理由。
         - 看不懂 ≠ 不合入。看不懂就在"判断依据"里说清哪一段看不懂，

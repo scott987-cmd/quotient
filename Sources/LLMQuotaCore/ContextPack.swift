@@ -26,6 +26,16 @@ public enum ContextPackBuilder {
     /// 不宣称等于固定 token 数。
     public static let defaultBudget = 24_000
 
+    /// OpenCode 的火山通道会为模型保留较大的输出窗口；如果仍按通用上限
+    /// 注入系统上下文，任务正文和工具定义叠加后会在首轮请求前直接超窗。
+    /// 这里只收紧该通道，不影响其他 Runner 已验证过的上下文容量。
+    public static func budget(for platform: Platform) -> Int {
+        switch platform {
+        case .volcark: return 8_000
+        default: return defaultBudget
+        }
+    }
+
     public enum Section: String, CaseIterable, Sendable {
         case contracts       // 固定执行/进度/提问/协作契约
         case product         // 产品硬约束与当前验收条款
@@ -171,7 +181,10 @@ public enum ContextPackBuilder {
         let manifest = assembler.manifest(taskID: request.task.id,
                                           runnerID: request.runnerID,
                                           sessionAction: request.sessionAction)
-        return ContextPack(text: body + userMaterial + assembler.rendered,
+        // P0/P1 的优先级也必须体现在最终文本顺序上。任务正文不计预算、可能
+        // 任意长；把系统契约拼在正文尾部会让 Runner 的二次钳长先删掉工具说明。
+        return ContextPack(text: assembler.rendered
+            + "\n\n---\n## 当前任务\n\n" + body + userMaterial,
                            manifest: manifest, refusedReason: nil)
     }
 
@@ -479,7 +492,7 @@ public enum ContextPackBuilder {
 
 /// 一次派发的完整上下文包：提示词正文 + manifest + 派发前拒绝标记。
 public struct ContextPack: Sendable {
-    /// 完整提示词 = 原任务正文 + 用户答复 + 系统注入段落。refused 时为空。
+    /// 完整提示词 = 系统注入段落 + 原任务正文 + 用户答复。refused 时为空。
     public var text: String
     public var manifest: ContextPackManifest
     /// 非 nil 表示这个 Runner 在派发前被拒绝；调用方应换下一个候选，

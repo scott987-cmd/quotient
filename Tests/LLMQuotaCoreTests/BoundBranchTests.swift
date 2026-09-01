@@ -29,4 +29,33 @@ final class BoundBranchTests: XCTestCase {
             "正文里提到分支不算绑定 —— 只认三份模板的固定开头")
         XCTAssertNil(TaskKind.boundBranch("【媒体】生成一张图\nIMG a.png :: 图"))
     }
+
+    func testSupportingTaskBecomesObsoleteWhenSourceIsFrozenOrHandedOff() {
+        var source = WorkTask(id: "74726e09", prompt: "旧黄金样板", repo: "/tmp/flint")
+        source.branch = "agent/kimi/74726e09"
+        source.pausedAt = Date()
+        source.note = "旧美术任务冻结并保留"
+        var review = WorkTask(
+            id: "review1",
+            prompt: "【审查·合入】分支 agent/kimi/74726e09 的改动能不能合进 main。",
+            repo: "/tmp/flint")
+        review.origin = "merge-review"
+
+        XCTAssertEqual(
+            TaskKind.obsoleteSupportingReason(review, among: [source, review]),
+            "来源任务 74726e09 已冻结归档")
+
+        source.pausedAt = nil
+        source.note = nil
+        source.branch = "agent/qwen/74726e09"
+        XCTAssertEqual(
+            TaskKind.obsoleteSupportingReason(review, among: [source, review]),
+            "来源任务 74726e09 已交接到 agent/qwen/74726e09")
+
+        source.branch = "agent/kimi/74726e09"
+        source.landedAt = Date()
+        XCTAssertEqual(
+            TaskKind.obsoleteSupportingReason(review, among: [source, review]),
+            "来源任务 74726e09 已合入 main，过程评审已完成使命")
+    }
 }

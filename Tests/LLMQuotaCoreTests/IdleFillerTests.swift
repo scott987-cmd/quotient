@@ -98,6 +98,27 @@ final class IdleFillerTests: XCTestCase {
                      "队列有活时不该再填")
     }
 
+    func testFocusedProjectSkipsOtherProjectPlaybook() throws {
+        let maw = Playbook.Project(
+            id: "maw", name: "Maw", brief: "旧项目", repo: "/dev/Maw",
+            recipes: [.init(title: "继续", prompt: "继续 Maw")],
+            approvedAt: Date(), runs: 0)
+        let flint = Playbook.Project(
+            id: "flint", name: "Flint", brief: "当前项目", repo: "/dev/Flint",
+            recipes: [.init(title: "继续", prompt: "继续 Flint")],
+            approvedAt: Date(), runs: 1)
+        Playbook.save([maw, flint])
+        let opp = IdleFiller.Opportunity(
+            platform: .codex, windowLabel: "5 小时",
+            remaining: 600, used: 0.01, reason: "test")
+
+        let hit = try XCTUnwrap(IdleFiller.found(
+            for: opp, repos: [], tasks: [],
+            scope: ProjectExecutionScope(allowedRepo: "/dev/Flint")))
+        XCTAssertEqual(hit.repo, "/dev/Flint")
+        XCTAssertEqual(hit.projectID, "flint")
+    }
+
     // MARK: 卡住的排队任务不该把所有平台一起饿死
 
     private func qTask(_ id: String, state: WorkTask.State,

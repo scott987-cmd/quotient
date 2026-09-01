@@ -92,6 +92,12 @@ final class TaskKindRoutingTests: XCTestCase {
         XCTAssertTrue(command.args.joined().contains("真实退出码"))
         XCTAssertTrue(command.args.joined().contains("git diff \"$stamp^1\" \"$stamp\""),
                        "事后审查必须从 merge commit 读取完整改动")
+        XCTAssertTrue(command.args.joined().contains("[ -f AGENTS.md ]"))
+        XCTAssertTrue(command.args.joined().contains("[ -f QUALITY.md ]"))
+        XCTAssertTrue(command.args.joined().contains("[ -f docs/no-faking.md ]"))
+        XCTAssertTrue(command.args.joined().contains(
+            "任务专属契约 > 当前阶段"),
+            "评审驱动必须把规则优先级写进实际发送给 MiniMax 的提示")
     }
 
     /// **两种写法都得认。** 这套系统里人写「评审」、机器写「审查」，

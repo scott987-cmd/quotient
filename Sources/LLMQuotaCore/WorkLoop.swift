@@ -76,17 +76,37 @@ public final class SingleInstanceLock {
 
 /// 派发速率闸门。
 public struct RateGate: Sendable {
-    private var recent: [Date] = []
+    public struct Reservation: Hashable, Sendable {
+        fileprivate let id: UUID
+
+        public var identifier: String { id.uuidString.lowercased() }
+    }
+
+    private struct Entry: Sendable {
+        let reservation: Reservation
+        let date: Date
+    }
+
+    private var recent: [Entry] = []
     private let limit: Int
     private let window: TimeInterval = 3600
 
     public init(maxPerHour: Int) { self.limit = maxPerHour }
 
     public mutating func allow(now: Date = Date()) -> Bool {
-        recent.removeAll { now.timeIntervalSince($0) > window }
-        guard recent.count < limit else { return false }
-        recent.append(now)
-        return true
+        reserve(now: now) != nil
+    }
+
+    /// 预占一个派发额度并返回可精确退款的凭据。
+    ///
+    /// 多执行槽会乱序结束，不能再靠“删除最后一次 allow”退款，否则较早失败的
+    /// 任务可能误退较晚已经真实运行的任务。单任务调用方可继续使用 `allow()`。
+    public mutating func reserve(now: Date = Date()) -> Reservation? {
+        recent.removeAll { now.timeIntervalSince($0.date) > window }
+        guard recent.count < limit else { return nil }
+        let reservation = Reservation(id: UUID())
+        recent.append(Entry(reservation: reservation, date: now))
+        return reservation
     }
 
     /// **退回刚才那一槽 —— 那次派发根本没花额度。**
@@ -100,15 +120,19 @@ public struct RateGate: Sendable {
     /// 20 分钟耗光（日志里 12 次「取到任务」、0 个任务创建、0 个完成），
     /// 然后上限把所有真活挡在门外，剩下 40 分钟整台机器空转。
     ///
-    /// **调用契约**：紧跟在 `allow()` 返回 true 的那次之后调用，中间不能
-    /// 再有别的 `allow()`。这个循环是单线程顺序执行的，满足这个前提。
+    /// **调用契约**：仅供单任务顺序循环使用。并发执行槽必须使用
+    /// `reserve()` / `refund(_:)`，按凭据精确退款。
     public mutating func refund() {
         if !recent.isEmpty { recent.removeLast() }
     }
 
+    public mutating func refund(_ reservation: Reservation) {
+        recent.removeAll { $0.reservation == reservation }
+    }
+
     public mutating func nextAllowed(now: Date = Date()) -> Date? {
-        recent.removeAll { now.timeIntervalSince($0) > window }
-        guard recent.count >= limit, let oldest = recent.min() else { return nil }
+        recent.removeAll { now.timeIntervalSince($0.date) > window }
+        guard recent.count >= limit, let oldest = recent.map(\.date).min() else { return nil }
         return oldest.addingTimeInterval(window)
     }
 

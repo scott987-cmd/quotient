@@ -276,7 +276,9 @@ public enum ConfigIntentIngest {
         }
         do {
             switch try TaskIntake.enqueue(prompt: item.prompt, repo: repo,
-                                          origin: "phone-plan-go") {
+                                          origin: "phone-plan-go",
+                                          idempotencyKey: "phone-plan:" + item.id,
+                                          source: "phone-plan-go") {
             case .single(let t):
                 _ = try? PlannedStore.remove(at: idx + 1)
                 return .applied("已放行为任务 \(t.id)")

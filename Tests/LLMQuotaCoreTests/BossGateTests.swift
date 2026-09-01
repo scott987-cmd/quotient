@@ -44,7 +44,7 @@ final class BossGateTests: XCTestCase {
 
     /// 说明文字要讲清归谁、为什么 —— 事后回看能明白当时凭什么这么判。
     func testNoteExplainsWhichWayAndWhy() {
-        XCTAssertTrue(BossGate.note(files: ["Tools/gen-skin.py"]).contains("Claude"))
+        XCTAssertTrue(BossGate.note(files: ["Tools/gen-skin.py"]).contains("架构师"))
         XCTAssertTrue(BossGate.note(files: ["ios/entitlements.plist"]).contains("老板"))
     }
 }

@@ -191,6 +191,21 @@ public enum GraphSession {
         save(m)
     }
 
+    /// 显式重置项目会话时连旧版迁移源一起删除。否则下一轮
+    /// `migrateLegacyProject` 会把刚清掉的坏会话立刻复活。
+    public static func forget(
+        context: Context, workspace: String, repo: String, platform: Platform
+    ) {
+        lock.lock(); defer { lock.unlock() }
+        var m = load()
+        m.removeValue(forKey: projectKey(workspace, context))
+        m.removeValue(forKey: context.storageKey)
+        m.removeValue(forKey: legacyWorkspaceKey(workspace, context))
+        m.removeValue(forKey: "repo:"
+            + NSString(string: repo).expandingTildeInPath + "|" + platform.rawValue)
+        save(m)
+    }
+
     /// 只有明确的会话错误才允许删映射；普通任务失败和超时不算。
     public static func isSessionFailure(_ output: String) -> Bool {
         let text = output.lowercased()
@@ -206,7 +221,13 @@ public enum GraphSession {
     public static func shouldInvalidate(
         output: String, timedOut: Bool, wasResuming: Bool
     ) -> Bool {
-        !timedOut && wasResuming && isSessionFailure(output)
+        guard !timedOut else { return false }
+        if CodingMediaGuard.poisonedSession(output) { return true }
+        guard wasResuming else { return false }
+        let text = output.lowercased()
+        return isSessionFailure(output)
+            || text.contains("context window exceeded")
+            || text.contains("maximum context length")
     }
 
     public static func forgetGraph(_ graphID: String) {

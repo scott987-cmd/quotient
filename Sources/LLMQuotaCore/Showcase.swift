@@ -34,6 +34,15 @@ public enum Showcase {
         lock.lock(); lastAt = .distantPast; lock.unlock()
     }
 
+    /// 从主循环/定时器发起刷新，但绝不让 Git、证据抽取或共享目录 I/O
+    /// 阻塞调度线程。`refresh` 仍保留同步入口给测试和后台调用。
+    public static func trigger(force: Bool = false) {
+        if force { markStale() }
+        DispatchQueue.global(qos: .utility).async {
+            _ = refresh()
+        }
+    }
+
     /// 真正发布。`publishers` 只给测试注入;产品代码走默认那套。
     ///
     /// **同一时刻只允许一个在跑**:定时器和主线程可能同时到点,而 reviewPage

@@ -14,9 +14,14 @@ public enum LegacyContextPromptBuilder {
                              handoff: Handoff?,
                              resumedAnswer: AskAnswer?, resumedAsk: Ask?,
                              mayAsk: Bool, askFile: String?) -> String {
-        // 接力说明只追加文件清单和中断原因，不贴 diff —— 工作区就在
-        // agent 眼前，让它自己看比塞进提示词便宜得多。
-        var effectivePrompt = VisualQualityGate.compactRemediationPrompt(task.prompt)
+        // Runner/CLI 可能在自己的入口再次钳制超长提示词。协作能力若留在
+        // 任意长的任务正文之后，会最先从尾部消失，Agent 便只能交接、不能
+        // 向另一岗位提问。固定协作契约必须先交付，再给任务正文。
+        var effectivePrompt = CollaborationStore.contract(
+            project: task.repo, taskID: task.id, graphID: task.graphID,
+            runnerID: runnerID)
+            + "\n\n---\n## 当前任务\n\n"
+            + VisualQualityGate.compactRemediationPrompt(task.prompt)
             + (handoff?.briefing() ?? "")
         // 仓库地图：每个任务都是全新 worktree，agent 一律从零认路。
         //
@@ -40,11 +45,6 @@ public enum LegacyContextPromptBuilder {
         if let brief = TaskGraph.briefing(for: task, in: allTasks) {
             effectivePrompt += "\n\n" + brief
         }
-        // 原生会话负责同一个 Agent 的隐式上下文；协作账负责跨 Agent、跨进程、
-        // 跨机器的显式事实。
-        effectivePrompt += CollaborationStore.contract(
-            project: task.repo, taskID: task.id, graphID: task.graphID,
-            runnerID: runnerID)
         if let answer = resumedAnswer, let ask = resumedAsk {
             effectivePrompt += answer.briefing(for: ask)
         }

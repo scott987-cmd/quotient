@@ -2,6 +2,23 @@ import XCTest
 @testable import LLMQuotaCore
 
 final class WorkRunTargetTests: XCTestCase {
+    private var sandbox: URL!
+
+    override func setUp() {
+        super.setUp()
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("work-run-target-" + UUID().uuidString)
+        try? FileManager.default.createDirectory(
+            at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+    }
+
+    override func tearDown() {
+        Paths.appSupportOverride = nil
+        try? FileManager.default.removeItem(at: sandbox)
+        super.tearDown()
+    }
+
     private struct Runner: AgentRunner {
         let platform: Platform = .qwen
         var binaryName: String { "echo" }

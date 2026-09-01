@@ -100,6 +100,17 @@ public enum WorkAttemptStore {
         }
     }
 
+    /// 每次执行会先追加 running，再用同一个 attemptID 追加终态。
+    /// 给人看的“当前尝试”必须先折叠，否则已经失败/完成的尝试会同时显示成
+    /// running，历史事件就冒充了当前状态。
+    public static func latestSnapshots(_ attempts: [WorkAttempt]? = nil) -> [WorkAttempt] {
+        var latest: [String: (index: Int, attempt: WorkAttempt)] = [:]
+        for (index, attempt) in (attempts ?? all()).enumerated() {
+            latest[attempt.attemptID] = (index, attempt)
+        }
+        return latest.values.sorted { $0.index < $1.index }.map(\.attempt)
+    }
+
     public static func append(_ attempt: WorkAttempt) throws {
         try Paths.ensureDirectories()
         try FileManager.default.createDirectory(
@@ -135,14 +146,8 @@ public enum WorkAttemptStore {
 
     /// 取出只有开工事件、还没有终态事件的尝试。worker 重启时用它补记中断事实。
     public static func unresolvedRunning(taskID: String) -> [WorkAttempt] {
-        var latest: [String: (index: Int, attempt: WorkAttempt)] = [:]
-        for (index, attempt) in all().enumerated() where attempt.taskID == taskID {
-            latest[attempt.attemptID] = (index, attempt)
-        }
-        return latest.values
-            .filter { $0.attempt.outcome == .running }
-            .sorted { $0.index < $1.index }
-            .map(\.attempt)
+        latestSnapshots(all().filter { $0.taskID == taskID })
+            .filter { $0.outcome == .running }
     }
 
     /// 同一任务和 Runner 最近一次已经收尾的尝试。
@@ -151,15 +156,9 @@ public enum WorkAttemptStore {
     /// 所以必须先按 attemptID 折叠。尤其不能直接找“历史上最后一个 failed”：
     /// 后续成功创建的新会话已经证明旧失败失效，再翻出旧失败会把好会话误删。
     public static func latestTerminal(taskID: String, runnerID: String) -> WorkAttempt? {
-        var latest: [String: (index: Int, attempt: WorkAttempt)] = [:]
-        for (index, attempt) in all().enumerated()
-        where attempt.taskID == taskID && attempt.runnerID == runnerID {
-            latest[attempt.attemptID] = (index, attempt)
-        }
-        return latest.values
-            .filter { $0.attempt.outcome != .running }
-            .max { $0.index < $1.index }?
-            .attempt
+        latestSnapshots(all().filter {
+            $0.taskID == taskID && $0.runnerID == runnerID
+        }).last { $0.outcome != .running }
     }
 }
 

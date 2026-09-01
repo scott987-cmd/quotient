@@ -133,6 +133,8 @@ public enum Milestone {
         let r = try? TaskIntake.enqueue(
             prompt: prompt, repo: repoPath, classify: false, split: false,
             force: true, origin: "milestone-eyes",
+                idempotencyKey: "milestone-eyes:" + item.mergeSHA,
+            source: "milestone",
             preferredPlatform: .minimax)
         if case .single(let t)? = r { return t.id }
         return nil
@@ -193,7 +195,8 @@ public enum Milestone {
                 repair.production = source?.production
                 repair.note = "用户不满意，已交回原 Agent 项目会话整改"
                 do {
-                    try TaskStore.append(repair)
+                    _ = try TaskIntake.enqueuePrepared(
+                        repair, idempotencyKey: origin, source: "milestone")
                 } catch {
                     return false
                 }

@@ -177,7 +177,12 @@ public enum WorkProgressSentinel {
 
     public static func finding(for task: WorkTask, progress: WorkProgress?,
                                now: Date = Date()) -> Finding? {
-        guard task.state == .running, let startedAt = task.startedAt else { return nil }
+        let isRunning = task.state == .running
+        let isUnownedTechnicalBlock = TechnicalDisposition.isBlocked(task)
+        guard isRunning || isUnownedTechnicalBlock else { return nil }
+        guard let startedAt = isRunning ? task.startedAt : (task.endedAt ?? task.startedAt) else {
+            return nil
+        }
         let lastProof = progress?.updatedAt ?? startedAt
         let age = now.timeIntervalSince(lastProof)
         guard age >= interval else { return nil }

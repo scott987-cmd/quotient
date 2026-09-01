@@ -8,8 +8,8 @@ import XCTest
 /// 十几个。已经改成硬件派生(见 Paths.machineID),但那些旧快照散在三个
 /// 目录里,而且会被镜像来回同步回来:我逐个删了三轮,每轮都被同步回来。
 ///
-/// 所以在算看板这一步认账:按机器名去重,只留最新那份。
-/// 追着删文件是打地鼠,这一层是结构性的。
+/// 旧身份由 StaleIdentitySweep 清理；看板只按稳定 machineID 去重。
+/// 同名机器必须同时存在，不能拿显示名冒充身份。
 final class MachineDedupeTests: XCTestCase {
     private func snap(_ id: String, _ name: String, at: Date,
                       requests: Int = 0) -> MachineSnapshot {
@@ -25,14 +25,14 @@ final class MachineDedupeTests: XCTestCase {
                 officialQuotas: [])])
     }
 
-    func testSameMachineNameCollapsesToNewest() {
+    func testSameMachineIDCollapsesToNewest() {
         let old = Date(timeIntervalSince1970: 1_000_000)
         let new = old.addingTimeInterval(3600)
         let d = QuotaEngine(config: PlansConfig(plans: []))
-            .buildDashboard(snapshots: [snap("OLD", "Mac mini", at: old),
-                                   snap("NEW", "Mac mini", at: new)], now: new)
+            .buildDashboard(snapshots: [snap("HARDWARE", "旧名字", at: old),
+                                   snap("HARDWARE", "Mac mini", at: new)], now: new)
         XCTAssertEqual(d.machines.count, 1, "一台机器就是一台")
-        XCTAssertEqual(d.machines.first?.machineID, "NEW", "留最新那份")
+        XCTAssertEqual(d.machines.first?.machineID, "HARDWARE", "留最新那份")
     }
 
     /// 不同机器不能被合掉 —— 去重不能把多机汇总这个核心能力干掉。
@@ -45,18 +45,33 @@ final class MachineDedupeTests: XCTestCase {
     }
 
     /// **用量也要用去重后的** —— 否则旧身份的桶被重复计入,百分比虚高。
-    func testUsageIsNotDoubleCounted() {
+    func testSameMachineIDUsageIsNotDoubleCounted() {
         let t = Date(timeIntervalSince1970: 1_000_000)
         let cfg = PlansConfig(plans: [PlatformPlan(
             platform: .kimi, planName: "测试", currency: "CNY",
             limits: [QuotaLimit(id: "5h", label: "5 小时", windowMinutes: 300,
                                 kind: .session, metric: .requests)])])
         let d = QuotaEngine(config: cfg)
-            .buildDashboard(snapshots: [snap("OLD", "Mac mini", at: t, requests: 5),
-                                   snap("NEW", "Mac mini", at: t.addingTimeInterval(60),
+            .buildDashboard(snapshots: [snap("HARDWARE", "旧名字", at: t, requests: 5),
+                                   snap("HARDWARE", "Mac mini", at: t.addingTimeInterval(60),
                                         requests: 5)],
                        now: t.addingTimeInterval(60))
         let kimi = d.reports.first { $0.platform == Platform.kimi }
         XCTAssertEqual(kimi?.last30dRequests, 5, "两个身份是同一台机器,用量不能加两遍")
+    }
+
+    func testSameNamedDifferentMachinesKeepSeparateUsageRows() {
+        let t = Date(timeIntervalSince1970: 1_000_000)
+        let cfg = PlansConfig(plans: [PlatformPlan(
+            platform: .kimi, planName: "测试", currency: "CNY",
+            limits: [QuotaLimit(id: "5h", label: "5 小时", windowMinutes: 300,
+                                kind: .session, metric: .requests)])])
+        let d = QuotaEngine(config: cfg).buildDashboard(
+            snapshots: [snap("hardware-A", "Mac mini", at: t, requests: 2),
+                        snap("hardware-B", "Mac mini", at: t, requests: 3)], now: t)
+        let status = d.reports.first { $0.platform == .kimi }?.statuses.first
+        XCTAssertEqual(status?.byMachine.count, 2)
+        XCTAssertEqual(Set(status.map { Array($0.byMachine.keys) } ?? []),
+                       ["Mac mini · hardware-A", "Mac mini · hardware-B"])
     }
 }

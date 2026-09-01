@@ -68,4 +68,21 @@ final class RateGateRefundTests: XCTestCase {
         XCTAssertEqual(g.usedInWindow, 0)
         XCTAssertTrue(g.allow(), "退款不该把闸弄坏")
     }
+
+    /// 多槽乱序完成时，要退回指定任务，而不是最近启动的另一个任务。
+    func testOutOfOrderRefundKeepsTheOtherReservationsTimestamp() throws {
+        var g = RateGate(maxPerHour: 2)
+        let base = Date(timeIntervalSince1970: 1_000)
+        let early = try XCTUnwrap(g.reserve(now: base))
+        _ = try XCTUnwrap(g.reserve(now: base.addingTimeInterval(100)))
+
+        g.refund(early)
+        _ = try XCTUnwrap(g.reserve(now: base.addingTimeInterval(200)))
+
+        XCTAssertEqual(g.usedInWindow, 2)
+        XCTAssertEqual(
+            g.nextAllowed(now: base.addingTimeInterval(200)),
+            base.addingTimeInterval(3_700),
+            "较早任务失败时，不能误退较晚已经启动的任务")
+    }
 }

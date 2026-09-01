@@ -87,7 +87,9 @@ public enum VerifyRepair {
             let r = try TaskIntake.enqueue(
                 prompt: prompt(branch: branch, repo: repo, failure: failure, command: cmd),
                 repo: repo, classify: false, split: false, force: true,
-                origin: "verify-repair")
+                origin: "verify-repair",
+                idempotencyKey: "verify-repair:\(branch):\(tried + 1)",
+                source: "verify-repair")
             if case .single = r {
                 return Outcome(branch: branch, enqueued: true,
                                note: "验证没过,已派 agent 去修(第 \(tried + 1)/\(maxAttempts) 次)")

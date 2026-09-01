@@ -33,13 +33,43 @@ public enum Approval {
         t.pendingAsk = nil
         t.endedAt = Date()
 
-        guard let branch = t.branch,
-              let ws = Review.worktreePath(repo: t.repo, branch: branch) else {
-            // 工作区没了（被清理、机器重装过），改动已经找不回来。
-            // 这时候标 done 是撒谎 —— 分支上什么都没有。
+        guard let branch = t.branch else {
             t.state = .failed
-            t.note = "工作区已经不在了，改动找不回来"
-            return Outcome(task: t, note: "工作区丢失")
+            t.note = "任务没有隔离分支，改动无法结算"
+            return Outcome(task: t, note: "隔离分支缺失")
+        }
+
+        guard let ws = Review.worktreePath(repo: t.repo, branch: branch) else {
+            // 新流程在阻塞前已经把脏改动提交成隔离快照，因此 worktree 可以安全
+            // 回收。结算时以分支提交为事实来源，不能再把“目录不在了”误判成
+            // “成果丢了”。旧任务没有快照时仍按失败处理，避免假完成。
+            let exists = GitWorkspace.branchExists(branch, in: t.repo)
+            let aheadResult = GitWorkspace.git(
+                ["rev-list", "--count", "main..\(branch)"], in: t.repo)
+            let ahead = Int(aheadResult.stdout
+                .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            guard exists, ahead > 0 else {
+                t.state = .failed
+                t.note = "工作区和可恢复快照都不在了，改动找不回来"
+                return Outcome(task: t, note: "工作区与快照丢失")
+            }
+            if approve {
+                t.state = .done
+                t.note = "碰到高危路径，已从隔离快照放行"
+                return Outcome(task: t, note: "已放行隔离分支 \(branch)")
+            }
+            let isGraph = branch.hasPrefix("agent/graph/")
+            if !isGraph {
+                _ = GitWorkspace.git(["branch", "-D", branch], in: t.repo)
+                t.branch = nil
+            }
+            t.state = .failed
+            t.discardedAt = Date()
+            t.discardReason = "高危改动，你选择了丢弃"
+            t.note = isGraph
+                ? "已拒绝隔离快照（图共用分支，保留前面步骤）"
+                : "已拒绝并删除隔离快照分支"
+            return Outcome(task: t, note: t.note ?? "已拒绝")
         }
 
         guard approve else {

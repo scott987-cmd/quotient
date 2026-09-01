@@ -176,21 +176,29 @@ public enum IdleFiller {
 
     public static func found(for opp: Opportunity,
                              repos: [RepoAlias] = RepoRegistry.all(),
-                             tasks: [WorkTask] = TaskStore.all())
+                             tasks: [WorkTask] = TaskStore.all(),
+                             scope: ProjectExecutionScope = .current())
     -> (prompt: String, repo: String?, projectID: String?,
         publishes: Bool, usedTopic: Bool)? {
         // 队列里已经有**派得动的**活 → 不用填，调度器自己会派。
-        if tasks.contains(where: { schedulerWillHandle($0, in: tasks) }) { return nil }
+        let scopedTasks = tasks.filter { scope.allows($0.repo) }
+        if scopedTasks.contains(where: { schedulerWillHandle($0, in: scopedTasks) }) {
+            return nil
+        }
 
         // **先看项目清单。** 那里面是老板批过方案的、有产出价值的常态化项目
         //（资产包、内容生产）；储备池里是从代码扫出来的零碎维护活。
         // 一个能卖钱的资产包，价值高于补一条注释。
-        if let hit = Playbook.nextWork(for: opp.platform) {
+        let scopedProjects = Playbook.available().filter { project in
+            guard let repo = project.repo else { return scope.allowedRepo == nil }
+            return scope.allows(repo)
+        }
+        if let hit = Playbook.nextWork(for: opp.platform, projects: scopedProjects) {
             return (hit.prompt, hit.project.repo, hit.project.id,
                     hit.recipe.publishes, hit.recipe.prompt.contains("{{topic}}"))
         }
 
-        for repo in repos {
+        for repo in repos where scope.allows(repo.localPath) {
             let path = NSString(string: repo.localPath).expandingTildeInPath
             guard FileManager.default.fileExists(atPath: path) else { continue }
             let facts = ReservePool.facts(repo: path, limitPerRule: 5)

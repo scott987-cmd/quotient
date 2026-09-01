@@ -165,6 +165,113 @@ final class MergeReviewTests: XCTestCase {
                       "needed + 2 这个点上就该停，不是过了才停")
     }
 
+    func testRetryCapEscalatesToOneDecisiveArchitectTicket() {
+        let branch = "agent/kimi/work"
+        let head = "abc1234"
+        let candidate = MergeReview.Candidate(
+            branch: branch, repo: "/tmp/x", files: ["project.pbxproj"],
+            subject: "实现", whyNotMechanical: "高危路径", needed: 2,
+            head: head)
+        let prompt = MergeReview.escalationPrompt(candidate, attempts: 4, approvals: 0)
+        XCTAssertTrue(TaskKind.isArchitectReview(prompt))
+        XCTAssertTrue(prompt.contains(branch))
+        XCTAssertTrue(prompt.contains(head))
+
+        var pending = WorkTask(id: "architect", prompt: prompt, repo: "/tmp/x")
+        pending.origin = MergeReview.escalationOrigin(branch: branch, head: head)
+        pending.state = .queued
+        XCTAssertTrue(MergeReview.hasPendingReview(
+            branch: branch, head: head, tasks: [pending]))
+
+        pending.state = .done
+        pending.outputs = ["**结论**：合入"]
+        var result = MergeReview.approvalsSoFar(
+            branch: branch, tasks: [pending], head: head)
+        XCTAssertEqual(result.approvals, 2,
+                       "唯一架构终审同意后不应再要求生成更多重复票")
+
+        pending.outputs = ["**结论**：不合入"]
+        result = MergeReview.approvalsSoFar(
+            branch: branch, tasks: [pending], head: head)
+        XCTAssertTrue(result.rejected)
+    }
+
+    func testRejectedArchitectEscalationReopensOriginalOwnerTask() throws {
+        let branch = "agent/kimi/source"
+        let fixture = try makeVisualGitFixture(branch: branch)
+        defer { try? FileManager.default.removeItem(at: fixture.repo) }
+
+        var source = WorkTask(
+            id: "source", prompt: "继续完成黄金样板", repo: fixture.repo.path)
+        source.state = .done
+        source.branch = branch
+        source.ownerPlatform = .kimi
+        source.ownerRunnerID = "kimi.code"
+        source.preferredPlatform = .kimi
+        source.triedPlatforms = [.kimi]
+
+        var finalReview = WorkTask(
+            id: "final-review", prompt: "唯一终审", repo: fixture.repo.path)
+        finalReview.origin = MergeReview.escalationOrigin(
+            branch: branch, head: fixture.head)
+        finalReview.state = .done
+        finalReview.outputs = [
+            "实际阻塞为 M0 门禁失败、视觉未获独立批准及 idle 接线实跑失败。",
+            "**结论**：不合入",
+        ]
+
+        let reopened = try XCTUnwrap(TaskGraph.reconcile([source, finalReview])
+            .first(where: { $0.id == source.id }))
+        XCTAssertEqual(reopened.state, .queued)
+        XCTAssertEqual(reopened.id, source.id, "不得创建新的碎片整改任务")
+        XCTAssertEqual(reopened.branch, branch)
+        XCTAssertEqual(reopened.ownerPlatform, .kimi)
+        XCTAssertEqual(reopened.ownerRunnerID, "kimi.code")
+        XCTAssertEqual(reopened.preferredPlatform, .kimi)
+        XCTAssertTrue(reopened.triedPlatforms.isEmpty)
+        XCTAssertEqual(reopened.visualRemediationReviewID, finalReview.id,
+                       "终审票 ID 必须成为一次性幂等键")
+        XCTAssertTrue(reopened.prompt.contains("M0 门禁失败"))
+        XCTAssertTrue(reopened.prompt.contains("idle 接线实跑失败"))
+        var completedWithoutNewHead = reopened
+        completedWithoutNewHead.state = .done
+        completedWithoutNewHead.endedAt = Date(timeIntervalSince1970: 100)
+        XCTAssertTrue(MergeReview.reconcileRemediation(
+            [completedWithoutNewHead, finalReview]).isEmpty,
+            "同一张终审票每轮对账只能恢复原任务一次")
+    }
+
+    func testOldArchitectRejectionCannotOverwriteNewerBranchWork() throws {
+        let branch = "agent/kimi/source"
+        let fixture = try makeVisualGitFixture(branch: branch)
+        defer { try? FileManager.default.removeItem(at: fixture.repo) }
+        let reviewedHead = fixture.head
+
+        var source = WorkTask(
+            id: "source", prompt: "继续完成黄金样板", repo: fixture.repo.path)
+        source.state = .done
+        source.branch = branch
+        source.ownerPlatform = .kimi
+        var finalReview = WorkTask(
+            id: "old-final", prompt: "唯一终审", repo: fixture.repo.path)
+        finalReview.origin = MergeReview.escalationOrigin(
+            branch: branch, head: reviewedHead)
+        finalReview.state = .done
+        finalReview.outputs = ["**结论**：不合入"]
+
+        _ = GitWorkspace.git(["checkout", branch], in: fixture.repo.path)
+        let file = fixture.repo.appendingPathComponent("later.txt")
+        try "new work".write(to: file, atomically: true, encoding: .utf8)
+        _ = GitWorkspace.git(["add", "later.txt"], in: fixture.repo.path)
+        _ = GitWorkspace.git(
+            ["-c", "user.name=Test", "-c", "user.email=test@example.com",
+             "commit", "-m", "newer implementation"], in: fixture.repo.path)
+
+        XCTAssertTrue(MergeReview.reconcileRemediation(
+            [source, finalReview]).isEmpty,
+            "分支已经产生新提交时，旧 HEAD 的终审拒绝不能把任务倒灌回排队")
+    }
+
     // MARK: 辅助
 
     private func reviewTask(_ id: String, branch: String,

@@ -48,4 +48,12 @@ final class AskNudgeTests: XCTestCase {
         XCTAssertFalse(items.contains { $0.key.hasPrefix("question-") },
                        "手机页面还看不到的问题不能先推横幅")
     }
+
+    func testKnownQuotaCooldownDoesNotCreateRecoveryQuestion() {
+        var exhausted = task(state: .failed, ask: nil)
+        exhausted.terminalFailureKind = .quotaExhausted
+        exhausted.note = "周额度用尽；已有明确重置时间"
+
+        XCTAssertFalse(StuckAsk.raise(task: exhausted, reason: exhausted.note!))
+    }
 }

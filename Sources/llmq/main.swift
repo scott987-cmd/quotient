@@ -643,6 +643,28 @@ func cmdWaste() throws {
 
 // MARK: - work
 
+func enforceProjectExecutionScope(_ task: WorkTask, arguments: [String],
+                                  action: String) -> Bool {
+    let scope = ProjectExecutionScope.current()
+    if scope.configurationError {
+        print(Ansi.red("本机项目作用域损坏，已停止派活；重新执行 llmq repo focus <别名> 修复"))
+        return false
+    }
+    guard scope.canStart(
+        task,
+        explicitOverride: scope.mode == .manualOnly
+            || arguments.contains("--cross-project")) else {
+        let focused = scope.allowedRepo.map {
+            URL(fileURLWithPath: $0).lastPathComponent
+        } ?? "（未设置）"
+        print(Ansi.red("拒绝\(action)：本机当前只允许项目 \(focused)，任务属于 "
+            + URL(fileURLWithPath: task.repo).lastPathComponent))
+        print(Ansi.dim("  确实要临时跨项目时显式添加 --cross-project"))
+        return false
+    }
+    return true
+}
+
 func cmdWork(_ args: [String]) throws {
     let sub = args.first ?? "list"
     let rest = Array(args.dropFirst())
@@ -837,6 +859,8 @@ func cmdWork(_ args: [String]) throws {
             split: !args.contains("--no-split"),
             force: true,   // 上面已经查过重（带打印），这里别查第二遍
             origin: nil,
+            idempotencyKey: option("--request-id").map { "cli:" + $0 },
+            source: "cli",
             preferredPlatform: preferred,
             production: production)
         switch outcome {
@@ -886,14 +910,41 @@ func cmdWork(_ args: [String]) throws {
         context.approvalNote = approvalText.isEmpty
             ? "人工确认黄金样板达标" : approvalText
         sample.production = context
-        try TaskStore.append(sample)
-        let updates = TaskGraph.reconcile(TaskStore.all())
-        for task in updates { try? TaskStore.append(task) }
+        _ = try TaskStore.transition(
+            sample, actor: "cli", reason: "人工批准黄金样板")
+        _ = try TaskGraph.persistReconciliation(
+            actor: "cli", reason: "黄金样板批准后重新对账")
         _ = TaskBoardStore.publishNow()
         print(Ansi.green("已批准黄金样板 ") + sample.id
             + Ansi.dim(sample.landedAt == nil
                 ? "  尚未合入主线，fan-out 会继续等待落地"
                 : "  已重新核对批量任务"))
+
+    case "reset-session":
+        // 只清一条「机器 × Runner × 项目 × 泳道」会话映射。用于确认某次
+        // 探索站错基线、上下文已经污染时主动止损；不删任务、分支或 checkpoint。
+        guard let id = rest.first else {
+            print("用法：llmq work reset-session <任务id>"); exit(2)
+        }
+        let matches = TaskStore.all().filter { $0.id == id || $0.id.hasPrefix(id) }
+        guard matches.count == 1, let t = matches.first else {
+            print(Ansi.red(matches.isEmpty ? "找不到任务 " + id : "任务前缀不唯一")); exit(1)
+        }
+        guard let runnerID = t.ownerRunnerID,
+              let platform = t.ownerPlatform ?? t.platform,
+              let workspace = GitWorkspace.existingWorkspace(
+                repo: t.repo, platform: platform, graphID: t.graphID) else {
+            print(Ansi.red("找不到任务的 owner 或稳定工作区，未清任何会话")); exit(1)
+        }
+        let context = GraphSession.Context(
+            taskID: t.id, graphID: t.graphID,
+            capability: TaskCapabilityLane.classify(t.prompt),
+            runnerID: runnerID, machineID: Paths.machineID())
+        GraphSession.forget(
+            context: context, workspace: workspace.path,
+            repo: t.repo, platform: platform)
+        print(Ansi.green("已清理污染会话：") + runnerID
+            + Ansi.dim("（保留任务、分支和 checkpoint）"))
 
     case "handoff":
         // 人工换负责人也必须走正式交接：保留提交、工作区入口和协作记录，
@@ -909,8 +960,27 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.red(matches.isEmpty ? "找不到任务 " + rest[0] : "任务前缀不唯一"))
             exit(1)
         }
-        guard t.state != .running else {
-            print(Ansi.red("任务正在运行，不能在进程中途换负责人")); exit(1)
+        guard enforceProjectExecutionScope(t, arguments: rest,
+                                           action: "交接并重新排队") else { exit(1) }
+        if t.state == .running {
+            let processAlive = t.runnerPID.map { $0 > 0 && kill($0, 0) == 0 } ?? false
+            guard !processAlive else {
+                print(Ansi.red("任务正在运行，不能在进程中途换负责人")); exit(1)
+            }
+            // 任务记录还写着 running、进程却已经没了，是 worker 被杀后留下的
+            // 孤儿。人工交接本身就是明确的恢复动作，不能要求先启动 worker
+            // 让它抢跑一次来改状态；直接收掉旧租约，再按指定基线交接。
+            t.runnerPID = nil
+            t.endedAt = Date()
+            for running in WorkAttemptStore.unresolvedRunning(taskID: t.id) {
+                var terminal = running
+                terminal.endedAt = Date()
+                terminal.outcome = .failed
+                terminal.failureKind = "interrupted"
+                terminal.handoffReason = "执行进程已退出，由人工交接恢复"
+                appendWorkAttempt(terminal)
+            }
+            print(Ansi.yellow("回收孤儿执行记录：") + t.id)
         }
         let lane = TaskCapabilityLane.classify(t.prompt)
         let targetRunners = RunnerRegistry.all.filter {
@@ -978,7 +1048,8 @@ func cmdWork(_ args: [String]) throws {
             touchedFiles: files, wipCommit: String(targetHead.prefix(12)), elapsedSeconds: 0)
         t.note = "已从 \(source?.displayName ?? "原负责人") 交接给 \(target.displayName)"
             + "，沿用提交 \(targetHead.prefix(8))"
-        try TaskStore.append(t)
+        _ = try TaskStore.transition(
+            t, actor: "cli", reason: "人工将任务交接给指定 Owner")
         publishCollaboration(CollaborationEvent(
             project: t.repo, taskID: t.id, graphID: t.graphID,
             lane: lane, senderRunnerID: "orchestrator", senderPlatform: source,
@@ -995,6 +1066,86 @@ func cmdWork(_ args: [String]) throws {
             + (source?.displayName ?? "原负责人") + " → " + target.displayName)
         print(Ansi.dim("  分支 \(targetBranch) · 基线 \(targetHead.prefix(12)) · 已有 \(files.count) 个文件"))
 
+    case "pause":
+        guard let id = rest.first else {
+            print("用法：llmq work pause <任务id> [--reason <原因>]"); exit(2)
+        }
+        let matches = TaskStore.all().filter { $0.id == id || $0.id.hasPrefix(id) }
+        guard matches.count == 1, let current = matches.first else {
+            print(Ansi.red(matches.isEmpty ? "找不到任务 " + id : "任务前缀不唯一")); exit(1)
+        }
+        func pauseOption(_ name: String) -> String? {
+            guard let i = rest.firstIndex(of: name), i + 1 < rest.count else { return nil }
+            return rest[i + 1]
+        }
+        let reason = pauseOption("--reason") ?? "人工要求停止自动执行"
+        if let pid = current.runnerPID, pid > 0, kill(pid, 0) == 0 {
+            Proc.terminateProcessTree(rootPID: pid)
+        }
+        let paused = TaskPause.pause(current, reason: reason)
+        _ = try TaskStore.transition(
+            paused, actor: "cli", reason: "人工暂停任务")
+        for running in WorkAttemptStore.unresolvedRunning(taskID: paused.id) {
+            var terminal = running
+            terminal.endedAt = Date()
+            terminal.outcome = .blocked
+            terminal.failureKind = "paused"
+            terminal.handoffReason = reason
+            appendWorkAttempt(terminal)
+        }
+        _ = TaskBoardStore.publishNow()
+        print(Ansi.green("已暂停 ") + paused.id)
+        print(Ansi.dim("  保留分支、Owner、工作区和会话；不会被后台循环领取"))
+
+    case "unpause":
+        guard let id = rest.first else {
+            print("用法：llmq work unpause <任务id> [--force]"); exit(2)
+        }
+        let matches = TaskStore.all().filter { $0.id == id || $0.id.hasPrefix(id) }
+        guard matches.count == 1, let current = matches.first else {
+            print(Ansi.red(matches.isEmpty ? "找不到任务 " + id : "任务前缀不唯一")); exit(1)
+        }
+        guard enforceProjectExecutionScope(current, arguments: rest,
+                                           action: "解除暂停") else { exit(1) }
+        guard current.pausedAt != nil else {
+            print(Ansi.dim("任务 " + current.id + " 没有暂停")); return
+        }
+        let userOverride = rest.contains("--force")
+        guard TaskPause.canResume(current, userOverride: userOverride) else {
+            print(Ansi.red("架构重审结论要求保持暂停；用户明确决定继续时使用 "
+                + "llmq work unpause \(current.id) --force"));
+            exit(1)
+        }
+        let resumed = TaskPause.resume(current, reason: userOverride
+            ? "用户明确覆盖架构暂停；沿用原分支、Owner 和会话重新排队"
+            : nil, preserveQualityHistory: userOverride)
+        _ = try TaskStore.transition(
+            resumed, actor: "cli", reason: "人工解除任务暂停")
+        _ = TaskBoardStore.publishNow()
+        print(Ansi.green("已解除暂停 ") + resumed.id
+            + Ansi.dim(resumed.state == .queued ? "  已重新排队" : "  仍在等待原问题答复"))
+
+    case "architecture-review":
+        guard let id = rest.first else {
+            print("用法：llmq work architecture-review <任务id>"); exit(2)
+        }
+        let matches = TaskStore.all().filter { $0.id == id || $0.id.hasPrefix(id) }
+        guard matches.count == 1, let current = matches.first else {
+            print(Ansi.red(matches.isEmpty ? "找不到任务 " + id : "任务前缀不唯一")); exit(1)
+        }
+        guard enforceProjectExecutionScope(current, arguments: rest,
+                                           action: "启动架构重审") else { exit(1) }
+        guard current.pausedAt != nil else {
+            print(Ansi.red("只能给已暂停任务启动架构重审")); exit(1)
+        }
+        let requested = TaskPause.requestArchitectureReview(
+            current, reason: current.pauseReason ?? "质量不收敛，需要前置架构设计")
+        _ = try TaskStore.transition(
+            requested, actor: "cli", reason: "人工启动架构重审")
+        _ = TaskBoardStore.publishNow()
+        print(Ansi.green("已启动架构重审 ") + requested.id)
+        print(Ansi.dim("  原实现 Owner 和分支保持不变；下一轮对账会创建 Claude 前置设计任务"))
+
     case "retry":
         // **failed 必须有一条回得去的路。**
         //
@@ -1009,29 +1160,73 @@ func cmdWork(_ args: [String]) throws {
         guard var t = allT.first(where: { $0.id == id || $0.id.hasSuffix(id) }) else {
             print(Ansi.red("找不到任务 " + id)); exit(1)
         }
-        guard t.state == .failed || t.state == .blocked else {
+        guard enforceProjectExecutionScope(t, arguments: rest,
+                                           action: "重试") else { exit(1) }
+        let rejectedProduction = t.state == .done && t.discardedAt != nil
+            && t.production?.requiresExperienceApproval == true
+        let failedExperienceRemediation = t.state == .failed
+            && t.production?.requiresExperienceApproval == true
+            && Review.latestHumanFeedback(in: t.prompt) != nil
+        let experienceRequeue = rejectedProduction || failedExperienceRemediation
+        guard t.state == .failed || t.state == .blocked || rejectedProduction else {
             print(Ansi.red("只有失败或被拦下的任务能重试，这个是 \(t.state.rawValue)")); exit(1)
+        }
+        if t.pausedAt != nil {
+            print(Ansi.red("任务已暂停；请先用 llmq work unpause \(t.id) 明确恢复")); exit(1)
         }
         if let ask = t.pendingAsk {
             AskStore.retract(taskID: t.id,
                              machine: ask.machineID.isEmpty ? Paths.machineID() : ask.machineID)
         }
-        t.state = .queued
+        if experienceRequeue {
+            let repo = NSString(string: t.repo).expandingTildeInPath
+            guard let branch = t.branch,
+                  GitWorkspace.branchExists(branch, in: repo) else {
+                print(Ansi.red("拒绝后的生产分支已经不存在，先恢复分支再重试")); exit(1)
+            }
+            let head = GitWorkspace.git(["rev-parse", branch], in: repo)
+                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            t = Review.requeuedAfterHumanRejection(
+                t, reason: t.discardReason ?? Review.latestHumanFeedback(in: t.prompt)
+                    ?? "效果未达到验收要求", head: head)
+        } else {
+            t.state = .queued
+        }
         t.pendingAsk = nil
         t.frozenBy = nil
         t.endedAt = nil
         t.runnerPID = nil
+        t.terminalFailureKind = nil
+        t.retryNotBefore = nil
         t.discardedAt = nil
         t.discardReason = nil
-        // 默认清空「试过谁」，否则换平台重试第一道硬排除就把它们全挡了。
-        // 想让它在同一个平台上再试一次就加 --same-platform。
-        if !rest.contains("--same-platform") { t.triedPlatforms = [] }
-        t.note = "人工重新入队"
-        try TaskStore.append(t)
+        // `--same-platform` 是硬约束，不是提示。旧任务没有 owner 时如果只保留
+        // triedPlatforms，反而会把原平台排除掉，再被仓库默认 Owner 接走重做。
+        if rest.contains("--same-platform") {
+            guard let platform = t.ownerPlatform ?? t.platform,
+                  let runner = ContextAffinityPolicy.samePlatformRetryOwner(for: t)
+            else {
+                print(Ansi.red("无法唯一恢复原平台 Owner；请用 work handoff 明确指定"))
+                exit(1)
+            }
+            t.platform = platform
+            t.preferredPlatform = platform
+            t.triedPlatforms.removeAll { $0 == platform }
+            _ = ContextAffinityPolicy.assign(
+                task: &t, runnerID: runner.runnerID, platform: platform,
+                cause: .manualDisable)
+        } else {
+            // “换人重试”必须同时清掉旧 owner。只清 triedPlatforms 会让调度器
+            // 仍按 owner 硬亲和回到原 Agent，界面说换人、实际没有换。
+            ContextAffinityPolicy.prepareForDifferentOwner(task: &t)
+        }
+        if !experienceRequeue { t.note = "人工重新入队" }
+        _ = try TaskStore.transition(
+            t, actor: "cli", reason: "人工重新入队任务")
         print(Ansi.green("已重新入队 ") + t.id)
         // 重新入队之后要立刻对账 —— 被它冻住的下游该解冻了。
-        for x in TaskGraph.reconcile(TaskStore.all()) {
-            try? TaskStore.append(x)
+        for x in try TaskGraph.persistReconciliation(
+            actor: "cli", reason: "人工重试后解冻下游") {
             print(Ansi.dim("  解冻 " + x.id + "  " + (x.note ?? "")))
         }
 
@@ -1119,17 +1314,20 @@ func cmdWork(_ args: [String]) throws {
             t.state = .done
             t.endedAt = Date()
             t.pendingAsk = nil          // 挂着的提问一起收掉，别留在手机上
+            t.terminalFailureKind = nil
+            t.retryNotBefore = nil
             t.note = "人工标完成：" + why
-            try? TaskStore.append(t)
+            _ = try TaskStore.transition(
+                t, actor: "cli", reason: "人工确认任务已完成")
             n += 1
             print(Ansi.green("已标完成 ") + t.id + Ansi.dim("  " + String(t.prompt.prefix(50))))
         }
         if n == 0 { print(Ansi.dim("这些任务本来就是 done，没动。")) }
         // 标完立刻对账：下游该解冻的解冻，省得人再敲一条命令。
-        let thawed = TaskGraph.reconcile(TaskStore.all())
+        let thawed = try TaskGraph.persistReconciliation(
+            actor: "cli", reason: "人工完成任务后解冻下游")
         for t in thawed where t.state == .queued {
             print(Ansi.dim("  解冻 " + t.id + "  上游办完了，重新排队"))
-            try? TaskStore.append(t)
         }
 
     case "discard":
@@ -1167,7 +1365,11 @@ func cmdWork(_ args: [String]) throws {
             }
             if let b = t.branch, !wipedWorktrees.contains(b) {
                 wipedWorktrees.insert(b)
-                Review.discard(repo: t.repo, branch: b, reason: reason)
+                // 状态由本循环在下面一次性写全；这里仅清理 worktree/分支。
+                // 否则 Review.discard 先写一版 discardedAt，会让 `t` 立刻变成
+                // 旧快照，第二次写完整 failed 终态必然被 revision 保护拒绝。
+                Review.discard(repo: t.repo, branch: b, reason: reason,
+                               recordDisposition: false)
             }
             if let ask = t.pendingAsk {
                 AskStore.retract(taskID: t.id,
@@ -1175,16 +1377,22 @@ func cmdWork(_ args: [String]) throws {
             }
             t.state = .failed
             t.pendingAsk = nil
+            t.runnerPID = nil
+            t.terminalFailureKind = nil
+            t.retryNotBefore = nil
+            if t.endedAt == nil { t.endedAt = Date() }
             t.discardedAt = Date()
             t.discardReason = reason
             t.frozenBy = nil
             t.note = "人工丢弃：" + reason
-            try TaskStore.append(t)
+            _ = try TaskStore.transition(
+                t, actor: "cli", reason: "人工丢弃任务")
             print(Ansi.green("已丢弃 ") + t.id + Ansi.dim("  " + (t.stepTitle ?? "")))
         }
         if let g = targets.first?.graphID { GraphSession.forgetGraph(g) }
         // 丢完要对账：被它冻住的下游现在该跟着变了。
-        for x in TaskGraph.reconcile(TaskStore.all()) { try? TaskStore.append(x) }
+        _ = try TaskGraph.persistReconciliation(
+            actor: "cli", reason: "人工丢弃任务后重新对账")
 
     case "attempts":
         let taskID = rest.first(where: { !$0.hasPrefix("--") })
@@ -1219,6 +1427,48 @@ func cmdWork(_ args: [String]) throws {
 
     case "log":
         // 进度是自动算出来的，不靠谁记得去写 —— 任务库里本来就有全部素材。
+        let allTasks = TaskStore.all()
+        if let selector = rest.first(where: { !$0.hasPrefix("--") }) {
+            let matches = allTasks.filter { $0.id == selector || $0.id.hasPrefix(selector) }
+            if matches.count == 1, let task = matches.first {
+                print(Ansi.bold("任务 " + task.id) + "  " + task.state.rawValue)
+                print("  项目：" + task.repo)
+                print("  Owner：" + (task.ownerRunnerID ?? task.platform?.displayName ?? "—"))
+                print("  结果：" + (task.note ?? "—"))
+                if !task.outputs.isEmpty {
+                    print(Ansi.bold("最近输出"))
+                    for line in task.outputs.suffix(20) { print("  " + line) }
+                }
+                if let branch = task.branch {
+                    print(Ansi.bold("分支 " + branch))
+                    let stat = GitWorkspace.git(["diff", "--stat", "main...\(branch)"], in: task.repo)
+                    if !stat.stdout.isEmpty { print(stat.stdout.trimmingCharacters(in: .newlines)) }
+                    let commits = GitWorkspace.git(
+                        ["log", "--oneline", "--decorate", "main..\(branch)"], in: task.repo)
+                    if !commits.stdout.isEmpty {
+                        print(Ansi.bold("提交"))
+                        print(commits.stdout.trimmingCharacters(in: .newlines))
+                    }
+                    if let ws = Review.worktreePath(repo: task.repo, branch: branch) {
+                        let dirty = GitWorkspace.git(["status", "--short"], in: ws).stdout
+                        if !dirty.isEmpty {
+                            print(Ansi.bold("尚未快照的工作区改动"))
+                            print(dirty.trimmingCharacters(in: .newlines))
+                        }
+                    }
+                }
+                let attempts = WorkAttemptStore.latestSnapshots(
+                    WorkAttemptStore.all().filter { $0.taskID == task.id })
+                if !attempts.isEmpty {
+                    print(Ansi.bold("最近尝试"))
+                    for attempt in attempts.suffix(8) {
+                        print("  \(attempt.runnerID)  \(attempt.outcome.rawValue)"
+                            + (attempt.handoffReason.map { "  " + String($0.prefix(160)) } ?? ""))
+                    }
+                }
+                return
+            }
+        }
         var repo = FileManager.default.currentDirectoryPath
         if let p = rest.first(where: { !$0.hasPrefix("--") }) {
             repo = RepoRegistry.all().first { $0.alias == p }?.localPath
@@ -1233,7 +1483,7 @@ func cmdWork(_ args: [String]) throws {
             return
         }
         print(Ansi.dim(repo))
-        print(ProgressLog.render(repo: repo, tasks: TaskStore.all())
+        print(ProgressLog.render(repo: repo, tasks: allTasks)
             .replacingOccurrences(of: ProgressLog.begin, with: "")
             .replacingOccurrences(of: ProgressLog.end, with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines))
@@ -1302,12 +1552,31 @@ func cmdWork(_ args: [String]) throws {
         }
 
     case "run":
-        try runOneTask(
+        let dispatchLeaseID: String? = {
+            guard let i = rest.firstIndex(of: "--dispatch-lease"), i + 1 < rest.count
+            else { return nil }
+            return rest[i + 1]
+        }()
+        let outcome = try runOneTask(
             dryRun: rest.contains("--dry-run"),
-            onlyTaskID: WorkRunTarget.explicitID(arguments: rest))
+            onlyTaskID: WorkRunTarget.explicitID(arguments: rest),
+            allowCrossProject: rest.contains("--cross-project"),
+            dispatchLeaseID: dispatchLeaseID)
+        // 工作循环的执行槽用退出码把“真失败”和“这轮没发出模型调用”分开。
+        // 手动 `work run` 保持原来的返回行为，不把内部状态变成 CLI 兼容性变化。
+        if rest.contains("--slot-child") {
+            switch outcome {
+            case .succeeded, .blocked: exit(0)
+            case .failed: exit(1)
+            case .noTask, .noPlatform: exit(75)
+            }
+        }
 
     case "loop":
         try cmdWorkLoop(rest)
+
+    case "projector":
+        try cmdWorkProjector(rest)
 
     // llmq work autoland on|off|status —— 授权/收回「验收通过的安全产出自动合入」
     // llmq work evidence <分支> —— 把 agent 交的证据截图抽出来直接看。
@@ -1424,7 +1693,7 @@ func cmdWork(_ args: [String]) throws {
     // 老板两次报「任务停了」,其实系统一直在跑。
     // 更新路径(ReleaseChannel.install)已经修过一次,装机脚本是另一份实现:
     // 收成这一条命令,不再有第二份。
-    // llmq work blocked —— **归 Claude 处置的拦截**,一眼看完。
+    // llmq work blocked —— **归架构师处置的拦截**,一眼看完。
     //
     // 老板 2026-08-22 常设指示:技术性拦截我处置,只有风险类和验收类
     // 才推给他。那就得有个地方让我看见它们 —— 否则「归我」等于「没人管」。
@@ -1432,7 +1701,7 @@ func cmdWork(_ args: [String]) throws {
         var latest: [String: WorkTask] = [:]
         for t in TaskStore.all() { latest[t.id] = t }
         let all = latest.values.filter { $0.state == .blocked }
-        let mine = all.filter { ($0.note ?? "").contains("等 Claude 处置") }
+        let mine = all.filter(TechnicalDisposition.isBlocked)
         let boss = all.filter { ($0.note ?? "").contains("等你确认") }
         let frozen = all.count - mine.count - boss.count
         // **搁浅链也要算进「有没有东西」。** 原来这里 mine/boss 都空就提前
@@ -1498,14 +1767,12 @@ func cmdWork(_ args: [String]) throws {
         return
 
     case "restart-worker":
-        // 在飞判定只有一份(inFlightAgent):这里原来是自己写的一份 `?? false`,
-        // 和 restartResidentServices 的 `?? true` 不一致 —— 任务刚起、PID 还没落盘
-        // 的那一小段窗口里,这条命令会把它踢死。同一件事两处判,必出这种事。
-        if let busy = inFlightAgent() {
-            let ran = busy.startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
-            print(Ansi.yellow("没重启 worker：") + Ansi.dim(
-                "\(busy.id) 正在跑（已 \(ran) 秒）。新二进制等它干完自然生效。"))
-            exit(3)   // 3 = 有活在跑,调用方据此决定要不要等
+        // 模型 Executor 是独立 launchd job；这里只重启 Coordinator，不会再
+        // 连带终止正在运行的 Agent。
+        if let busy = inFlightAgent(), !DetachedExecutorRegistry.isIndependent(busy) {
+            print(Ansi.yellow("没重启旧版 worker：") + Ansi.dim(
+                "\(busy.id) 仍是旧 Coordinator 的子进程；等它收尾后再完成首次切换。"))
+            exit(3)
         }
         let kick = Proc.run("/bin/launchctl",
                             ["kickstart", "-k", "gui/\(getuid())/com.llmquotabar.worker"],
@@ -1650,10 +1917,11 @@ func cmdWork(_ args: [String]) throws {
         }
         var made = 0
         for f in picked {
-            var t = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(),
+            var t = WorkTask(id: "pending",
                              prompt: ReservePool.prompt(for: f), repo: repoPath)
             t.origin = f.key
-            try TaskStore.append(t)
+            _ = try TaskIntake.enqueuePrepared(
+                t, idempotencyKey: "reserve:" + f.key, source: "reserve-pool")
             made += 1
         }
         print("\n" + Ansi.green("生成了 \(made) 个储备任务"))
@@ -1673,8 +1941,13 @@ func cmdWork(_ args: [String]) throws {
         guard t0.state == .blocked else {
             print(Ansi.yellow("任务 \(t0.id) 现在是 \(t0.state)，不是等确认的状态")); exit(1)
         }
+        guard t0.pausedAt == nil else {
+            print(Ansi.yellow("任务是暂停，不是高危路径审批；用 llmq work unpause \(t0.id)"));
+            exit(1)
+        }
         let r = Approval.settle(task: t0, approve: !rest.contains("--reject"))
-        try TaskStore.append(r.task)
+        _ = try TaskStore.transition(
+            r.task, actor: "cli", reason: "人工处置高危路径审批")
         AskStore.retract(taskID: t0.id, machine: Paths.machineID())
         print((r.task.state == .done ? Ansi.green : Ansi.yellow)(r.note))
         if r.task.state == .done {
@@ -1701,7 +1974,10 @@ func cmdWork(_ args: [String]) throws {
         let mid = Paths.machineID()
         for r in AskIngest.run(machineID: mid,
                                load: { TaskStore.all() },
-                               save: { try TaskStore.append($0) }) {
+                               save: {
+                                   _ = try TaskStore.transition(
+                                       $0, actor: "ask-ingest", reason: "采纳人工答复")
+                               }) {
             print((r.accepted ? Ansi.green("✓ ") : Ansi.yellow("⚠︎ "))
                   + r.taskID + Ansi.dim("  " + r.note))
         }
@@ -1884,7 +2160,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|approve-sample|handoff|retry|discard|progress|attempts|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|approve-sample|handoff|pause|unpause|architecture-review|retry|discard|progress|attempts|log]")
         exit(2)
     }
 }
@@ -1957,10 +2233,10 @@ func probePlatforms() throws {
             // 不说明额度打满。
             if case .timedOut = f {
                 detail += Ansi.dim("  超时，不记冷却")
-            } else if let cause = CooldownLedger.classify(r.stdout + " " + r.stderr) {
+            } else if let cause = CooldownLedger.classify(f.describe) {
                 let cd = CooldownLedger.record(
                     platform: runner.platform, cause: cause, detail: f.describe,
-                    knownResetAt: CooldownLedger.parseResetTime(r.stdout + " " + r.stderr))
+                    knownResetAt: CooldownLedger.parseResetTime(f.describe))
                 detail += Ansi.dim("  →冷却 " + Format.duration(cd.remaining))
             }
         } else {
@@ -1999,7 +2275,6 @@ enum RunOutcome {
     case blocked
 }
 
-@discardableResult
 /// **队列空了就按专注仓库的主线补活。**
 ///
 /// 老板 2026-08-22:「总不能跑一步卡一步就需要你介入」;2026-08-23:
@@ -2012,11 +2287,22 @@ enum RunOutcome {
 /// 半天、续活任务数 0,老板反复看到「进行中的任务没有了」,根子在这。
 /// 只对显式 focus 的仓库续;真闲才补;两小时最多一次;一轮只补一个仓库。
 func refillIfIdle(quiet: Bool = false) {
-    guard TaskStore.readyQueue().isEmpty else { return }
+    let scope = ProjectExecutionScope.current()
+    guard !scope.configurationError,
+          scope.filter(TaskStore.readyQueue()).isEmpty else { return }
     let all = TaskStore.all()
     for repo in RepoRegistry.all() {
-        guard repo.autoRefill else { continue }
         let path = NSString(string: repo.localPath).expandingTildeInPath
+        guard scope.shouldAutoRefill(path) else { continue }
+        guard AutoRefill.isDesignatedCoordinator(repo: repo) else {
+            if !quiet {
+                let reason = repo.coordinatorMachineID == nil
+                    ? "未指定项目协调节点，自动续活失败关闭"
+                    : "自动续活由另一台机器协调"
+                print(Ansi.dim("  · 没补 " + repo.alias + "  " + reason))
+            }
+            continue
+        }
         guard GitWorkspace.isRepo(path) else { continue }
         if let o = AutoRefill.refill(repo: path, alias: repo.alias, tasks: all) {
             let mark = o.enqueued ? Ansi.green("  ↺ 续活 ") : Ansi.dim("  · 没补 ")
@@ -2044,6 +2330,9 @@ func appendWorkAttempt(_ attempt: WorkAttempt) -> Bool {
 func publishCollaboration(_ event: CollaborationEvent) -> Bool {
     do {
         try CollaborationStore.publish(event)
+        // 协作页是手机看到关系的唯一入口。只写日志、等下一轮 Showcase 才重建
+        // 页面，会让“已认领/已交接”在手机上长时间看不见。
+        _ = ViewFeed.publish(ViewFeed.collaborationPage())
         return true
     } catch {
         print(Ansi.red("  ⚠︎ Agent 协作记录失败：" + error.localizedDescription))
@@ -2052,7 +2341,9 @@ func publishCollaboration(_ event: CollaborationEvent) -> Bool {
 }
 
 func runOneTask(dryRun: Bool, quiet: Bool = false,
-                onlyTaskID: String? = nil) throws -> RunOutcome {
+                onlyTaskID: String? = nil,
+                allowCrossProject: Bool = false,
+                dispatchLeaseID: String? = nil) throws -> RunOutcome {
     // **修队头阻塞：不再只看队头。**
     //
     // 老版只取 nextQueued() 一个：排头那个没人能接（比如常规风险
@@ -2063,7 +2354,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     // 「没人能接」的照旧标 blocked（顺手也不再堵队了）。
     // 家务先行:扫过期的验收残留;磁盘见底就别派了 —— 派了也只会失败。
     // 2026-08-21 晚磁盘 99% 时整条流水线无声烂掉,没有一层说「磁盘满了」。
-    let hk = Housekeeping.roundCheck(performMaintenance: !dryRun)
+    // 槽子进程只做磁盘/派发前检查；清理、回收等全局家务由唯一协调器负责。
+    // 两个子进程同时扫全局目录既浪费 I/O，也会制造不必要的并发写入。
+    let isSlotChild = ProcessInfo.processInfo.environment["LLMQ_SLOT_CHILD"] == "1"
+    let hk = Housekeeping.roundCheck(performMaintenance: !dryRun && !isSlotChild)
     if let n = hk.note, !quiet { print(Ansi.yellow("  家务 ") + n) }
     if hk.skipDispatch {
         return noteIdle(IdleReason.explain(
@@ -2075,7 +2369,35 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     // 反而可能被本次命令启动，进一步掩盖“指定任务没有运行”的事实。
     if onlyTaskID == nil { refillIfIdle() }
 
-    let allReady = TaskStore.readyQueue()
+    let scope = ProjectExecutionScope.current()
+    if scope.configurationError {
+        if !quiet { print(Ansi.red("本机项目作用域损坏，拒绝启动任何任务")) }
+        return .noTask
+    }
+    if let onlyTaskID, !allowCrossProject, scope.mode != .manualOnly,
+       let target = TaskStore.all().first(where: { $0.id == onlyTaskID }),
+       !scope.allows(target.repo) {
+        if !quiet {
+            _ = enforceProjectExecutionScope(target, arguments: [], action: "运行")
+        }
+        return .noTask
+    }
+    let allReady: [WorkTask]
+    if dispatchLeaseID != nil, let onlyTaskID {
+        // 协调器已在快照上验证过依赖并预占；全局 readyQueue 会故意隐藏有
+        // 活租约的任务，子进程必须凭同一 leaseID 精确取回这一条。
+        allReady = TaskStore.all().filter {
+            $0.id == onlyTaskID && $0.state == .queued
+                && $0.dispatchLeaseID == dispatchLeaseID
+        }
+    } else {
+        // manualOnly 关闭的是自动派发，不是人工点名。点名任务若仍走 scope.filter，
+        // 会被过滤成空队列，形成“界面允许、执行入口拒绝”的假支持。
+        let explicitManualStart = onlyTaskID != nil && scope.mode == .manualOnly
+        allReady = allowCrossProject || explicitManualStart
+            ? TaskStore.readyQueue()
+            : scope.filter(TaskStore.readyQueue())
+    }
     let rawQueue = WorkRunTarget.select(ready: allReady, explicitID: onlyTaskID)
     guard !rawQueue.isEmpty else {
         let all = TaskStore.all()
@@ -2136,6 +2458,22 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     var freshByRepo: [String: BaselineFreshness.Result] = [:]
     var vetted: [WorkTask] = []
     for cand in queue {
+        // 来源任务已冻结/丢弃/换 Owner 的自动派生任务直接作废。目标分支常被
+        // 有意保留作审计，所以后面的“分支还存在且未合”不足以识别这类僵尸。
+        if let obsolete = TaskKind.obsoleteSupportingReason(cand, among: history) {
+            if !quiet { print(Ansi.yellow("  作废 " + cand.id + "：") + Ansi.dim(obsolete)) }
+            var x = cand
+            x.state = .failed
+            x.endedAt = Date()
+            x.runnerPID = nil
+            x.discardedAt = Date()
+            x.discardReason = obsolete
+            x.note = "自动作废（派生任务来源已失效）：" + obsolete
+            x.frozenBy = nil
+            _ = try TaskStore.transition(
+                x, actor: "scheduler", reason: "派发前作废失效的派生任务")
+            continue
+        }
         let key = RepoLease.normalize(cand.repo)
         let fresh = freshByRepo[key]
             ?? BaselineFreshness.check(repo: cand.repo, tasks: history)
@@ -2186,7 +2524,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 x.state = .done
                 x.endedAt = Date()
                 x.note = "派活前核实：分支 \(own) 已合入 main，产出早已落地"
-                try? TaskStore.append(x)
+                _ = try TaskStore.transition(
+                    x, actor: "scheduler", reason: "派发前确认任务分支已经落地")
                 continue
             }
         }
@@ -2211,7 +2550,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 x.discardReason = "派活前核目标：" + why
                 x.note = "自动作废（派生任务的目标已了结）：" + why
                 x.frozenBy = nil
-                try? TaskStore.append(x)
+                _ = try TaskStore.transition(
+                    x, actor: "scheduler", reason: "派发前作废目标分支已了结的任务")
                 continue
             }
         }
@@ -2227,8 +2567,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             x.discardReason = "派活前核产出：" + why
             x.note = "自动跳过（产出已存在）：" + why
             x.frozenBy = nil
-            try? TaskStore.append(x)
-            for y in TaskGraph.reconcile(TaskStore.all()) { try? TaskStore.append(y) }
+            _ = try TaskStore.transition(
+                x, actor: "scheduler", reason: "派发前跳过产出已经存在的任务")
+            _ = try TaskGraph.persistReconciliation(
+                actor: "scheduler", reason: "产出已存在后重新对账")
             continue
         }
         switch PremiseCheck.check(prompt: cand.prompt, repo: cand.repo) {
@@ -2269,10 +2611,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             x.discardReason = "派活前核前提：" + why
             x.note = "自动作废（前提核验）：" + why
             x.frozenBy = nil
-            try? TaskStore.append(x)
+            _ = try TaskStore.transition(
+                x, actor: "scheduler", reason: "派发前作废前提已经消失的任务")
             // 丢完要对账 —— 被它冻住的下游得跟着变，
             // 不然刚修好的「假的自动解冻」又会以另一种形式出现。
-            for y in TaskGraph.reconcile(TaskStore.all()) { try? TaskStore.append(y) }
+            _ = try TaskGraph.persistReconciliation(
+                actor: "scheduler", reason: "任务前提失效后重新对账")
         }
     }
     guard !vetted.isEmpty else {
@@ -2298,6 +2642,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     var task: WorkTask! = nil
     var decision: WorkScheduler.Decision! = nil
     var ownerReleaseIsManual = false
+    // 账本的 running 是状态，不是锁。多执行槽下两个子进程可能在同一毫秒
+    // 读到 queued；内核租约把“选中 → 写 running”之间的竞态窗口封住。
+    var repoExecutionLease: LocalExecutionLease?
+    defer { repoExecutionLease?.release() }
     var leaseNoted = 0
     for (idx, candidateTask) in vettedQueue.enumerated() {
         var cand = candidateTask
@@ -2337,9 +2685,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         var releaseIsManual = false
         if (cand.ownerRunnerID == nil) != (cand.ownerPlatform == nil) {
             cand.state = .blocked
+            cand.waitReason = .ownerUnavailable
             cand.endedAt = Date()
             cand.note = "owner 数据不完整（runnerID/platform 必须同时存在），已停止自动猜人"
-            try? TaskStore.append(cand)
+            cand = try TaskStore.transition(
+                cand, actor: "scheduler", reason: "Owner 数据不完整，停止自动猜测")
             _ = StuckAsk.raise(task: cand, reason: cand.note ?? "owner 数据不完整")
             if !quiet { print(Ansi.yellow("  阻塞 \(cand.id)：" + (cand.note ?? "owner 数据不完整"))) }
             continue
@@ -2349,9 +2699,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 ownerRunnerID: runnerID, platform: platform, prompt: cand.prompt)
             else {
                 cand.state = .blocked
+                cand.waitReason = .ownerUnavailable
                 cand.endedAt = Date()
                 cand.note = "原 owner \(runnerID) 已不存在，且无法唯一迁移；已停止自动猜人"
-                try? TaskStore.append(cand)
+                cand = try TaskStore.transition(
+                    cand, actor: "scheduler", reason: "原 Owner 已不存在，停止自动猜测")
                 _ = StuckAsk.raise(task: cand, reason: cand.note ?? "owner 无法恢复")
                 if !quiet { print(Ansi.yellow("  阻塞 \(cand.id)：" + (cand.note ?? "owner 无法恢复"))) }
                 continue
@@ -2376,6 +2728,18 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             }
         }
         if !d.candidates.isEmpty {
+            if !dryRun {
+                let lease = LocalExecutionLease(
+                    scope: .repo, key: RepoLease.normalize(cand.repo))
+                guard lease.acquire() else {
+                    if !quiet, leaseNoted < 3 {
+                        leaseNoted += 1
+                        print(Ansi.dim("  让开 \(cand.id)：这个仓库的执行槽刚被另一任务占用"))
+                    }
+                    continue
+                }
+                repoExecutionLease = lease
+            }
             if idx > 0, !quiet {
                 print(Ansi.dim("  队头 \(idx) 个任务暂时没人能接，先跑后面这个"))
             }
@@ -2399,6 +2763,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             && d.rejected.allSatisfy { $0.kind == .permanent }
         if permanent {
             cand.state = .blocked
+            cand.waitReason = .ownerUnavailable
             cand.endedAt = Date()
             let dispatcherNote = d.dispatcher.map {
                 "。注意 \($0.displayName) 是本机指挥（控制面），"
@@ -2418,7 +2783,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 + dispatcherNote
                 + "。等下去不会变 —— 要么放宽某个角色的上限，要么人工处理。"
                 + (elsewhereHint.map { "\n" + $0 } ?? "")
-            try? TaskStore.append(cand)
+            cand = try TaskStore.transition(
+                cand, actor: "scheduler", reason: "没有永久可用的执行平台")
             // 卡死弹窗：推一条带按钮的提问到手机（重试/放弃），
             // 而不是让它安静地在看板上变灰等人巡逻发现。
             _ = StuckAsk.raise(task: cand, reason: "没有平台能接：" + d.rejected
@@ -2456,11 +2822,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         return .noTask
     }
 
-    task.state = .running
-    // 记下是谁在跑它 —— 回收孤儿时靠这个精确判断，而不是靠「跑了多久」。
-    task.runnerPID = ProcessInfo.processInfo.processIdentifier
-    task.startedAt = Date()
-    try TaskStore.append(task)
+    let startedAtBeforeDispatch = task.startedAt
+    // 计划和领取之间用户可能刚暂停/丢弃，或者另一个协调器已经抢到。
+    // 真正启动模型前统一走控制内核重新验证，不能拿 readyQueue 的旧快照硬写。
+    task = try TaskStore.claimForExecution(
+        id: task.id, runnerPID: ProcessInfo.processInfo.processIdentifier,
+        dispatchLeaseID: dispatchLeaseID)
     Inbox.writeResult(for: task)
     // **开跑就立刻重发看板，不等采集周期。**
     //
@@ -2468,9 +2835,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     // 150–170 秒 —— 再加镜像 30 秒 + iCloud 分钟级传播，
     // 「进行中」在链路上存在的时间比看到它所需的延迟还短。
     // 老板看到的永远是「上一个跑完、下一个没开始」的间隙。
-    TaskBoardStore.publishNow()
+    ProjectionInvalidation.markDirty()
 
     var attempts: [String] = []
+    // 终局写盘和全部派生对账完成后再发布。旧顺序先写 blocked ask、随后又写
+    // failed 并撤回，导致手机上的恢复问题只存在几十毫秒。
+    var terminalRecoveryAskReason: String?
     /// 上一个平台留下的交接信息。非 nil 表示这是接力，不是新开工。
     var handoff: Handoff?
     /// 这一轮是不是「答复回来了，接着上一轮干」。
@@ -2494,17 +2864,39 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     var idx = 0
     var ownerRetryUsed = false
     var sessionRepairUsed = false
+    var runnerLeaseDeferrals = 0
     enum RetryCause { case timeoutExperiment, sessionRepair }
     var retryCauseByIndex: [Int: RetryCause] = [:]
     while idx < candidateQueue.count {
         let pick = candidateQueue[idx]
+        // 同一个精确 Runner（也就是同一份 CLI 会话/账号配置）一次只跑一个任务。
+        // 不同 Runner 可并行；占用中的候选直接让给下一位，不等待、不烧 token。
+        let runnerExecutionLease = LocalExecutionLease(
+            scope: .runner, key: pick.runner.runnerID)
+        guard runnerExecutionLease.acquire() else {
+            let remaining = candidateQueue.count - idx
+            // 已形成上下文的 owner 忙，不构成交接理由；整条任务等它空下来。
+            // 新任务还没有 owner，才可以继续试其他空闲 Runner。
+            runnerLeaseDeferrals += task.ownerRunnerID == pick.runner.runnerID
+                ? remaining : 1
+            print(Ansi.dim("  让开 \(pick.platform.displayName)："
+                + "Runner \(pick.runner.runnerID) 正在执行另一任务"))
+            idx = task.ownerRunnerID == pick.runner.runnerID
+                ? candidateQueue.count : idx + 1
+            continue
+        }
+        defer { runnerExecutionLease.release() }
         let previousPick = idx > 0 ? candidateQueue[idx - 1] : nil
         let retryCause = retryCauseByIndex[idx]
         let isSameOwnerRetry = previousPick?.runner.runnerID == pick.runner.runnerID
             && retryCause != nil
-        task.platform = pick.platform
-        if !task.triedPlatforms.contains(pick.platform) {
-            task.triedPlatforms.append(pick.platform)
+        task = try TaskStore.transition(
+            id: task.id, actor: "scheduler", reason: "选择本轮执行平台"
+        ) { latest in
+            latest.platform = pick.platform
+            if !latest.triedPlatforms.contains(pick.platform) {
+                latest.triedPlatforms.append(pick.platform)
+            }
         }
         // **选定平台后立刻落盘一次,让任务板/办公室知道是谁在干。**
         //
@@ -2513,8 +2905,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         // 落盘的 running 记录 platform 为空 → 任务板那行没有 platform 字段 →
         // 手机办公室按(机器,平台)摆桌,摆不到任何人桌上,看起来没人在干活。
         // 实锤:fa4e5eeb running 了 26 分钟,记录里 platform: None。
-        try? TaskStore.append(task)
-        TaskBoardStore.publishNow()
+        ProjectionInvalidation.markDirty()
         let retryLabel: String
         switch retryCause {
         case .timeoutExperiment?: retryLabel = "（同 owner 连续恢复）"
@@ -2550,14 +2941,18 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         // `worktree remove --force` 把上一轮的进度**铲掉**。
         // 任务记录里持久化的 handoff / pendingAsk 才是跨进程恢复的真凭据。
         let isResuming = handoff != nil || task.handoff != nil || resumedAnswer != nil
-        if let existing = GitWorkspace.existingWorkspace(taskID: task.id), isResuming {
+        let resumeBase = handoff?.wipCommit ?? task.handoff?.wipCommit ?? "main"
+        if let expectedBranch = task.branch,
+           let existing = GitWorkspace.existingWorkspace(
+                repo: task.repo, platform: pick.platform, graphID: task.graphID),
+           isResuming, existing.branch == expectedBranch {
             ws = existing
             print(Ansi.cyan("  接手 ") + Ansi.dim(existing.branch + "（沿用已有工作区，不重建）"))
         } else {
             do {
                 ws = try GitWorkspace.prepare(
                     repo: task.repo, taskID: task.id, platform: pick.platform,
-                    graphID: task.graphID)
+                    graphID: task.graphID, base: resumeBase)
             } catch {
                 // **把真实原因带上。**
                 //
@@ -2587,7 +2982,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             }
             print(Ansi.dim("  分支 " + ws.branch))
         }
-        task.branch = ws.branch
+        task = try TaskStore.transition(
+            id: task.id, actor: "scheduler", reason: "记录隔离工作分支"
+        ) { latest in
+            latest.branch = ws.branch
+        }
 
         // 提问契约只给「可能真需要澄清」的任务加。
         // trivial 是改文档改注释，本来就不该问，而且它的超时预算只有几分钟，
@@ -2606,6 +3005,22 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         GraphSession.migrateLegacyProject(
             context: sessionContext, support: pick.runner.sessionSupport,
             workspace: ws.path, repo: task.repo, platform: pick.platform)
+        if let previous = WorkAttemptStore.latestTerminal(
+            taskID: task.id, runnerID: pick.runner.runnerID),
+           previous.outcome == .failed {
+            let wasResuming = previous.sessionAction == .resume
+                || previous.sessionAction == .projectResume
+            if GraphSession.shouldInvalidate(
+                output: previous.handoffReason ?? "",
+                timedOut: previous.timedOut,
+                wasResuming: wasResuming
+            ) {
+                GraphSession.forget(
+                    context: sessionContext, workspace: ws.path,
+                    repo: task.repo, platform: pick.platform)
+                print(Ansi.dim("  旧会话上下文已满，改用交接包开启新会话"))
+            }
+        }
         let session = GraphSession.mode(
             context: sessionContext, support: pick.runner.sessionSupport,
             workspace: ws.path)
@@ -2615,6 +3030,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         // （LegacyContextPromptBuilder），只有白名单里的已登记仓库才真正
         // 切换；refusal 也只有在 active 模式才允许阻断候选。
         let allTasks = TaskStore.all()
+        let contextBudget = ContextPackBuilder.budget(for: pick.platform)
         let outcome = ContextDispatchPrompt.build(
             request: .init(
                 task: task, allTasks: allTasks, events: nil,
@@ -2624,7 +3040,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 resumedAnswer: resumedAnswer?.0, resumedAsk: resumedAnswer?.1,
                 mayAsk: mayAsk, askFile: mayAsk ? askFile.path : nil,
                 tier: task.profile?.tier,
-                sessionAction: WorkAttempt.SessionAction.from(session).rawValue),
+                sessionAction: WorkAttempt.SessionAction.from(session).rawValue,
+                budget: contextBudget),
             legacy: { LegacyContextPromptBuilder.build(
                 task: task, allTasks: allTasks, runnerID: pick.runner.runnerID,
                 workspacePath: ws.path, handoff: handoff ?? task.handoff,
@@ -2656,7 +3073,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 outcome.manifest.totalCharacters)))
         } else {
             print(Ansi.dim(String(format: "  上下文包 %d 字符（上限 %d；纳入 %d 项，折叠 %d 项，删减 %d 项）",
-                outcome.pack.manifest.totalCharacters, ContextPackBuilder.defaultBudget,
+                outcome.pack.manifest.totalCharacters, contextBudget,
                 outcome.pack.manifest.includedFactIDs.count,
                 outcome.pack.manifest.referencedFactIDs.count,
                 outcome.pack.manifest.droppedFacts.count)))
@@ -2733,10 +3150,21 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         if task.ownerRunnerID == nil { assignmentCause = .initial }
         else if idx == 0 && ownerReleaseIsManual { assignmentCause = .manualDisable }
         else { assignmentCause = .automaticFailure }
-        let ownerBeforeAttempt = ContextAffinityPolicy.assign(
-            task: &task, runnerID: pick.runner.runnerID,
-            platform: pick.platform, cause: assignmentCause)
-        if ownerBeforeAttempt.changed { try? TaskStore.append(task) }
+        var ownerBeforeAttempt: ContextAffinityPolicy.Snapshot!
+        task = try TaskStore.transition(
+            id: task.id, actor: "scheduler", reason: "建立任务 Owner 与会话亲和"
+        ) { latest in
+            ownerBeforeAttempt = ContextAffinityPolicy.assign(
+                task: &latest, runnerID: pick.runner.runnerID,
+                platform: pick.platform, cause: assignmentCause)
+        }
+        publishCollaboration(CollaborationEvent(
+            id: attemptID + "-claim", project: task.repo, taskID: task.id,
+            graphID: task.graphID, lane: TaskCapabilityLane.classify(task.prompt),
+            senderRunnerID: pick.runner.runnerID, senderPlatform: pick.platform,
+            recipientRunnerID: "orchestrator",
+            kind: .claim, summary: "主动认领：" + String(task.prompt.prefix(100)),
+            details: decision.pick?.reason, branch: ws.branch))
         appendWorkAttempt(WorkAttempt(
             attemptID: attemptID, taskID: task.id,
             runnerID: pick.runner.runnerID, platform: pick.platform,
@@ -2799,7 +3227,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     nextStep: "继续当前任务", evidence: [], requestedMinutes: 20,
                     repo: ws.path),
                    let verified = leaseGate.renewal(progress: item) {
-                    TaskBoardStore.publishNow()
+                    ProjectionInvalidation.markDirty()
                     print(Ansi.cyan("  自动续期 \(Int(verified.seconds / 60)) 分钟：")
                           + Ansi.dim(summary))
                     return Proc.DeadlineExtension(
@@ -2825,8 +3253,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             GraphSession.forget(context: sessionContext, workspace: ws.path)
         }
         if r.exitCode == -1 {
-            ContextAffinityPolicy.restore(task: &task, snapshot: ownerBeforeAttempt)
-            try? TaskStore.append(task)
+            task = try TaskStore.transition(
+                id: task.id, actor: "scheduler", reason: "模型进程未启动，回滚暂定 Owner"
+            ) { latest in
+                ContextAffinityPolicy.restore(
+                    task: &latest, snapshot: ownerBeforeAttempt)
+            }
         }
         // **有提交就不算「没改动」,绝不能连分支一起删。**
         //
@@ -2849,8 +3281,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                              + "  err: " + aheadProbe.stderr.prefix(120)))
         }
         let changed = changedByFiles == 0 && (aheadCommits > 0 || !gitAnswered) ? 1 : changedByFiles
-        // 这一轮**这个 agent 自己**动了多少。base 用它开工时的 HEAD。
-        let mine = headBefore.map { GitWorkspace.changedFileCount(in: ws.path, base: $0) }
+        // 这只是自动提交前的提交数快照，用于 Git 出错时的保守兜底。
+        // 真正的完成判定会在自动提交之后重新读取。
         let myCommits = headBefore.map { GitWorkspace.commitsAhead(in: ws.path, base: $0) } ?? 0
 
         func recordAttempt(_ outcome: WorkAttempt.Outcome,
@@ -2920,6 +3352,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             task.pendingAsk = stored
             task.askRounds += 1
             task.state = .blocked
+            task.waitReason = .humanAnswer
             task.endedAt = Date()
             task.changedFiles = changed
             task.note = "在等你回答 \(ask.questions.count) 个问题"
@@ -2935,7 +3368,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 task.askRounds -= 1
                 recordAttempt(.failed, failureKind: "askPublishFailed",
                               handoffReason: error.localizedDescription)
-                try? TaskStore.append(task)
+                task = try TaskStore.transition(
+                    task, actor: "scheduler", reason: "问题发布失败，恢复排队")
                 return .noPlatform
             }
             publishCollaboration(CollaborationEvent(
@@ -2943,18 +3377,27 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 project: task.repo, taskID: task.id, graphID: task.graphID,
                 lane: TaskCapabilityLane.classify(task.prompt),
                 senderRunnerID: pick.runner.runnerID, senderPlatform: pick.platform,
+                recipientRunnerID: "human",
                 kind: .question, summary: ask.questions.first?.text ?? "需要补充信息",
                 details: ask.questions.dropFirst().map(\.text).joined(separator: "\n"),
                 branch: task.branch, commitSHA: stored.wipCommit))
             recordAttempt(.blocked, handoffReason: "等待用户答复")
             try? FileManager.default.removeItem(at: askFile)
-            try? TaskStore.append(task)
+            do {
+                task = try TaskStore.transition(
+                    task, actor: "scheduler", reason: "Agent 提问，等待人工答复")
+            } catch {
+                AskStore.retract(
+                    taskID: task.id,
+                    machine: stored.machineID.isEmpty ? Paths.machineID() : stored.machineID)
+                throw error
+            }
             Inbox.writeResult(for: task)
             OfficeLog.record(OfficeEvent(
                 kind: .asked, taskID: task.id, platform: pick.platform,
                 detail: ask.questions.first?.text ?? "有事要问",
                 taskTitle: task.prompt))
-            OfficeLog.publish()
+            ProjectionInvalidation.markDirty()
             print(Ansi.cyan("  已转为等待答复") + Ansi.dim("，额度槽已让出"))
             return .blocked
         }
@@ -2979,8 +3422,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             let sessionFailed = GraphSession.shouldInvalidate(
                 output: blob, timedOut: r.timedOut, wasResuming: session != .fresh)
             if sessionFailed {
-                GraphSession.forget(context: sessionContext, workspace: ws.path)
-                print(Ansi.dim("  会话已失效，丢掉重开（下次从零读一遍仓库）"))
+                GraphSession.forget(
+                    context: sessionContext, workspace: ws.path,
+                    repo: task.repo, platform: pick.platform)
+                print(Ansi.dim("  会话已失效，下一次用交接包开启新会话"))
             }
 
             // 存进度再走。哪怕只做了一半，也比让下一个平台从零开始强。
@@ -2992,27 +3437,35 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     + "\(touched.count) 个文件"
                     + (wip.map { "，提交 " + $0 } ?? ""))
             }
+            let inheritedHandoff = task.handoff
             handoff = Handoff(
                 fromPlatform: pick.platform,
                 reason: failure.describe,
-                touchedFiles: touched,
-                wipCommit: wip,
+                touchedFiles: touched.isEmpty
+                    ? (inheritedHandoff?.touchedFiles ?? []) : touched,
+                wipCommit: wip ?? inheritedHandoff?.wipCommit,
                 elapsedSeconds: Int(elapsed))
             publishCollaboration(CollaborationEvent(
                 project: task.repo, taskID: task.id, graphID: task.graphID,
                 lane: TaskCapabilityLane.classify(task.prompt),
                 senderRunnerID: pick.runner.runnerID, senderPlatform: pick.platform,
+                recipientRunnerID: "orchestrator",
                 kind: .handoff, summary: failure.describe,
                 details: touched.isEmpty ? nil : "已改：" + touched.joined(separator: "、"),
                 branch: ws.branch, commitSHA: wip,
                 artifacts: CollaborationEvent.boundedArtifacts(touched)))
 
             let failureName: String
+            let baseTerminalFailure: WorkTask.TerminalFailureKind
             switch failure {
-            case .timedOut: failureName = "timedOut"
-            case .platformUnavailable: failureName = "platformUnavailable"
-            case .agentFailed: failureName = "agentFailed"
+            case .timedOut:
+                failureName = "timedOut"; baseTerminalFailure = .timedOut
+            case .platformUnavailable:
+                failureName = "platformUnavailable"; baseTerminalFailure = .platformUnavailable
+            case .agentFailed:
+                failureName = "agentFailed"; baseTerminalFailure = .agentFailed
             }
+            task.terminalFailureKind = sessionFailed ? .sessionInvalid : baseTerminalFailure
             recordAttempt(.failed, failureKind: sessionFailed ? "sessionInvalid" : failureName,
                           handoffReason: failure.describe)
 
@@ -3027,13 +3480,20 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             // 不是把平台冻起来。
             if case .timedOut = failure {
                 print(Ansi.dim("  超时，不记冷却 —— 半截输出判不了额度，换平台重试"))
-            } else if let cause = CooldownLedger.classify(r.stdout + " " + r.stderr) {
+            } else if let cause = CooldownLedger.classify(failure.describe) {
                 // 报错原文里带确切重置时间就采信（「reset at 08-17 01:36 UTC」），
                 // 别按退避每小时白撞一次撞到周日。
-                let resetAt = CooldownLedger.parseResetTime(r.stdout + " " + r.stderr)
+                let resetAt = CooldownLedger.parseResetTime(failure.describe)
+                switch cause {
+                case .quotaExhausted: task.terminalFailureKind = .quotaExhausted
+                case .authFailed: task.terminalFailureKind = .authenticationFailed
+                case .environmentBroken: task.terminalFailureKind = .environmentBroken
+                case .permanentlyUnsupported: task.terminalFailureKind = .platformUnavailable
+                }
                 let cd = CooldownLedger.record(
                     platform: pick.platform, cause: cause, detail: failure.describe,
                     knownResetAt: resetAt)
+                task.retryNotBefore = cause == .quotaExhausted ? cd.until : nil
                 print(Ansi.yellow("  已记入冷却：" + cd.cause.displayName
                     + "，" + Format.duration(cd.remaining) + "内不再派给它"))
                 OfficeLog.record(OfficeEvent(
@@ -3093,18 +3553,23 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             task.endedAt = Date()
             task.exitCode = r.exitCode
             task.changedFiles = touched.count
-            // 终局失败 = 「等下去不会变」的另一种 —— 弹窗问手机重试还是放弃，
-            // 而不是安静躺平等人巡逻（用户原话：「不应该弹窗找我确认继续吗」）。
-            _ = StuckAsk.raise(task: task,
-                reason: "全部候选都试过仍失败：" + String((task.note ?? "无记录").prefix(160)))
+            task.handoff = handoff
             task.note = attempts.joined(separator: " | ")
-            if touched.isEmpty {
+            // 有明确重置时间的额度失败不需要人拍板：保持 failed + 冷却信息，
+            // 到期由调度恢复。其余终局失败在最终状态写稳后再发布恢复问题。
+            if task.terminalFailureKind != .quotaExhausted {
+                terminalRecoveryAskReason = "全部候选都试过仍失败："
+                    + String((task.note ?? "无记录").prefix(160))
+            }
+            if !GitWorkspace.shouldPreserveFailedBranch(
+                touchedFiles: touched.count, commitsAheadOfMain: aheadCommits,
+                handoffCommit: task.handoff?.wipCommit) {
                 GitWorkspace.cleanup(repo: task.repo, path: ws.path, branch: ws.branch)
                 task.branch = nil
             } else {
                 GitWorkspace.cleanup(repo: task.repo, path: ws.path)
                 print(Ansi.yellow("  保留分支 " + ws.branch
-                    + "，里面有 \(touched.count) 个文件的半成品"))
+                    + "，已有交接基线或本轮半成品"))
             }
             break
         }
@@ -3116,6 +3581,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
 
         if changed == 0 {
             task.state = .done
+            task.terminalFailureKind = nil
+            task.retryNotBefore = nil
             task.note = "跑完了但没有产生任何改动"
             GitWorkspace.cleanup(repo: task.repo, path: ws.path, branch: ws.branch)
             task.branch = nil
@@ -3130,10 +3597,12 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             let risky = GitWorkspace.riskyPathsTouched(in: ws.path)
             if !leaks.isEmpty {
                 task.state = .failed
+                task.terminalFailureKind = .postRunGate
                 task.note = "改动里疑似含凭据（\(leaks.joined(separator: "、"))），已拒绝提交"
             } else if !risky.isEmpty {
-                // 不提交、**保留工作区** —— 改动可能完全正确，只是需要你看一眼。
-                // 直接丢掉的话，一个正确的改动就白跑了。
+                // 先提交到**隔离分支**做可恢复快照，再进入复核。提交不等于合入；
+                // 没有这一步，临时 worktree 一旦因磁盘恢复或重启被清掉，正确产出
+                // 和复核材料会一起消失。
                 task.state = .blocked
                 // **谁该管:后果是钱/账号/对外影响吗。**
                 // 老板 2026-08-22 常设指示:「阻塞任务,你来看处理,
@@ -3142,12 +3611,27 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 // 拦下的绝大多数是纯技术活 —— 推给他只会淹掉真正要他
                 // 拍板的那两类。详见 BossGate。
                 let bossCall = BossGate.needsBoss(files: risky)
-                task.note = "碰到高危路径（\(risky.prefix(3).joined(separator: "、"))"
+                task.waitReason = bossCall ? .humanApproval : .architectureReview
+                var gateNote = "碰到高危路径（\(risky.prefix(3).joined(separator: "、"))"
                     + (risky.count > 3 ? " 等 \(risky.count) 个" : "") + "），"
-                    + (bossCall ? "等你确认" : "等 Claude 处置")
-                print(Ansi.yellow("  ⚠︎ 碰到高危路径，没提交，等人确认：")
+                    + (bossCall ? "等你确认" : "等架构师处置")
+                let checkpoint = TechnicalDisposition.checkpoint(
+                    repo: task.repo, workspace: ws.path,
+                    platform: pick.platform, prompt: task.prompt)
+                switch checkpoint {
+                case .success(let sha):
+                    gateNote += "；隔离快照 " + String(sha.prefix(8))
+                    // 普通任务不需要为等待复核长期占着 worktree。图节点共用工作区，
+                    // cleanup 的中心守卫会保留它；两种情况都已经不再依赖脏文件。
+                    GitWorkspace.cleanup(repo: task.repo, path: ws.path)
+                case .failure(let reason):
+                    // 快照失败时保留工作区，绝不假装可恢复。处置任务会看到明确
+                    // 原因，巡检也能把它作为基础设施异常报告出来。
+                    gateNote += "；隔离快照失败：" + String(reason.prefix(160))
+                }
+                task.note = gateNote
+                print(Ansi.yellow("  ⚠︎ 碰到高危路径，已隔离并等待处置：")
                     + risky.prefix(5).joined(separator: "、"))
-                print(Ansi.dim("  改动留在 " + ws.path))
                 // 推到手机上等你点。
                 //
                 // 为什么不走飞书交互卡片：那需要一个飞书能访问的**入站回调地址**
@@ -3163,7 +3647,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 // **新 id** 的问题(去重失效)。这就是老板「确认了还一直重复弹」的完整
                 // 复现路径,每轮还白烧一份额度。
                 //
-                // **只有归老板拍板的才推手机。** 归 Claude 处置的(纯技术路径)留在
+                // **只有归老板拍板的才推手机。** 归架构师处置的(纯技术路径)留在
                 // 本机 `llmq work blocked` 里由我处理,不推 —— 老板 2026-08-22:
                 // 「给我应该就是风险类或者验收类」「minimax 咋都让人审批」。
                 if bossCall {
@@ -3188,7 +3672,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     task.askRounds += 1
                     print(Ansi.dim("  已推到手机等确认"))
                 } else {
-                    print(Ansi.dim("  归 Claude 处置,不推手机(llmq work blocked 可见)"))
+                    print(Ansi.dim("  将自动创建架构师技术处置任务；实现 Owner 不变"))
                 }
             } else {
                 // 提交前先验一次。**在提交之前**是刻意的：提交完再验的话，
@@ -3225,6 +3709,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     // 不提交，但**保留 worktree** —— 改动还在里面，
                     // 人想看能看，接力的下一个平台也能接着修。
                     task.state = .failed
+                    task.terminalFailureKind = .verificationFailed
                     task.note = "改了 \(changed) 个文件但 \(v.summary)，没有提交"
                     print(Ansi.red("  " + v.summary) + Ansi.dim("，改动留在工作区没提交"))
                     if !v.tail.isEmpty {
@@ -3279,39 +3764,60 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                         .split(separator: "\n", omittingEmptySubsequences: true)
                         .suffix(20)
                         .map { String($0.prefix(500)) }
-                    if let reason = VisualQualityGate.completionBlockReason(
+                    // `myCommits` 是自动提交之前采集的。Agent 留下未提交 diff 时，
+                    // 文件/提交增量可能都被旧快照看成 0；这里刚把 diff 提交成新
+                    // commit，若仍
+                    // 用旧快照，视觉整改会被误报“本轮没有新改动”。2026-08-28
+                    // Flint 现场已复现：任务先写 failed，34 秒后分支才出现 6d77ba3。
+                    // 所有完成判定和归因都必须读取提交后的最终状态。
+                    let finalAttemptFiles = headBefore.map {
+                        GitWorkspace.changedFileCount(in: ws.path, base: $0)
+                    } ?? changed
+                    let finalAttemptCommits = headBefore.map {
+                        GitWorkspace.commitsAhead(in: ws.path, base: $0)
+                    } ?? myCommits
+                    if let violation = QualityGuardrailGate.violation(
+                        repo: task.repo, branch: ws.branch) {
+                        task = TaskPause.requestArchitectureReview(task, reason: violation)
+                        print(Ansi.red("  " + violation))
+                        ProjectionInvalidation.markDirty()
+                    } else if let reason = VisualQualityGate.completionBlockReason(
                         task: task,
-                        attemptChangedFiles: mine ?? changed,
-                        attemptNewCommits: myCommits) {
+                        attemptChangedFiles: finalAttemptFiles,
+                        attemptNewCommits: finalAttemptCommits) {
                         task.state = .failed
+                        task.terminalFailureKind = .qualityGate
                         task.note = reason
                         print(Ansi.red("  " + reason))
                         // 失败状态也要立即同步到手机，不能继续显示“运行中”。
-                        TaskBoardStore.publishNow()
+                        ProjectionInvalidation.markDirty()
                     } else {
                         task.state = .done
+                        task.terminalFailureKind = nil
+                        task.retryNotBefore = nil
                         // 收尾也要立刻重发：不然任务已经跑完，手机上还挂着
                         // 「正在干」直到下一次采集（约 2 分钟）。
                         // 开跑和收尾两头都发，「进行中」的显示才和事实同步。
-                        defer { TaskBoardStore.publishNow() }
+                        defer { ProjectionInvalidation.markDirty() }
                         // **把「这一轮谁干的」和「分支上一共有什么」分开说。**
                         //
                         // 合并成一句「改了 N 个文件」会稳定地把前人的成果记到
                         // 最后一棒头上 —— 而多 agent 接力里，事后最想回答的问题
                         // 恰恰是「这段代码谁写的」。
-                        let didSomething = (mine ?? changed) > 0
+                        let didSomething = finalAttemptFiles > 0
                         if didSomething {
-                            task.note = "改了 \(mine ?? changed) 个文件"
+                            task.note = "改了 \(finalAttemptFiles) 个文件"
                                 + (v.ran ? "，\(v.summary)" : "")
                                 + "，已提交到 \(ws.branch)"
-                                + (myCommits > 0 ? "（\(myCommits) 个提交是它自己打的）" : "")
+                                + (finalAttemptCommits > 0
+                                    ? "（\(finalAttemptCommits) 个提交是它自己打的）" : "")
                         } else {
                             // 接手时活就已经干完了。说实话比凑一句好看的强。
                             task.note = "它自己没有产生改动"
                                 + (v.ran ? "，但\(v.summary)" : "")
                                 + "，分支 \(ws.branch) 上已有的成果判定为完成"
                         }
-                        if changed != (mine ?? changed) {
+                        if changed != finalAttemptFiles {
                             task.note! += "（分支相对 main 一共 \(changed) 个文件"
                                 + "、\(alreadyCommitted) 个提交，含前面几棒的）"
                         }
@@ -3321,6 +3827,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     }
                 } else {
                     task.state = .failed
+                    task.terminalFailureKind = .postRunGate
                     task.note = "提交失败：" + String(c.stderr.suffix(160))
                 }
             }
@@ -3337,14 +3844,35 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             recordAttempt(.failed, failureKind: "postRunGate", handoffReason: task.note)
         }
 
-        print((task.state == .done ? Ansi.green("  完成") : Ansi.red("  失败"))
+        let terminalLabel: String
+        let terminalColor: (String) -> String
+        switch task.state {
+        case .done: terminalLabel = "  完成"; terminalColor = Ansi.green
+        case .blocked: terminalLabel = "  等待处置"; terminalColor = Ansi.yellow
+        default: terminalLabel = "  失败"; terminalColor = Ansi.red
+        }
+        print(terminalColor(terminalLabel)
             + Ansi.dim(String(format: " · %.0fs · ", elapsed)) + (task.note ?? ""))
         break
     }
 
+    if task.state == .running, runnerLeaseDeferrals == candidateQueue.count {
+        // 所有候选只是“本机正忙”，没有一个字发给模型。恢复排队，保留 owner
+        // 和历史开始时间，外层会退回速率槽，下一轮自然重试。
+        task.state = .queued
+        task.runnerPID = nil
+        task.startedAt = startedAtBeforeDispatch
+        task.endedAt = nil
+        task.note = "本机可用 Agent 都在执行其他任务，已保留队列等待空槽"
+        task = try TaskStore.transition(
+            task, actor: "scheduler", reason: "本机执行槽繁忙，恢复排队")
+        ProjectionInvalidation.markDirty()
+        return .noPlatform
+    }
     if task.state == .running {
         // 所有候选都试过了还没成
         task.state = .failed
+        task.terminalFailureKind = task.terminalFailureKind ?? .platformUnavailable
         task.endedAt = Date()
         task.note = attempts.isEmpty ? "所有平台都不可用" : attempts.joined(separator: " | ")
     }
@@ -3360,7 +3888,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         kind: .finished, taskID: task.id, platform: task.platform,
         detail: task.note ?? (task.state == .done ? "干完了" : "没干成"),
         taskTitle: task.prompt))
-    OfficeLog.publish()
+    ProjectionInvalidation.markDirty()
     let terminalRunner = task.ownerRunnerID ?? task.platform?.rawValue ?? "orchestrator"
     let terminalSHA = task.branch.flatMap { branch in
         let r = GitWorkspace.git(["rev-parse", branch], in: task.repo)
@@ -3371,11 +3899,13 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         project: task.repo, taskID: task.id, graphID: task.graphID,
         lane: TaskCapabilityLane.classify(task.prompt),
         senderRunnerID: terminalRunner, senderPlatform: task.platform,
+        recipientRunnerID: "orchestrator",
         kind: .result,
         summary: task.note ?? (task.state == .done ? "任务完成" : "任务未完成"),
         details: task.outputs.isEmpty ? nil : task.outputs.suffix(8).joined(separator: "\n"),
         branch: task.branch, commitSHA: terminalSHA))
-    try TaskStore.append(task)
+    task = try TaskStore.transition(
+        task, actor: "scheduler", reason: "记录本轮执行终态")
     Inbox.writeResult(for: task)   // 让手机端能看到结果
 
     // 上游被拦下之后，下游要跟着冻结。
@@ -3383,15 +3913,21 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     // 不传的话它们会一直躺在 queued 里等一个永远不会 done 的上游 ——
     // 就是刚修好的那个死锁换到了图这一层。挂在这里（而不是每个转 blocked
     // 的地方）是因为路径有好几条：能力不够、人工闸门、提问超轮次。
-    for x in TaskGraph.reconcile(TaskStore.all()) {
-        try? TaskStore.append(x)
+    for x in try TaskGraph.persistReconciliation(
+        actor: "scheduler", reason: "执行终态后重新对账") {
         print(Ansi.yellow("  对账 ") + Ansi.dim("\(x.id.prefix(8))  " + (x.note ?? "")))
+    }
+    if let reason = terminalRecoveryAskReason,
+       let latest = TaskStore.all().first(where: { $0.id == task.id }),
+       StuckAsk.raise(task: latest, reason: reason) {
+        ProjectionInvalidation.markDirty()
     }
 
     let ok = task.state == .done
+    let terminalStatus = task.state == .blocked ? "等待处置" : (ok ? "完成" : "失败")
     let total = Date().timeIntervalSince(overallStart)
     let sent = Notifier.feishu(
-        "任务 \(task.id) \(ok ? "完成" : "失败")\n"
+        "任务 \(task.id) \(terminalStatus)\n"
         + "平台：\(task.platform?.displayName ?? "—")\n"
         + "耗时：\(Int(total)) 秒\n"
         + "结果：\(task.note ?? "")\n"
@@ -3419,6 +3955,11 @@ func cmdWorkLoop(_ args: [String]) throws {
        let v = Double(args[i + 1]) { policy.tickSeconds = v }
     if let i = args.firstIndex(of: "--max-per-hour"), i + 1 < args.count,
        let v = Int(args[i + 1]) { policy.maxTasksPerHour = v }
+    var workerSlots = LocalWorkerSlotPlanner.defaultSlots(machineName: Paths.machineName())
+    if let i = args.firstIndex(of: "--slots"), i + 1 < args.count,
+       let v = Int(args[i + 1]) {
+        workerSlots = min(8, max(1, v))
+    }
 
     // 两个循环同时跑会把同一个任务派两遍。从根上只允许一个实例。
     let lock = SingleInstanceLock(name: "work-loop")
@@ -3428,6 +3969,7 @@ func cmdWorkLoop(_ args: [String]) throws {
         exit(1)
     }
     defer { lock.release() }
+    _ = try PublicationGeneration.activate(role: .coordinator)
 
     // SIGTERM/SIGINT 要能干净退出：正在跑的 agent 得让它跑完，
     // 半路杀掉会留下脏 worktree 和状态为 running 的僵尸任务。
@@ -3533,7 +4075,8 @@ func cmdWorkLoop(_ args: [String]) throws {
             terminal.handoffReason = x.note
             appendWorkAttempt(terminal)
         }
-        try? TaskStore.append(x)
+        _ = try TaskStore.transition(
+            x, actor: "worker-recovery", reason: "回收失去真实进程的孤儿任务")
         print(Ansi.yellow("回收孤儿任务 ") + Ansi.dim(x.id + "  " + (x.note ?? "")))
     }
 
@@ -3543,13 +4086,14 @@ func cmdWorkLoop(_ args: [String]) throws {
     // 于是下游停在 queued，既不就绪也没有 note，而且**压着储备池的生成闸门**。
     // 实测：s2 被回收成 failed 之后，s3 在 queued 上躺了一个多小时，
     // 每 30 分钟打印一次「空闲中」，看起来一切正常。
-    for x in TaskGraph.reconcile(TaskStore.all()) {
-        try? TaskStore.append(x)
+    for x in try TaskGraph.persistReconciliation(
+        actor: "worker-recovery", reason: "孤儿任务回收后重新对账") {
         print(Ansi.dim("  对账 " + x.id + "  " + (x.note ?? "")))
     }
 
     print(Ansi.bold("工作循环已启动")
         + Ansi.dim("  每 \(Int(policy.tickSeconds))s 查一次队列"
+            + " · 本机 \(workerSlots) 个隔离执行槽"
             + " · 每小时最多 \(policy.maxTasksPerHour) 个任务"
             + " · 连续失败 \(policy.stopAfterConsecutiveFailures) 次就停"))
 
@@ -3558,6 +4102,21 @@ func cmdWorkLoop(_ args: [String]) throws {
     var lastCollect = Date.distantPast
     var lastHeartbeat = Date()
     var ranTotal = 0
+    let executorLauncher = DetachedExecutorLauncher()
+    let consultationLauncher = ConsultationJobLauncher()
+    var lastAgentRegistration = Date.distantPast
+    let invokedBinary = CommandLine.arguments[0]
+    let workerBinaryPath = invokedBinary.hasPrefix("/")
+        ? invokedBinary
+        : URL(fileURLWithPath: FileManager.default.currentDirectoryPath,
+              isDirectory: true).appendingPathComponent(invokedBinary).standardizedFileURL.path
+    let workerBinary = URL(fileURLWithPath: workerBinaryPath)
+    let workerLogRoot = Paths.appSupport.appendingPathComponent(
+        "worker-slots", isDirectory: true)
+    var dispatchStoppedByFailures = false
+    // “这条任务暂时没平台”只冷却它自己，不能让一个额度耗尽的 owner
+    // 把其他仓库、其他 Agent 的空闲执行槽一起冻住。
+    var taskDispatchHolds: [String: Date] = [:]
 
     // **每个阶段都关进看门狗，而不是每个 I/O 调用。**
     //
@@ -3586,26 +4145,219 @@ func cmdWorkLoop(_ args: [String]) throws {
     // 派发全部跟着停,手机看起来又「没更新了」(控制流 review §1)。
     // 改成只延后**派活**这一件事,别的照常每 30s 跑。
     var dispatchHoldUntil = Date.distantPast
+    var rateReservations: [String: RateGate.Reservation] = [:]
 
     // 记下「我是哪份二进制」。每轮末尾空闲时发现磁盘上换了就退出,launchd 用新的
     // 拉起来 —— 这才是「新二进制等它干完自然生效」的机制(见 BinarySwap)。
     let swapWatch = BinarySwap.watch()
+    var observedExecutors = Set(TaskStore.all().filter { $0.state == .running }.map(\.id))
 
-    // **橱窗刷新不跟着主循环的节奏走。**
+    // 手机视图由独立 Projector 常驻进程刷新。Coordinator 不再持有 iCloud/Git
+    // 投影定时器，投影挂死或换版都不会拖住派发和真实模型任务。
+
+    // 派活必须是主循环的高优先级动作。
     //
-    // runOneTask 是同步的,一条复杂任务能占住主线程 90 分钟;而手机看的那几页
-    // 原来只在「一轮末尾」发布 —— 于是 agent 一开工,手机上就彻底静止。
-    // 老板反复报的「半小时没更新」「看不到进行中的任务」「点进去就没有了」
-    // 都是这一个根(见 Showcase)。这个定时器独立于主线程,照常刷。
-    let showcase = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-    showcase.schedule(deadline: .now() + Showcase.interval, repeating: Showcase.interval)
-    showcase.setEventHandler {
-        _ = Watchdog.run("showcase", timeout: 120) { _ = Showcase.refresh() }
-    }
-    showcase.resume()
-    defer { showcase.cancel() }
+    // 以前这段逻辑放在「同步验收 / 下发视图 / 提醒 / 收远程任务」之后。
+    // 这些阶段各自都有几十秒的看门狗，任意一次全量 Git 扫描稍慢，已经
+    // queued 的任务就只能干等；界面会先显示「等待架构决策」，纠偏后又
+    // 长时间显示排队，但机器上根本没有真实模型进程。
+    //
+    // 抽成同一个入口，每轮只调用一次：有界摄入与质量闭环完成后冻结快照，
+    // 再按这份快照派发。后续新任务留到下一轮，不能在半轮里重新读配置改选择。
+    @discardableResult
+    func dispatchReadyTasks(lowDisk: Bool) -> Bool {
+        guard !dispatchStoppedByFailures,
+              !lowDisk,
+              Date() >= dispatchHoldUntil else { return false }
 
-    while !stopping {
+        let allTasks = TaskStore.all()
+        let scope = ProjectExecutionScope.current()
+        guard !scope.configurationError else { return false }
+        let now = Date()
+        taskDispatchHolds = taskDispatchHolds.filter { $0.value > now }
+        let ready = scope.filter(TaskStore.readyQueue(from: allTasks)).filter {
+            (taskDispatchHolds[$0.id] ?? .distantPast) <= now
+        }
+        guard !ready.isEmpty else { return false }
+        let activeExecutors = DetachedExecutorRegistry.active(tasks: allTasks)
+        let plan = LocalWorkerSlotPlanner.plan(
+            ready: ready, allTasks: allTasks,
+            active: activeExecutors, maxConcurrentTasks: workerSlots)
+        let snapshot = SchedulerSnapshot(
+            scope: scope, ready: ready, active: activeExecutors,
+            plan: plan, maxConcurrentTasks: workerSlots)
+        do {
+            try SchedulerSnapshotStore.save(snapshot)
+        } catch {
+            print(Ansi.red("  调度快照写盘失败，本轮拒绝派发："
+                + error.localizedDescription))
+            return false
+        }
+        var launchedAny = false
+        var rateLimited = false
+        for task in plan.selected {
+            guard let reservation = gate.reserve() else { rateLimited = true; break }
+            let leaseID = UUID().uuidString.lowercased()
+            do {
+                _ = try TaskStore.claimForDispatch(
+                    id: task.id, expectedRevision: task.rev,
+                    coordinatorPID: ProcessInfo.processInfo.processIdentifier,
+                    snapshotID: snapshot.id,
+                    quotaReservationID: reservation.identifier,
+                    leaseID: leaseID)
+            } catch {
+                gate.refund(reservation)
+                print(Ansi.yellow("  跳过已变化任务 \(task.id)："
+                    + error.localizedDescription))
+                continue
+            }
+            let logURL = workerLogRoot.appendingPathComponent("\(task.id).log")
+            do {
+                let launched = try executorLauncher.launch(DetachedExecutorSpec(
+                    taskID: task.id, repo: task.repo, leaseID: leaseID,
+                    executable: workerBinary.path, logPath: logURL.path))
+                if launched {
+                    launchedAny = true
+                    rateReservations[task.id] = reservation
+                    observedExecutors.insert(task.id)
+                    print("\n" + Ansi.cyan("[\(Format.dateTime(Date()))] 启动独立执行器 ")
+                        + task.id + Ansi.dim("  "
+                            + URL(fileURLWithPath: task.repo).lastPathComponent
+                            + " · launchd job · 上限 \(workerSlots)"))
+                } else {
+                    gate.refund(reservation)
+                    _ = try? TaskStore.releaseDispatchLease(
+                        id: task.id, leaseID: leaseID,
+                        reason: "执行槽未启动，释放派发租约")
+                }
+            } catch {
+                gate.refund(reservation)
+                do {
+                    _ = try TaskStore.releaseDispatchLease(
+                        id: task.id, leaseID: leaseID,
+                        reason: "子进程启动失败，释放派发租约")
+                } catch {
+                    print(Ansi.red("  释放派发租约失败 \(task.id)："
+                        + error.localizedDescription))
+                }
+                print(Ansi.red("  启动执行槽失败 \(task.id)："
+                    + error.localizedDescription))
+            }
+        }
+        if rateLimited, let next = gate.nextAllowed() {
+            print(Ansi.yellow("[\(Format.dateTime(Date()))] 已达每小时上限 "
+                + "\(policy.maxTasksPerHour) 个，"
+                + Format.duration(next.timeIntervalSinceNow) + "后恢复"))
+            // 不睡：只延后派活，其他维护阶段照常执行。
+            dispatchHoldUntil = next
+        }
+        return launchedAny
+    }
+
+    while true {
+        // 独立 Executor 自己写终态；Coordinator 只观察持久化事实，不再持有
+        // `Process` 对象。换版后的新 Coordinator 也能从同一账本继续观察。
+        let latest = Dictionary(uniqueKeysWithValues: TaskStore.all().map { ($0.id, $0) })
+        _ = executorLauncher.cleanupFinished(tasks: Array(latest.values))
+        for active in DetachedExecutorRegistry.active(tasks: Array(latest.values)) {
+            observedExecutors.insert(active.taskID)
+        }
+        for id in Array(observedExecutors) {
+            guard var task = latest[id] else { continue }
+            let leasePending = task.state == .queued && task.dispatchLeaseID != nil
+                && task.dispatchLeaseExpiresAt.map { $0 > Date() } == true
+            if task.state == .running {
+                if task.runnerPID.map({ kill($0, 0) == 0 }) ?? true { continue }
+                // Executor 异常退出而没来得及写终态：周期内立即回收，不能等到
+                // 下一次 Coordinator 重启才发现一条永久 running。
+                do {
+                    let interrupted = (task.interruptedCount ?? 0) + 1
+                    task = try TaskStore.transition(
+                        id: task.id, expectedRevision: task.rev,
+                        actor: "executor-registry", reason: "回收失去真实进程的独立执行器"
+                    ) { current in
+                        current.runnerPID = nil
+                        current.endedAt = Date()
+                        current.interruptedCount = interrupted
+                        if let platform = current.platform {
+                            current.triedPlatforms.removeAll { $0 == platform }
+                        }
+                        if interrupted <= 2 {
+                            current.state = .queued
+                            current.note = "独立执行器异常退出，未归咎模型，已重新入队"
+                        } else {
+                            current.state = .failed
+                            current.note = "独立执行器已连续异常退出 \(interrupted) 次，停止自动重排"
+                        }
+                    }
+                    for running in WorkAttemptStore.unresolvedRunning(taskID: id) {
+                        var terminal = running
+                        terminal.endedAt = Date()
+                        terminal.outcome = .failed
+                        terminal.failureKind = "interrupted"
+                        terminal.handoffReason = task.note
+                        appendWorkAttempt(terminal)
+                    }
+                    print(Ansi.yellow("  回收独立执行器 \(id)：")
+                        + Ansi.dim(task.note ?? "进程已退出"))
+                } catch {
+                    print(Ansi.yellow("  独立执行器 \(id) 已被并发更新，下一轮重读"))
+                    continue
+                }
+            }
+            if leasePending { continue }
+            observedExecutors.remove(id)
+            let reservation = rateReservations.removeValue(forKey: id)
+            if task.state == .queued {
+                if let reservation { gate.refund(reservation) }
+                taskDispatchHolds[id] = Date().addingTimeInterval(
+                    min(300, policy.tickSeconds * 10))
+                print(Ansi.dim("  独立执行器未调用模型 \(id)：已退回限速槽"))
+            } else {
+                switch task.state {
+                case .done:
+                    consecutiveFailures = 0; ranTotal += 1
+                case .blocked:
+                    consecutiveFailures = 0
+                case .failed:
+                    consecutiveFailures += 1; ranTotal += 1
+                default: break
+                }
+                print(Ansi.dim("  独立执行器收工 \(id) · \(task.state.rawValue)"))
+            }
+        }
+        if consecutiveFailures >= policy.stopAfterConsecutiveFailures,
+           !dispatchStoppedByFailures {
+            dispatchStoppedByFailures = true
+            let msg = "连续失败 \(consecutiveFailures) 次，已停止派新任务；"
+                + "已经在跑的独立执行器会正常收尾。跑 llmq work probe 看看。"
+            print(Ansi.red("\n" + msg))
+            _ = Notifier.feishu(msg, subject: "llmq 循环已停止派活")
+        }
+
+        // Executor 是独立 job；停止/换版 Coordinator 不再等待或终止模型任务。
+        if stopping { break }
+
+        // Agent 注册和咨询执行同样不能寄生在当前任务进程上。注册表让跨机器
+        // 定向有稳定落点；只有事件指定的机器会启动回答 job，避免双机重复扣额度。
+        if Date().timeIntervalSince(lastAgentRegistration) >= 300 {
+            phase("发布 Agent 注册", 5) {
+                do {
+                    try AgentRegistry.publishLocal()
+                    lastAgentRegistration = Date()
+                } catch {
+                    print(Ansi.yellow("  Agent 注册暂未发布：" + error.localizedDescription))
+                }
+            }
+        }
+        phase("派发 Agent 咨询", 5) {
+            let events = CollaborationStore.all()
+            _ = consultationLauncher.cleanupFinished(events: events)
+            let count = consultationLauncher.dispatchPending(
+                events: events, executable: workerBinary.path)
+            if count > 0 { print(Ansi.dim("  已派发 \(count) 条独立 Agent 咨询")) }
+        }
+
         // **家务每轮开头做,不藏在 runOneTask 里。**
         //
         // 控制流 review §2:Housekeeping.roundCheck 全仓库只在 runOneTask 开头
@@ -3615,20 +4367,27 @@ func cmdWorkLoop(_ args: [String]) throws {
         let hk = Housekeeping.roundCheck()
         if let n = hk.note { print(Ansi.yellow("  家务 ") + n) }
         let lowDisk = hk.skipDispatch
-        if Date().timeIntervalSince(lastCollect) >= policy.collectSeconds {
-            phase("采集", 45) { _ = try? LLMQuota.collect() }
-            lastCollect = Date()
+
+        // 一轮只有一个摄入窗口。三个来源共享 20 秒总预算，不能每个各卡
+        // 20 秒后把已有 queued 任务拖一分钟；超时后才到达的新 revision
+        // 自然进入下一轮快照，不允许半轮插队。
+        let intakeDeadline = Date().addingTimeInterval(20)
+        let intakeBudget = {
+            max(0.25, min(20, intakeDeadline.timeIntervalSinceNow))
         }
 
         // 先看看手机往 iCloud 收件箱里丢了什么。
         // 先收答复再取任务：答复会把 blocked 的任务放回 queued，
         // 这一轮就能立刻接上，不用再等一个 tick。
         var answers: [AskIngest.Result] = []
-        phase("收答复", 20) {
+        phase("收答复", intakeBudget()) {
             answers = AskIngest.run(
                 machineID: Paths.machineID(),
                 load: { TaskStore.all() },
-                save: { try TaskStore.append($0) })
+                save: {
+                    _ = try TaskStore.transition(
+                        $0, actor: "ask-ingest", reason: "采纳移动端人工答复")
+                })
         }
         for r in answers {
             let mark = r.accepted ? Ansi.green("  ✓ ") : Ansi.yellow("  ⚠︎ ")
@@ -3637,7 +4396,7 @@ func cmdWorkLoop(_ args: [String]) throws {
                 OfficeLog.record(OfficeEvent(
                     kind: .answered, taskID: r.taskID,
                     detail: "老板回话了，接着干", taskTitle: ""))
-                OfficeLog.publish()
+                ProjectionInvalidation.markDirty()
             }
             if !r.accepted {
                 // 让手机端看得见自己白答了，而不是石沉大海。
@@ -3652,19 +4411,34 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 「我把 MiniMax 调到 40% 了，它怎么还在被派活」是个很自然的疑问，
         // 而答案如果是「你再等 30 秒」，那这个设置看起来就是坏的。
         var intents: [ConfigIntentIngest.Result] = []
-        phase("收配置意图", 20) { intents = ConfigIntentIngest.run() }
+        phase("收配置意图", intakeBudget()) { intents = ConfigIntentIngest.run() }
         for r in intents {
             let mark = r.accepted ? Ansi.green("  ✓ ") : Ansi.yellow("  ⚠︎ ")
             print(mark + "配置 " + Ansi.dim(String(r.id.prefix(8))) + "  " + r.note)
         }
 
+        var incoming: [Inbox.Ingested] = []
+        phase("收远程任务", intakeBudget()) { incoming = Inbox.ingest() }
+        for got in incoming {
+            print("[\(Format.dateTime(Date()))] " + Ansi.green("收到远程任务 ")
+                + got.taskID + Ansi.dim("  来自 " + got.source))
+        }
+
         // 黄金样板落地/质量票可能由后台落地线程完成，不一定经过 runOneTask
         // 的收尾路径。每轮统一对账：视觉否决重开原会话，样板通过才放行
         // fan-out，并立刻重发手机任务板。
+        var qualityReconciliationError: Error?
         phase("质量闭环", 10) {
-            let updates = TaskGraph.reconcile(TaskStore.all())
-            for task in updates { try? TaskStore.append(task) }
-            if !updates.isEmpty { _ = TaskBoardStore.publishNow() }
+            do {
+                _ = try TaskGraph.persistReconciliation(
+                    actor: "work-loop", reason: "每轮质量与任务图统一对账")
+            } catch {
+                qualityReconciliationError = error
+            }
+        }
+        if let qualityReconciliationError {
+            print(Ansi.red("  质量闭环写盘失败：\(qualityReconciliationError.localizedDescription)"))
+            throw qualityReconciliationError
         }
 
         // 落地环节（详见 Review.autoLand 的条件说明）。
@@ -3689,6 +4463,17 @@ func cmdWorkLoop(_ args: [String]) throws {
             }
         }
 
+        // 到这里冻结唯一调度快照并派发一次。后续空窗填活、批准和手机动作
+        // 产生的新任务留到下一 tick；同一轮绝不第二次读取配置后改变选择。
+        let dispatchedThisRound = dispatchReadyTasks(lowDisk: lowDisk)
+
+        // 额度采集不参与本轮任务候选形成，放在派发之后，避免一次慢日志扫描
+        // 延迟已经排队的真实模型进程。
+        if Date().timeIntervalSince(lastCollect) >= policy.collectSeconds {
+            phase("采集", 45) { _ = try? LLMQuota.collect(publishViews: false) }
+            lastCollect = Date()
+        }
+
         // **空窗填活**：窗口快过期还没用够时，主动找个真需求干掉。
         //
         // 实测空窗率 Codex 82%、Kimi 69% —— 钱不是花在干活上浪费的，
@@ -3711,6 +4496,10 @@ func cmdWorkLoop(_ args: [String]) throws {
             let fallback = RepoRegistry.all().first(where: { $0.isDefault })?.localPath
                 ?? RepoRegistry.all().first?.localPath
             guard let repo = hit.repo ?? fallback else { return }
+            let scope = ProjectExecutionScope.current()
+            // `IdleFiller.found` 已按本机作用域筛选；这里仅防止两次读取之间
+            // 用户切换专注项目。静默拒绝，别把未执行候选伪装成项目活动。
+            guard scope.allows(repo) else { return }
             print(Ansi.cyan("  空窗填活 ") + opp.platform.displayName
                   + Ansi.dim("  " + opp.reason))
             // 会对外发布的活，任务描述里就把闸写死 —— 老板要求对外发布必须他点头。
@@ -3722,6 +4511,8 @@ func cmdWorkLoop(_ args: [String]) throws {
                 prompt: prompt, repo: NSString(string: repo).expandingTildeInPath,
                 classify: true, split: false, force: false,
                 origin: hit.projectID.map { "playbook:" + $0 } ?? "idle-filler",
+                idempotencyKey: "idle-filler:\(repo):\(prompt)",
+                source: "idle-filler",
                 preferredPlatform: opp.platform),
                case .single(let t) = outcome {
                 print(Ansi.dim("    已入队 " + t.id))
@@ -3741,7 +4532,7 @@ func cmdWorkLoop(_ args: [String]) throws {
         // git diff / merge-tree，四个仓库十来个分支，一轮就能超过 25 秒 ——
         // 挂在 30 秒的循环里每轮都卡住，实测日志里全是「本轮跳过它」。
         // 收结论是廉价的（读几个小 JSON），保持每轮。
-        phase("同步验收", 90) {
+        phase("收验收动作", 90) {
             // **收结论要在发布之前，而且执行完立刻重发。**
             //
             // 顺序反了的话：手机点了合入 → 本地那行消失 → 15 秒后刷新
@@ -3754,16 +4545,13 @@ func cmdWorkLoop(_ args: [String]) throws {
             }
             // 执行过就必须马上重发，别等 5 分钟节流 —— 那 5 分钟里
             // 手机看到的是已经过时的清单。
-            if !applied.isEmpty || Review.shouldRepublish() {
-                Review.publishDigests()
-            }
         }
 
         // 下发「现在」页 + 收手机点过的动作。
         //
         // 这一层的意义：排序规则、提示语、有哪些按钮，全在 Mac 端决定。
         // 改它们不需要重新上架 —— 而上架一次要走几天审核。
-        phase("下发视图", 60) {
+        phase("收视图动作", 60) {
             // **「现在」和「看板」不下发 —— 它们的原生页更全也更好看。**
             //
             // 这两页迁早了：客户端一见到下发内容就整页交给通用渲染器，
@@ -3777,12 +4565,6 @@ func cmdWorkLoop(_ args: [String]) throws {
             //
             // 少发一个文件，客户端就退回原生画法 —— 这条兜底路本来就是
             // 为这种时刻留的，用它，别等发新包。
-            ViewFeed.publish(ViewFeed.reviewPage())
-            ViewFeed.publish(ViewFeed.blockedPage())
-            ViewFeed.publish(RoadmapPage.page())
-            ViewFeed.publish(ViewFeed.playbookPage())
-            ViewFeed.publish(ViewFeed.collaborationPage())
-            ViewFeed.publishMenu(ViewFeed.menu())
             for inv in ViewFeed.pendingInvocations() {
                 // **试够了就别再试。** 一个必然失败的动作（比如合一条和 main
                 // 有冲突的分支），重试一次和重试三百八十次得到的信息一样多，
@@ -3825,112 +4607,28 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 「跑完了 3 个任务」不发，「有 3 份产出等你验收」才发。
         phase("提醒", 20) { _ = Nudge.run() }
 
-        var incoming: [Inbox.Ingested] = []
-        phase("收远程任务", 20) { incoming = Inbox.ingest() }
-        for got in incoming {
-            print("[\(Format.dateTime(Date()))] " + Ansi.green("收到远程任务 ")
-                + got.taskID + Ansi.dim("  来自 " + got.source))
-        }
-
         // 队列空了先看要不要按主线续活 —— runOneTask 只在有活时才被调,
         // 续活不能藏在它里面(见 refillIfIdle 的说明)。
-        if TaskStore.nextQueued() == nil { refillIfIdle(quiet: true) }
+        if ProjectExecutionScope.current().filter(TaskStore.readyQueue()).isEmpty {
+            refillIfIdle(quiet: true)
+        }
 
-        if TaskStore.nextQueued() != nil, !lowDisk, Date() >= dispatchHoldUntil {
-            if gate.allow() {
-                print("\n" + Ansi.dim("[\(Format.dateTime(Date()))] 取到任务"))
-                let outcome = try runOneTask(dryRun: false, quiet: true)
-                switch outcome {
-                case .succeeded:
-                    consecutiveFailures = 0
-                    ranTotal += 1
-                case .failed:
-                    consecutiveFailures += 1
-                    ranTotal += 1
-                case .noPlatform:
-                    // 所有平台都在冷却或不可用。不算失败 —— 任务还在队列里，
-                    // 等冷却过去自然会跑。但也别急着重试，睡长一点。
-                    //
-                    // **额度槽要退回去**：这一次一个字都没发出去。
-                    // 不退的话，一条跑不了的任务每小时能把 12 个槽全烧光，
-                    // 然后上限把所有真活挡在门外 —— 实测就是这么空转的。
-                    gate.refund()
-                    // 只有真·暂时性的原因才会走到这里 —— 永久性的已经在
-                    // runOneTask 里转成 blocked 了，不再堵队列。
-                    print(Ansi.dim("  暂时没有可用平台（冷却或额度耗尽），等一等"))
-                    // 不睡:只延后派活,末尾刷新/收答复/落地照常每 30s 跑。
-                    dispatchHoldUntil = Date().addingTimeInterval(min(300, policy.tickSeconds * 10))
-                case .blocked:
-                    // 既不算成功也不算失败。而且**立刻去取下一个任务**，
-                    // 不睡一个 tick —— 提问的任务已经不在 queued 里了，
-                    // 这一刻额度槽是空的，睡过去就是白白浪费。
-                    consecutiveFailures = 0
-                    print(Ansi.cyan("  任务在等答复，继续取下一个"))
-                    continue
-                case .noTask:
-                    // **额度槽要退回去 —— 这一次什么都没跑。**
-                    //
-                    // 队列里有任务（外层判过 nextQueued() != nil），但取出来
-                    // 之后前提没就绪（基线还差已完成成果没合、上游没让开），
-                    // 于是一个字都没发出去。闸必须在跑之前判，所以槽已经扣了。
-                    //
-                    // 实测（2026-08-19）：3 条待审分支卡在人工验收上 →
-                    // main 基线落后 13 个文件 → BaselineFreshness 拦住队列里
-                    // 那条证据任务。每一轮取出、扣槽、发现拦着、放回 ——
-                    // 20 分钟把每小时 12 个槽烧光（worker.log 里 12 次
-                    // 「取到任务」、0 个任务创建、0 个完成），
-                    // 然后上限让整台机器空转 40 分钟。
-                    //
-                    // **拦住不等于跑过。** 把「什么都没发生」记成「发生过」，
-                    // 限速就变成了自我封锁。
-                    gate.refund()
-                    break
-                }
-
-                if consecutiveFailures >= policy.stopAfterConsecutiveFailures {
-                    let msg = "连续失败 \(consecutiveFailures) 次，循环已停止。"
-                        + "多半是所有平台都出问题了，跑 llmq work probe 看看。"
-                    print(Ansi.red("\n" + msg))
-                    _ = Notifier.feishu(msg, subject: "llmq 循环已停止")
-                    break
-                }
-            } else if let next = gate.nextAllowed() {
-                print(Ansi.yellow("[\(Format.dateTime(Date()))] 已达每小时上限 "
-                    + "\(policy.maxTasksPerHour) 个，"
-                    + Format.duration(next.timeIntervalSinceNow) + "后恢复"))
-                // 不睡:只延后派活(见 dispatchHoldUntil)。
-                dispatchHoldUntil = next
-            }
-        } else if Date().timeIntervalSince(lastHeartbeat) >= policy.heartbeatSeconds {
+        if !dispatchedThisRound,
+           Date().timeIntervalSince(lastHeartbeat) >= policy.heartbeatSeconds {
             // 空闲时也要偶尔说句话，否则你无法区分"没任务"和"循环挂了"。
             print(Ansi.dim("[\(Format.dateTime(Date()))] 空闲中"
                 + "，本轮已完成 \(ranTotal) 个任务"))
             lastHeartbeat = Date()
         }
 
-        // **每轮都刷新手机看到的一切 —— 哪怕这一轮没派出任何活。**
-        //
-        // 老板 2026-08-23:「手机端显示半小时没有更新状态了」「flint 任务状态
-        // 没有显示」「手机显示啥任务也没有跑」。根子:office.json / 任务板 /
-        // ViewFeed 页面原来只在「派活」和「收工」时更新,而队列全在等前置的
-        // 那一个多小时里,主循环每轮都因 nextQueued()==nil 跳过这些 publish ——
-        // 系统明明在正常运转(在等、在续活、在做家务),手机上却像死了。
-        // 「没派活」不等于「状态不用更新」。这里无条件刷一次,手机最多滞后一个 tick。
-        // 一份实现:定时器和这里走同一套发布器(Showcase.defaultPublishers)。
-        // 抄一份在这里的话,加一页就得记得改两处 —— 这个项目已经因此栽过很多次。
-        Showcase.refresh(force: true)
-
-        // **换二进制只在这里、只在空闲时。**
-        //
-        // runOneTask 是同步的,走到这儿说明本轮的 agent 已经收工;后台落地
-        // (跑测试)还在就再等一轮。退出码 0,launchd KeepAlive 用新二进制拉起。
-        // 别在别处 kickstart:那会把正在跑的 agent 一起杀掉(fa4e5eeb 2026-08-23
-        // 就这么死了两次,每次十几分钟的 Kimi 额度白烧)。
-        if BinarySwap.shouldExit(changed: swapWatch.changed(),
-                                 inFlight: inFlightAgent() != nil || landingInFlight) {
-            print(Ansi.cyan("[\(Format.dateTime(Date()))] 二进制换了,手上没活 —— 退出让 launchd 用新版拉起"))
+        // Executor 是独立 launchd job；控制面换版立即退出，由新 Coordinator
+        // 从持久化 lease/PID 接管观察，不会重复启动或终止真实模型。
+        if BinarySwap.shouldExitCoordinator(changed: swapWatch.changed()) {
+            print(Ansi.cyan("[\(Format.dateTime(Date()))] 控制面二进制换了 —— 独立执行器继续运行，退出加载新版"))
             break
         }
+
+        if dispatchStoppedByFailures { break }
 
         // 分片睡眠，这样收到信号能很快响应，而不用等满一个 tick。
         var slept = 0.0
@@ -4061,7 +4759,7 @@ func cmdRunner(_ args: [String]) throws {
             if !role.note.isEmpty { print(Ansi.dim("            " + role.note)) }
         }
         print("\n" + Ansi.dim("改：llmq runner roles --set qwen --risk normal --title 主力"))
-        print(Ansi.dim("本机不派活给某个：--set claude --mute-here --reason \"这台的 Claude 是控制面\""))
+        print(Ansi.dim("本机不派活给某个：--set codex --mute-here --reason \"这台的 Codex 是控制面\""))
         print(Ansi.dim("难度上限写 auto 表示交回给学习器"))
 
     case "set":
@@ -4253,17 +4951,40 @@ func cmdRepo(_ args: [String]) throws {
         }
         return
     // llmq repo verify <别名> "<命令>" [--timeout 秒]
-    // llmq repo focus <别名> [off] —— 标「持续推进」的仓库,队列空了才续活。
-    // 老板 2026-08-23:「我们应该专注于项目去派活」「不要瞎续活」。
-    // 同时只有一个仓库被 focus:开一个就把别的关掉,不会几个项目一起乱续。
+    // llmq repo focus <别名> [off] —— 本机项目执行硬边界。
+    // 专注后，后台队列、人工恢复和空窗补活都只能启动这个仓库；另一台机器
+    // 有自己的本地作用域，可以同时专注另一个项目。
     case "focus":
-        var all = RepoRegistry.all()
+        let all = RepoRegistry.all()
         let pos = args.dropFirst().filter { !$0.hasPrefix("--") }
         guard let alias = pos.first else {
-            let on = all.filter(\.autoRefill).map(\.alias)
-            print(on.isEmpty ? "当前没有专注的项目（队列空了不会自动续活）"
-                  : "当前专注：" + on.joined(separator: "、"))
-            print(Ansi.dim("  开：llmq repo focus <别名>    关：llmq repo focus <别名> off"))
+            let scope = ProjectExecutionScope.current(repos: all)
+            let on = scope.allowedRepo.flatMap { path in
+                all.first(where: {
+                    URL(fileURLWithPath: NSString(string: $0.localPath)
+                        .expandingTildeInPath).standardizedFileURL.path == path
+                })?.alias
+            }
+            let description = switch scope.mode {
+            case .focused:
+                on.map { "本机专注：" + $0 + "（其他项目禁止自动执行）" }
+                    ?? "本机专注配置缺少项目（已失败关闭）"
+            case .manualOnly: "本机仅手工执行（不自动派发）"
+            case .automaticAll: "本机明确允许自动执行所有项目"
+            }
+            print(description)
+            print(Ansi.dim("  专注：llmq repo focus <别名>  仅手工：focus off  全部：focus all"))
+            return
+        }
+        if alias == "off" {
+            try ProjectExecutionScope.setExecutionMode(.manualOnly)
+            print(Ansi.green("本机已切为仅手工执行")
+                + Ansi.dim("  已排队任务保留，后台不自动启动"))
+            return
+        }
+        if alias == "all" {
+            try ProjectExecutionScope.setExecutionMode(.automaticAll)
+            print(Ansi.yellow("本机已明确允许自动执行所有项目"))
             return
         }
         guard let i = all.firstIndex(where: { $0.alias == alias }) else {
@@ -4271,14 +4992,17 @@ func cmdRepo(_ args: [String]) throws {
         }
         let turnOff = pos.contains("off")
         if turnOff {
-            all[i].autoRefill = false
-            print(Ansi.green("已取消专注 ") + alias + Ansi.dim("  队列空了不再自动续活"))
+            try ProjectExecutionScope.setFocusedRepo(nil)
+            print(Ansi.green("已取消本机专注 ") + alias
+                + Ansi.dim("  不再自动补活；已排队任务仍可手工运行"))
         } else {
-            for j in all.indices { all[j].autoRefill = (j == i) }  // 只留这一个
-            print(Ansi.green("已专注 ") + alias
-                + Ansi.dim("  队列空了会按它的 PLAN.md 续活；其它项目空着不动"))
+            var updated = all
+            updated[i].coordinatorMachineID = Paths.machineID()
+            try RepoRegistry.save(updated)
+            try ProjectExecutionScope.setFocusedRepo(all[i].localPath)
+            print(Ansi.green("本机已专注 ") + alias
+                + Ansi.dim("  本机成为唯一续活协调节点；队列空了按它的 PLAN.md 续活"))
         }
-        try RepoRegistry.save(all)
         return
 
     case "owner":
@@ -5027,7 +5751,47 @@ func cmdPlan(_ args: [String]) throws {
     print("\n" + Ansi.dim("用 llmq plan edit 打开编辑，把各家订阅页面上的实际上限填进 limit 字段。"))
 }
 
-/// 把工作循环装成 launchd 常驻服务。
+/// 独立移动端投影循环。它可以被单独 kill/restart；失败只会让展示变旧，
+/// 不持有任务 lease，也不拥有真实模型进程。
+func cmdWorkProjector(_ args: [String]) throws {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    var interval = Showcase.interval
+    if let i = args.firstIndex(of: "--interval"), i + 1 < args.count,
+       let value = Double(args[i + 1]) {
+        interval = max(10, value)
+    }
+    let lock = SingleInstanceLock(name: "work-projector")
+    guard lock.acquire() else {
+        print(Ansi.red("已经有一个投影器在跑，不重复启动。")); exit(1)
+    }
+    defer { lock.release() }
+    let token = try PublicationGeneration.activate(role: .projector)
+    let swapWatch = BinarySwap.watch()
+    var stopping = false
+    for sig in [SIGTERM, SIGINT] { signal(sig, SIG_IGN) }
+    let signals = [SIGTERM, SIGINT].map { sig -> DispatchSourceSignal in
+        let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+        source.setEventHandler { stopping = true }
+        source.resume()
+        return source
+    }
+    defer { signals.forEach { $0.cancel() } }
+
+    print(Ansi.bold("移动端投影器已启动") + Ansi.dim("  每 \(Int(interval))s 重建共享视图"))
+    var nextScheduled = Date.distantPast
+    while !stopping && token.isCurrent {
+        if ProjectionInvalidation.isDirty || Date() >= nextScheduled {
+            if ProjectorService.publishAll(token: token) {
+                ProjectionInvalidation.clear()
+            }
+            nextScheduled = Date().addingTimeInterval(interval)
+        }
+        if BinarySwap.shouldExitCoordinator(changed: swapWatch.changed()) { break }
+        Thread.sleep(forTimeInterval: 0.5)
+    }
+}
+
+/// 把 Coordinator 与 Projector 装成两个互不牵连的 launchd 常驻服务。
 func cmdInstallLoop() throws {
     let label = "com.llmquotabar.worker"
     guard let exe = Bundle.main.executablePath,
@@ -5038,6 +5802,8 @@ func cmdInstallLoop() throws {
         .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
     try FileManager.default.createDirectory(at: agentsDir, withIntermediateDirectories: true)
     let plistURL = agentsDir.appendingPathComponent("\(label).plist")
+    let projectorLabel = "com.llmquotabar.projector"
+    let projectorPlistURL = agentsDir.appendingPathComponent("\(projectorLabel).plist")
     try Paths.ensureDirectories()
 
     // KeepAlive 让它挂了自动拉起；ThrottleInterval 防止启动失败时疯狂重启。
@@ -5085,14 +5851,48 @@ func cmdInstallLoop() throws {
     """
     try plist.write(to: plistURL, atomically: true, encoding: .utf8)
 
+    let projectorPlist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>Label</key><string>\(projectorLabel)</string>
+      <key>ProgramArguments</key>
+      <array>
+        <string>\(exe)</string>
+        <string>work</string>
+        <string>projector</string>
+      </array>
+      <key>RunAtLoad</key><true/>
+      <key>KeepAlive</key><true/>
+      <key>ThrottleInterval</key><integer>60</integer>
+      <key>LimitLoadToSessionType</key><string>Aqua</string>
+      <key>AssociatedBundleIdentifiers</key>
+      <array><string>com.llmquotabar.menubar</string></array>
+      <key>StandardOutPath</key>
+      <string>\(Paths.appSupport.path)/projector.log</string>
+      <key>StandardErrorPath</key>
+      <string>\(Paths.appSupport.path)/projector.err.log</string>
+    </dict>
+    </plist>
+    """
+    try projectorPlist.write(to: projectorPlistURL, atomically: true, encoding: .utf8)
+
     _ = shell("/bin/launchctl", ["bootout", "gui/\(getuid())/\(label)"])
     let out = shell("/bin/launchctl", ["bootstrap", "gui/\(getuid())", plistURL.path])
+    _ = shell("/bin/launchctl", ["bootout", "gui/\(getuid())/\(projectorLabel)"])
+    let projectorOut = shell(
+        "/bin/launchctl", ["bootstrap", "gui/\(getuid())", projectorPlistURL.path])
 
     print(Ansi.green("工作循环已装为常驻服务"))
     print("  " + plistURL.path.replacingOccurrences(
         of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
+    print("  " + projectorPlistURL.path.replacingOccurrences(
+        of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
     print("  日志  ~/Library/Application Support/LLMQuotaBar/worker.log")
     if !out.isEmpty { print(Ansi.dim("  " + out)) }
+    if !projectorOut.isEmpty { print(Ansi.dim("  " + projectorOut)) }
     print()
     print(Ansi.yellow("装完请立刻验一次：") + "llmq work probe")
     print(Ansi.dim("  launchd 启动的进程没有你终端的上下文，平台凭据不一定拿得到。"))
@@ -6366,31 +7166,17 @@ func inFlightAgent() -> WorkTask? {
 func restartResidentServices() -> [String] {
     let listed = Proc.run("/bin/launchctl", ["list"], cwd: "/tmp", env: [:], timeout: 15)
     var done: [String] = []
+    let legacyInFlight = inFlightAgent().flatMap {
+        DetachedExecutorRegistry.isIndependent($0) ? nil : $0
+    }
 
-    // **有活正在跑就别重启 worker。**
-    //
-    // agent 是 worker 的子进程，踢一下 worker 就把它一起杀了。
-    // 亲身踩到：一个跑了 334 秒的任务被一次 `llmq release publish`
-    // 干掉，孤儿回收把它标成失败 —— 那 334 秒的额度纯粹烧掉了，
-    // 而且图的后续步骤跟着停摆。
-    //
-    // 换二进制本来就不急：worker 每 30 秒取一次任务，
-    // 手上这件干完、下一次自然重启时就换过来了。
-    // 为了早几分钟用上新版本而弄死一个正在跑的任务，是亏的。
-    // **没记 PID 的 running 也算在飞。** 原来 `?? false` —— 任务刚起、
-    // PID 还没落盘的那一小段窗口里，它被当成「没人在跑」，于是这道闸
-    // 形同虚设（2026-08-22 凌晨实测踢死一个刚跑 32 秒的任务）。
-    // 宁可多等一轮：踢晚一点只是新版本晚几分钟生效，踢错一次是烧掉
-    // 一整个任务的额度，还要人来问「任务怎么停了」。
-    let inFlight = inFlightAgent()
-
-    for label in ["com.llmquotabar.cluster", "com.llmquotabar.worker"] {
+    // Coordinator、Projector 都不再持有模型子进程，可以独立热重启。
+    for label in ["com.llmquotabar.cluster", "com.llmquotabar.worker",
+                  "com.llmquotabar.projector"] {
         guard listed.stdout.contains(label) else { continue }
-        if label == "com.llmquotabar.worker", let busy = inFlight {
-            let ran = busy.startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
-            print(Ansi.yellow("没重启 worker：") + Ansi.dim(
-                "\(busy.id) 正在跑（已 \(ran) 秒，\(busy.platform?.displayName ?? "?")）。"
-                + "踢它会把这个 agent 一起杀掉。新二进制等它干完自然生效。"))
+        if label == "com.llmquotabar.worker", let busy = legacyInFlight {
+            print(Ansi.yellow("没重启旧版 worker：") + Ansi.dim(
+                "\(busy.id) 仍由旧 Coordinator 持有；首次切换等待它自然收尾。"))
             continue
         }
         let r = Proc.run("/bin/launchctl",
@@ -6581,6 +7367,60 @@ func cmdCollaboration(_ args: [String]) throws {
     switch sub {
     case "mcp":
         CollaborationMCP.runStdio()
+    case "install-mcp":
+        let report = try CollaborationMCPInstaller.install()
+        print(Ansi.green("Agent 协作 MCP 已就绪"))
+        print("  Claude：" + report.claude)
+        print("  OpenCode / Ox：" + report.openCode)
+    case "agents":
+        let agents = AgentConsultation.availableAgents()
+        guard !agents.isEmpty else {
+            print(Ansi.yellow("当前集群没有可咨询的 Agent。"))
+            return
+        }
+        for agent in agents {
+            print(agent.runnerID + Ansi.dim("  " + agent.platform.displayName
+                + "  " + agent.machineName + "  " + agent.machineID))
+        }
+    case "ask":
+        let question = try AgentConsultation.submit(.init(
+            id: try need("--id"), project: try need("--project"),
+            taskID: option("--task"), graphID: option("--graph"),
+            senderRunnerID: try need("--sender"),
+            recipientRunnerID: try need("--to"),
+            recipientMachineID: option("--machine"),
+            question: try need("--question"), details: option("--details"),
+            artifacts: options("--artifact")))
+        print(Ansi.green("咨询已投递给 " + (question.recipientRunnerID ?? "目标 Agent")))
+        print(Ansi.dim("接收机器：" + (question.recipientMachineID ?? "未指定")))
+        print("回答将异步进入协作记录；收到后由提问 Agent 确认是否采用。")
+    case "respond":
+        let questionID = rest.first ?? ""
+        guard !questionID.isEmpty else {
+            throw NSError(domain: "llmq collaboration", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "缺少问题 ID"])
+        }
+        do {
+            let answer = try AgentConsultation.respond(questionID: questionID)
+            print(Ansi.green("咨询已回答：") + answer.summary)
+        } catch {
+            // 失败本身也是持久化事实，Coordinator 看见后会停止自动重复消费，
+            // 问题仍保持待处理，供人修复配置后显式重试。
+            if let question = CollaborationStore.all().first(where: {
+                $0.id == questionID && $0.kind == .question
+            }) {
+                _ = try? CollaborationStore.publish(CollaborationEvent(
+                    id: "consultation-failure:" + questionID + ":" + Paths.machineID(),
+                    project: question.project, taskID: question.taskID,
+                    graphID: question.graphID, senderRunnerID: "consultation-executor",
+                    senderMachineID: Paths.machineID(),
+                    recipientRunnerID: question.senderRunnerID, kind: .finding,
+                    summary: "咨询执行失败：" + error.localizedDescription,
+                    replyTo: questionID))
+                _ = ViewFeed.publish(ViewFeed.collaborationPage())
+            }
+            throw error
+        }
     case "list":
         let project = option("--project")
         let events = project.map { path in
@@ -6639,6 +7479,12 @@ func cmdCollaboration(_ args: [String]) throws {
             [--task ID] [--graph ID] [--to ID] [--reply-to ID]
             [--details TEXT] [--branch NAME] [--commit SHA] [--artifact PATH ...]
         llmq collaboration ack EVENT_ID --project PATH --sender ID [--task ID]
+        llmq collaboration agents
+        llmq collaboration ask --id STABLE_ID --project PATH --sender ID --to ID
+            --question TEXT [--machine MACHINE_ID] [--task ID] [--graph ID]
+            [--details TEXT] [--artifact PATH ...]
+        llmq collaboration respond QUESTION_ID   # 内部一次性回答进程
+        llmq collaboration install-mcp
         llmq collaboration mcp
         """)
     }
@@ -7116,8 +7962,8 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
             Review.markDecided(repo: bits[0], branch: bits[1])   // 卡片要消失,两条路同一台账
             return true
         }
-        Review.discard(repo: bits[0], branch: bits[1],
-                       reason: inv.note ?? "手机上丢弃")
+        guard Review.reject(repo: bits[0], branch: bits[1],
+                            reason: inv.note ?? "手机上拒绝") else { return false }
         Review.markDecided(repo: bits[0], branch: bits[1])
         return true
 
@@ -7132,7 +7978,7 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
     case ("task", "approve"), ("task", "discard"):
         guard parts.count == 3,
               let t = TaskStore.all().last(where: { $0.id == parts[2] }),
-              t.state == .blocked else { return false }
+              t.state == .blocked, t.pausedAt == nil else { return false }
         // **放行 = 提交已审改动,不是重排。**
         //
         // 2026-08-23 复审(第一轮 H3)逮到:原来这里只把 state 改回 .queued,
@@ -7152,8 +7998,14 @@ func runInvocation(_ inv: ViewFeed.Invocation) -> Bool? {
         // 问题文件还挂在 questions/ 里,手机「问题」页照样显示、再答一次就成了
         // stale-ask(「确认了还弹 / 答了白答」)。两个入口必须互相撤销。
         AskStore.retract(taskID: x.id, machine: Paths.machineID())
-        try? TaskStore.append(x)
-        return true
+        do {
+            _ = try TaskStore.transition(
+                x, actor: "mobile-action", reason: "移动端处置高危路径审批")
+            return true
+        } catch {
+            fputs("移动端审批状态写入失败：\(error)\n", stderr)
+            return false
+        }
 
     case ("playbook", "approve"):
         guard parts.count == 3 else { return false }

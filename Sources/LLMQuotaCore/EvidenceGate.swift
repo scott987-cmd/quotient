@@ -272,6 +272,8 @@ public enum EvidenceGate {
                     prompt: evidencePrompt(c), repo: repo,
                     classify: false, split: false,
                     origin: "evidence-gate",
+                idempotencyKey: "evidence:\(c.branch):\(attempts)",
+                    source: "evidence-gate",
                     preferredPlatform: c.platform)
                 switch r {
                 case .duplicate:

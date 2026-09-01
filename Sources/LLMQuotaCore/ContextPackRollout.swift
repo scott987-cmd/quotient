@@ -16,6 +16,9 @@ import Foundation
 ///
 /// 每次派发现读配置，改名单不需要发版。
 public enum ContextPackRollout {
+    private static let document = "context-pack-rollout"
+    private static var loadedRevision: Int?
+    private static var loadedRevisionPath: String?
 
     public enum DispatchMode: String, Sendable, Codable {
         case shadow
@@ -23,7 +26,9 @@ public enum ContextPackRollout {
     }
 
     /// 测试注入口。
-    public static var fileOverride: URL?
+    public static var fileOverride: URL? {
+        didSet { loadedRevision = nil; loadedRevisionPath = nil }
+    }
 
     /// 共享配置目录（本地暂存，由菜单栏 App 镜像进 iCloud），改一台机器、
     /// 全集群生效；iCloud 配置目录不可用时退回 appSupport。
@@ -53,20 +58,29 @@ public enum ContextPackRollout {
     // MARK: - 读写
 
     public static func load() -> Config {
-        guard let data = ICloudSafe.read(file),
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: file)
+        loadedRevision = snapshot.revision
+        loadedRevisionPath = file.standardizedFileURL.path
+        guard let data = snapshot.data,
               let config = try? SnapshotCoding.decoder().decode(Config.self, from: data)
         else { return Config() }
         return config
     }
 
-    public static func save(_ config: Config) throws {
+    public static func save(_ config: Config, expectedRevision: Int? = nil) throws {
         try Paths.ensureDirectories()
         let data = try SnapshotCoding.prettyEncoder().encode(config)
-        guard ICloudSafe.write(data, to: file) else {
-            throw NSError(domain: "ContextPackRollout", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey:
-                            "灰度名单写入失败 —— 配置目录没响应，改动没保存"])
-        }
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: file)
+        let committed = try SharedConfigJournal.commit(
+            document: document, payload: data,
+            expectedRevision: expectedRevision
+                ?? (loadedRevisionPath == file.standardizedFileURL.path ? loadedRevision : nil)
+                ?? snapshot.revision,
+            compatibilityFile: file)
+        loadedRevision = committed
+        loadedRevisionPath = file.standardizedFileURL.path
     }
 
     // MARK: - 判定

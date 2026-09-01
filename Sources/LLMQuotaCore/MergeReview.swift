@@ -36,6 +36,8 @@ import Foundation
 /// 所以这一类要求**两次独立审核都说合入**才放行 —— 不是不信任 agent，
 /// 是这一类的失败会静默地废掉后面所有的把关。
 public enum MergeReview {
+    private static let escalationOriginPrefix = "merge-review-escalation:"
+    private static let remediationMarker = "【终审整改："
 
     /// 审核结论。
     public enum Verdict: String, Sendable {
@@ -79,6 +81,11 @@ public enum MergeReview {
         public var headAt: Date?
         /// 这条分支**要做的事**(来源任务的标题),没有任务记录时为空。
         public var taskTitle: String = ""
+        /// 来源任务的完整目标、非目标和验收范围。
+        ///
+        /// 只传标题会丢掉任务级例外：例如「本轮冻结美术，功能缺陷照常拦，
+        /// 但美术质量不作为本轮阻塞项」。评审随后只能退回仓库通用旧门槛。
+        public var taskContract: String = ""
         /// 分支上相对 main 的全部提交主题(旧→新)。
         ///
         /// 只给 `subject`(= 最后一个提交的主题)是个坑:多提交分支的最后一个
@@ -158,7 +165,8 @@ public enum MergeReview {
                              whyNotMechanical: why.joined(separator: "；"),
                              needed: requiredApprovals(files: item.files),
                              head: item.head, headAt: item.committedAt,
-                             taskTitle: title, commits: commits)
+                             taskTitle: title, taskContract: t.prompt,
+                             commits: commits)
         }
     }
 
@@ -204,6 +212,17 @@ public enum MergeReview {
         return lines.joined(separator: "\n")
     }
 
+    /// 把来源任务的范围契约原样带给评审，避免口头更新只到实现 Agent、
+    /// 评审 Agent 仍按旧的全局规则办事。限制长度只为防止历史反馈无限累积；
+    /// 任务开头的目标/非目标/验收范围会完整保留。
+    static func taskContractSection(_ c: Candidate) -> String {
+        let raw = c.taskContract.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return "（来源任务没有记录专属契约）" }
+        let limit = 12_000
+        if raw.count <= limit { return raw }
+        return String(raw.prefix(limit)) + "\n…（仅截断更早轮次累积的尾部历史）"
+    }
+
     public static func reviewPrompt(_ c: Candidate) -> String {
         var s = """
         【审查·合入】分支 \(c.branch) 的改动能不能合进 main。
@@ -212,11 +231,19 @@ public enum MergeReview {
         \(describe(c))
         机器不敢自己拿主意的原因：\(c.whyNotMechanical)
 
-        **先把全量改动自己拉出来看**：`git diff main...\(c.branch)`（或逐文件
-        `git show`）。任务附带的摘要和内联 diff 可能被截断——「截断看不到」
-        **不是**否决理由；看不到就自己去看，仓库就在手边。结论只能建立在
-        你真正核过的内容上：确认过没问题就合，确认有问题就说清是哪一行；
-        不许因为「没看全」就保守地判不合入，那会把好产出堵在门外一整夜。
+        ## 本次任务专属评审契约
+        \(taskContractSection(c))
+
+        ## 规则优先级
+        - 不弄虚作假、安全和离线边界始终生效，任务不能覆盖。
+        - 其余范围与质量门槛按「本次任务专属契约 > 当前阶段契约 > 仓库通用
+          QUALITY」执行。通用规则不得扩大本次明确写出的验收范围。
+        - 本次明确列为非目标的质量，不得单独作为不合入理由；但实际修改了
+          冻结目录、破坏既有功能或与交付声明矛盾，仍是本次改动自身的问题。
+
+        MiniMax 评审通道没有仓库终端权限；驱动会内联项目规则和待审 diff。
+        只能依据实际收到的材料下结论。材料若截断，「看不到」不是否决理由，
+        更不能猜；只报告已核实事实，完整仓库核验交给后续架构复核。
 
         """
         if c.needed > 1 {
@@ -302,9 +329,10 @@ public enum MergeReview {
     public static func hasPendingReview(branch: String, head: String,
                                         tasks: [WorkTask]) -> Bool {
         tasks.contains { t in
-            (t.state == .queued || t.state == .running)
-                && isMergeReviewPrompt(t.prompt, of: branch)
-                && reviewedHead(in: t.prompt) == head
+            guard t.state == .queued || t.state == .running else { return false }
+            return (isMergeReviewPrompt(t.prompt, of: branch)
+                        && reviewedHead(in: t.prompt) == head)
+                || t.origin == escalationOrigin(branch: branch, head: head)
         }
     }
 
@@ -337,11 +365,37 @@ public enum MergeReview {
                 continue
             }
             if exhausted(attempts: done.attempts, needed: c.needed) {
-                out.append(Outcome(
-                    branch: c.branch, action: "放弃审核",
-                    note: "派了 \(done.attempts) 次都没读出结论"
-                        + "（只拿到 \(done.approvals)/\(c.needed) 票）——"
-                        + "不再重试，留给人工处置"))
+                let origin = escalationOrigin(branch: c.branch, head: c.head)
+                if tasks.contains(where: { $0.origin == origin && $0.discardedAt == nil }) {
+                    out.append(Outcome(
+                        branch: c.branch, action: "等架构师终审",
+                        note: "普通审核已到上限；同提交的唯一 Codex 终审票正在处理"))
+                    continue
+                }
+                do {
+                    let result = try TaskIntake.enqueue(
+                        prompt: escalationPrompt(c, attempts: done.attempts,
+                                                 approvals: done.approvals),
+                        repo: repo, classify: false, split: false, force: true,
+                        origin: origin,
+                        idempotencyKey: origin,
+                        source: "merge-review-escalation",
+                        preferredPlatform: AgentRoles.architectPlatform())
+                    switch result {
+                    case .duplicate:
+                        out.append(Outcome(branch: c.branch, action: "等架构师终审",
+                                           note: "同提交的 Codex 终审票已经存在"))
+                    default:
+                        out.append(Outcome(
+                            branch: c.branch, action: "升级架构终审",
+                            note: "派了 \(done.attempts) 次仍只有 "
+                                + "\(done.approvals)/\(c.needed) 票；已收口为一张 Codex 终审票",
+                            enqueued: true))
+                    }
+                } catch {
+                    out.append(Outcome(branch: c.branch, action: "架构升级失败",
+                                       note: error.localizedDescription))
+                }
                 continue
             }
             if hasPendingReview(branch: c.branch, head: c.head, tasks: tasks) {
@@ -361,7 +415,9 @@ public enum MergeReview {
                     // 判重(同分支同提交在队)。模糊查重对模板化的审核提示词
                     // 必然误判 —— 它把别的分支的审核当成了重复(2026-08-21)。
                     force: true,
-                    origin: "merge-review")
+                    origin: "merge-review",
+                    idempotencyKey: "merge-review:\(c.branch):\(c.head):\(done.attempts)",
+                    source: "merge-review")
                 switch r {
                 case .duplicate:
                     continue
@@ -478,7 +534,281 @@ public enum MergeReview {
             case nil: break   // 结论读不出来 —— 不算票，也不算否
             }
         }
+        // 普通评审达到上限后只生成一张 Codex 架构终审票。它是收口裁决，
+        // 同意即满足最多两票的机械门槛，拒绝即终局；不会再生成第七、第八份
+        // 内容相同的评审任务。
+        if let head,
+           let escalation = tasks.last(where: {
+               $0.origin == escalationOrigin(branch: branch, head: head)
+                   && $0.discardedAt == nil
+           }), escalation.state == .done {
+            let text = escalation.outputs.joined(separator: "\n")
+                + "\n" + (escalation.note ?? "")
+            switch parseVerdict(text) {
+            case .land: approvals = max(approvals, 2)
+            case .reject: rejected = true
+            case nil: break
+            }
+        }
         return (approvals, rejected, attempts, inconclusive)
+    }
+
+    static func escalationOrigin(branch: String, head: String) -> String {
+        escalationOriginPrefix + branch + ":" + head
+    }
+
+    /// 唯一架构终审拒绝的是当前提交时，恢复原实现任务继续整改。
+    ///
+    /// 不另造任务：原 ID、分支、Owner 和 runner 会话都保留。终审票 ID 复用
+    /// 现有质量整改幂等键，保证同一裁决只重开一次；新提交会产生新的 head，
+    /// 后续审核自然进入下一轮，而不是对旧提交重复消耗。
+    public static func reconcileRemediation(_ tasks: [WorkTask],
+                                             now: Date = Date()) -> [WorkTask] {
+        let upheld = tasks.filter { review in
+            guard review.origin == "merge-review", review.state == .done,
+                  review.discardedAt == nil,
+                  ArchitectReview.isNegative(review),
+                  ArchitectReview.decision(for: review, tasks: tasks) == .uphold,
+                  let branch = TaskKind.boundBranch(review.prompt),
+                  let head = reviewedHead(in: review.prompt) else { return false }
+            return !branch.isEmpty && !head.isEmpty
+        }.sorted { ($0.endedAt ?? $0.createdAt) < ($1.endedAt ?? $1.createdAt) }
+        let rejected = tasks.filter { task in
+            guard task.state == .done, task.discardedAt == nil,
+                  task.origin?.hasPrefix(escalationOriginPrefix) == true else {
+                return false
+            }
+            return parseVerdict((task.outputs + [task.note ?? ""])
+                .joined(separator: "\n")) == .reject
+        }.sorted { ($0.endedAt ?? $0.createdAt) < ($1.endedAt ?? $1.createdAt) }
+        var updates: [String: WorkTask] = [:]
+
+        // 2026-08-31 之前，合入代码拒绝复用了视觉整改的计数器。第二次代码
+        // 审核不通过会把功能任务误报成“黄金样板连续不收敛”，并派一张完全
+        // 无关的 Blender/骨骼架构票。只纠偏能由结构化关联证明的记录；人工
+        // 暂停和真正的视觉连续失败绝不能在这里被解冻。
+        for source in tasks where source.pausedAt != nil
+            && source.architectureReviewRequestedAt != nil {
+            guard let reviewID = source.visualRemediationReviewID,
+                  let review = tasks.first(where: {
+                      $0.id == reviewID && $0.origin == "merge-review"
+                  }),
+                  ArchitectReview.decision(for: review, tasks: tasks) == .uphold,
+                  let branch = TaskKind.boundBranch(review.prompt),
+                  let head = reviewedHead(in: review.prompt),
+                  source.branch == branch,
+                  branchIsStillAtReviewedHead(repo: review.repo, branch: branch,
+                                              head: head) else { continue }
+
+            var resumed = TaskPause.resume(
+                source,
+                reason: "已纠正合入代码拒绝被误计为视觉不收敛；沿用原 Owner、分支和会话继续整改（\(reviewID)）",
+                now: now)
+            resumed.qualityRejectionCount = 0
+            resumed.preferredPlatform = resumed.ownerPlatform ?? resumed.platform
+            updates[resumed.id] = resumed
+
+            let obsoletePrefix = QualityArchitectureReview.originPrefix
+                + source.id + ":"
+            for task in tasks where task.origin?.hasPrefix(obsoletePrefix) == true
+                && task.state != .running && task.discardedAt == nil {
+                var obsolete = task
+                obsolete.state = .failed
+                obsolete.endedAt = now
+                obsolete.runnerPID = nil
+                obsolete.discardedAt = now
+                obsolete.discardReason = "误把合入代码拒绝计为视觉不收敛，架构票已撤销"
+                obsolete.note = "错误派生的黄金样板架构票已撤销；原任务继续由原 Owner 整改代码"
+                updates[obsolete.id] = obsolete
+            }
+        }
+
+        // 普通 MiniMax 合入否决经 Codex 维持后，也必须回到原实现任务。
+        // 旧状态机只处理下面的 `merge-review-escalation:`，现场因此出现：
+        // Codex 已确认代码缺陷，来源任务仍是 done，随后又错误派出视觉票；
+        // 视觉票一停，整个分支就再也没有 owner 可运行。
+        for review in upheld {
+            guard let branch = TaskKind.boundBranch(review.prompt),
+                  let head = reviewedHead(in: review.prompt),
+                  var source = sourceTask(branch: branch, repo: review.repo,
+                                          tasks: tasks) else { continue }
+            guard source.state == .done || source.state == .failed else { continue }
+            if source.state == .failed, source.terminalFailureKind != .qualityGate {
+                continue
+            }
+            if source.visualRemediationReviewID == review.id { continue }
+            if let handledID = source.visualRemediationReviewID,
+               let handled = tasks.first(where: { $0.id == handledID }),
+               (handled.endedAt ?? handled.createdAt) >= (review.endedAt ?? review.createdAt) {
+                continue
+            }
+            guard branchIsStillAtReviewedHead(repo: review.repo, branch: branch,
+                                              head: head) else { continue }
+
+            let detail = architectRemediationDetail(review, tasks: tasks)
+            let compact = VisualQualityGate.compactRemediationPrompt(source.prompt)
+            let marker = "【合入复核整改："
+            let base = compact.range(of: marker).map {
+                compact[..<$0.lowerBound]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } ?? compact
+            source = Review.requeuedAfterHumanRejection(
+                source, reason: detail, head: head,
+                countsTowardVisualQualityLimit: false, now: now)
+            source.prompt = base + """
+
+
+            【合入复核整改：\(review.id)｜保持原 Owner、分支和会话】
+            MiniMax 对分支 \(branch) 提交 \(head) 的合入否决，已经由 Codex
+            架构师复核并维持。代码合入门尚未通过，先修下面已核实的阻塞项；
+            保留任务专属范围和已完成成果，不得扩大范围、从头重做，亦不得
+            修改、绕过或放宽质量门槛。产生新提交后再进入合入与视觉验收：
+
+            \(detail)
+            """
+            source.visualRemediationReviewID = review.id
+            if source.pausedAt == nil {
+                let who = source.ownerRunnerID
+                    ?? source.ownerPlatform?.displayName
+                    ?? source.platform?.displayName ?? "原 Agent"
+                source.note = "合入拒绝经架构师确认，已交回 \(who) 的同一任务整改（\(review.id)）"
+            }
+            updates[source.id] = source
+        }
+
+        for review in rejected {
+            guard let target = escalationTarget(review.origin),
+                  var source = sourceTask(
+                    branch: target.branch, repo: review.repo, tasks: tasks) else {
+                continue
+            }
+            guard source.state == .done || source.state == .failed else { continue }
+            if source.state == .failed, source.terminalFailureKind != .qualityGate {
+                continue
+            }
+            if source.visualRemediationReviewID == review.id { continue }
+            if let handledID = source.visualRemediationReviewID,
+               let handled = tasks.first(where: { $0.id == handledID }),
+               (handled.endedAt ?? handled.createdAt) >= (review.endedAt ?? review.createdAt) {
+                continue
+            }
+            // 先做纯内存幂等/时序判断，再查 Git。否则历史终审票会在每轮
+            // TaskGraph 对账时各跑一次 rev-parse，队列越久控制面越慢。
+            guard branchIsStillAtReviewedHead(
+                repo: review.repo, branch: target.branch, head: target.head) else {
+                continue
+            }
+
+            let detail = remediationDetail(review)
+            let compact = VisualQualityGate.compactRemediationPrompt(source.prompt)
+            let base = compact.range(of: remediationMarker).map {
+                compact[..<$0.lowerBound]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } ?? compact
+            source.prompt = base
+            source = Review.requeuedAfterHumanRejection(
+                source, reason: detail, head: target.head,
+                countsTowardVisualQualityLimit: false, now: now)
+            // 上面的 helper 负责统一重置执行态和质量不收敛上限；它的提示词
+            // 面向人工拒绝，这里替换成真实的 Codex 终审来源，不能伪称用户反馈。
+            source.prompt = base + """
+
+
+            【终审整改：\(review.id)｜保持原 Owner、分支和会话】
+            Codex 唯一终审拒绝了分支 \(target.branch) 的提交 \(target.head)。
+            这不是新项目；先保留终审已确认有效的成果，只修下面明确阻塞项，
+            产生新提交后再走一次正常验收。不得修改、绕过或放宽质量门槛：
+
+            \(detail)
+            """
+            source.visualRemediationReviewID = review.id
+            if source.pausedAt == nil {
+                let who = source.ownerRunnerID
+                    ?? source.ownerPlatform?.displayName
+                    ?? source.platform?.displayName ?? "原 Agent"
+                source.note = "Codex 终审不合入，已交回 \(who) 的同一任务整改（\(review.id)）"
+            }
+            updates[source.id] = source
+        }
+        return updates.values.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    private static func architectRemediationDetail(_ review: WorkTask,
+                                                    tasks: [WorkTask]) -> String {
+        let exactOrigin = "architect-review:" + review.id
+        let architects = tasks.filter {
+            $0.origin == exactOrigin && $0.state == .done && $0.discardedAt == nil
+        }
+        let lines = architects.flatMap(\.outputs).filter {
+            !$0.contains("**结论**") && !$0.contains("完整复核报告已写入")
+        }
+        let detail = lines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detail.isEmpty { return String(detail.prefix(12_000)) }
+        return remediationDetail(review)
+    }
+
+    private static func escalationTarget(_ origin: String?)
+        -> (branch: String, head: String)? {
+        guard let origin, origin.hasPrefix(escalationOriginPrefix) else { return nil }
+        let value = origin.dropFirst(escalationOriginPrefix.count)
+        guard let separator = value.lastIndex(of: ":") else { return nil }
+        let branch = String(value[..<separator])
+        let head = String(value[value.index(after: separator)...])
+        return branch.isEmpty || head.isEmpty ? nil : (branch, head)
+    }
+
+    private static func sourceTask(branch: String, repo: String,
+                                   tasks: [WorkTask]) -> WorkTask? {
+        let id = String(branch.split(separator: "/").last ?? "")
+        let matching = tasks.filter {
+            $0.repo == repo && !TaskKind.isReview($0.prompt)
+                && ($0.id == id || $0.branch == branch)
+        }
+        return matching.first(where: { $0.id == id })
+            ?? matching.max { $0.createdAt < $1.createdAt }
+    }
+
+    private static func branchIsStillAtReviewedHead(repo: String, branch: String,
+                                                     head: String) -> Bool {
+        let result = GitWorkspace.git(["rev-parse", "\(branch)^{commit}"],
+                                      in: repo, timeout: 3)
+        let current = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.exitCode == 0, !current.isEmpty else { return false }
+        return current.hasPrefix(head) || head.hasPrefix(current)
+    }
+
+    private static func remediationDetail(_ review: WorkTask) -> String {
+        let lines = review.outputs.filter {
+            !$0.contains("ARCH-MERGE-") && !$0.contains("**结论**")
+        }
+        let detail = lines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detail.isEmpty { return String(detail.prefix(12_000)) }
+        return "终审判定当前提交未达到合入条件；先读取现有终审报告，"
+            + "逐项修复后提交新版本，不要重复提交同一 HEAD。"
+    }
+
+    static func escalationPrompt(_ candidate: Candidate, attempts: Int,
+                                 approvals: Int) -> String {
+        """
+        【架构复核】合入审核已到自动重试上限，请对同一提交做唯一终审。
+
+        目标分支：\(candidate.branch)
+        目标提交：\(candidate.head)
+        普通审核：已派 \(attempts) 次，只取得 \(approvals)/\(candidate.needed) 票
+        机械系统不敢直接合入的原因：\(candidate.whyNotMechanical)
+
+        本次任务专属契约（范围优先于仓库通用质量门槛）：
+        \(taskContractSection(candidate))
+
+        必须先读取 `git diff main...\(candidate.branch)`、完整提交历史和现有
+        reviews/ 报告，能跑验证就实跑。你只负责裁决，不接管实现、不修改功能代码。
+        把完整依据写入 reviews/ARCH-MERGE-\(candidate.head).md，并在输出最后一行
+        原样回显且只能二选一：
+        **结论**：合入
+        **结论**：不合入
+        """
     }
 
     /// 这条分支的 agent 审核过了没有 —— 给 autoland 用。

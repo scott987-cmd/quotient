@@ -208,6 +208,8 @@ public enum StaleBranch {
                     // 精确判重已在上面做过；通用模糊查重必然误判模板，跳过它。
                     force: true,
                     origin: "stale-branch",
+                idempotencyKey: "stale-branch:\(c.branch):\(c.commitsBehind)",
+                    source: "stale-branch",
                     preferredPlatform: c.platform)
                 switch r {
                 case .duplicate:

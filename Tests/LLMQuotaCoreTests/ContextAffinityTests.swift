@@ -2,6 +2,16 @@ import XCTest
 @testable import LLMQuotaCore
 
 final class ContextAffinityTests: XCTestCase {
+    func test恢复中的上下文超限会作废旧会话() {
+        let error = "ellm.BadRequestError: context window exceeded"
+        XCTAssertTrue(GraphSession.shouldInvalidate(
+            output: error, timedOut: false, wasResuming: true))
+        XCTAssertFalse(GraphSession.shouldInvalidate(
+            output: error, timedOut: false, wasResuming: false))
+        XCTAssertFalse(GraphSession.shouldInvalidate(
+            output: error, timedOut: true, wasResuming: true))
+    }
+
     private var scratch: URL!
 
     override func setUp() {
@@ -15,6 +25,7 @@ final class ContextAffinityTests: XCTestCase {
     }
 
     override func tearDown() {
+        MiniMaxCodeRunner.configPathOverride = nil
         GraphSession.fileOverride = nil
         WorkAttemptStore.fileOverride = nil
         Paths.appSupportOverride = nil
@@ -31,7 +42,28 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertEqual(KimiRunner().sessionSupport, .projectLatest)
         XCTAssertEqual(CodexRunner().sessionSupport, .projectLatest)
         XCTAssertEqual(OpenCodeRunner().sessionSupport, .projectLatest)
+        XCTAssertEqual(MiniMaxCodeRunner().sessionSupport, .stableID)
         XCTAssertNotEqual(MiniMaxMediaRunner().runnerID, MiniMaxReviewRunner().runnerID)
+    }
+
+    func testMiniMaxCodeUsesTokenPlanEndpointAndClaudeToolShell() throws {
+        let config = scratch.appendingPathComponent("mmx.json")
+        try Data(#"{"region":"cn","api_key":"test-key"}"#.utf8)
+            .write(to: config)
+        MiniMaxCodeRunner.configPathOverride = config.path
+
+        let command = MiniMaxCodeRunner().command(
+            prompt: "继续", cwd: "/tmp/flint", session: .create("session-1"))
+
+        XCTAssertEqual(command.env["ANTHROPIC_BASE_URL"],
+                       "https://api.minimaxi.com/anthropic")
+        XCTAssertEqual(command.env["ANTHROPIC_AUTH_TOKEN"], "test-key")
+        XCTAssertEqual(command.env["ANTHROPIC_API_KEY"], "")
+        XCTAssertTrue(command.args.contains("MiniMax-M3"))
+        XCTAssertTrue(command.args.contains("--session-id"))
+        XCTAssertTrue(command.args.contains("session-1"))
+        XCTAssertTrue(MiniMaxCodeRunner().canReadFiles)
+        XCTAssertTrue(MiniMaxCodeRunner().canEdit)
     }
 
     func testStableSessionsAreProjectScopedWithinTheAgentWorkspace() {
@@ -109,6 +141,28 @@ final class ContextAffinityTests: XCTestCase {
             workspace: "/tmp/flint-kimi"), .projectResume)
     }
 
+    func testResetSessionAlsoRemovesLegacySourceSoItCannotResurrect() throws {
+        let context = GraphSession.Context(
+            taskID: "takeover", graphID: nil, capability: .coding,
+            runnerID: "opencode.volcark.code", machineID: "machine")
+        let legacy = ["repo:/tmp/flint|volcark": "old-project-marker"]
+        try JSONEncoder().encode(legacy).write(to: GraphSession.fileOverride!)
+        GraphSession.migrateLegacyProject(
+            context: context, support: .projectLatest,
+            workspace: "/tmp/flint-volcark", repo: "/tmp/flint", platform: .volcark)
+
+        GraphSession.forget(
+            context: context, workspace: "/tmp/flint-volcark",
+            repo: "/tmp/flint", platform: .volcark)
+        GraphSession.migrateLegacyProject(
+            context: context, support: .projectLatest,
+            workspace: "/tmp/flint-volcark", repo: "/tmp/flint", platform: .volcark)
+
+        XCTAssertEqual(GraphSession.mode(
+            context: context, support: .projectLatest,
+            workspace: "/tmp/flint-volcark"), .fresh)
+    }
+
     func testQwenUsesProjectResumeOnlyWhenRequested() {
         let fresh = QwenRunner().command(prompt: "p", cwd: "/tmp", session: .fresh).args
         let resume = QwenRunner().command(
@@ -130,7 +184,8 @@ final class ContextAffinityTests: XCTestCase {
         let resume = CodexRunner().command(
             prompt: "p", cwd: "/tmp", session: .projectResume).args
         XCTAssertFalse(fresh.contains("resume"))
-        XCTAssertTrue(resume.starts(with: ["exec", "resume", "--last"]))
+        XCTAssertTrue(resume.starts(with: ["exec", "--approve-for-me", "resume", "--last"]),
+                      "exec 级选项必须放在 resume 子命令前；resume 自己不认识该选项")
     }
 
     func testOpenCodeUsesProjectResumeOnlyWhenRequested() {
@@ -141,27 +196,22 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertTrue(resume.contains("-c"))
     }
 
-    func testOxAlphaRunnerHasIndependentIdentityAndPinnedModel() {
+    func testRetiredOxAlphaRunnerCannotBeCalledOrRegistered() {
         let runner = OpenCodeRunner(platform: .openrouter)
         let command = runner.command(prompt: "继续", cwd: "/tmp", session: .fresh)
         XCTAssertEqual(runner.runnerID, "opencode.openrouter.code")
-        XCTAssertTrue(command.args.contains("openrouter/stealth/ox-alpha"))
-        XCTAssertTrue(RunnerRegistry.all.contains {
-            $0.runnerID == "opencode.openrouter.code" && $0.platform == .openrouter
-        })
+        XCTAssertNil(runner.binaryPath)
+        XCTAssertEqual(command.launchPath, "/usr/bin/false")
+        XCTAssertTrue(command.args.isEmpty)
+        XCTAssertFalse(RunnerRegistry.all.contains { $0.platform == .openrouter })
+        XCTAssertFalse(RunnerRegistry.reasoning.contains { $0.platform == .openrouter })
+        XCTAssertFalse(AgentRoles.defaults().contains { $0.platform == .openrouter })
     }
 
-    /// Ox Alpha 当前的 OpenRouter 通道不接受图片输入。它仍然负责免费的
-    /// 编码工作，但必须把看图留给前置的 MiniMax 视觉票，避免 agent 调用
-    /// Read(image) 后以 400 invalid_request 整轮失败。
-    func testOxCodingPromptForbidsDirectImageReads() {
-        let command = OpenCodeRunner(platform: .openrouter).command(
-            prompt: "修复握枪动作，并查看 /tmp/gripframes/f26.png 验证",
-            cwd: "/tmp")
-        let prompt = command.args.last ?? ""
-        XCTAssertTrue(prompt.contains("不要直接读取图片或视频文件"))
-        XCTAssertTrue(prompt.contains("独立多模态验收"))
-        XCTAssertTrue(prompt.contains("修复握枪动作"), "不得丢失原任务")
+    func testVolcarkRunnerPinsGatewayCodingModel() {
+        let command = OpenCodeRunner(platform: .volcark)
+            .command(prompt: "继续", cwd: "/tmp", session: .fresh)
+        XCTAssertTrue(command.args.contains("gateway/volc-coding"))
     }
 
     func testOtherOpenCodeProvidersDoNotReceiveOxVisionGuard() {
@@ -342,6 +392,62 @@ final class ContextAffinityTests: XCTestCase {
         let decision = WorkScheduler().decide(
             dashboard: dashboard, runners: [Stub()], task: task)
         XCTAssertEqual(decision.pick?.runner.runnerID, "test.qwen.owner")
+    }
+
+    func testSamePlatformRetryPinsLegacyTaskToItsOriginalRunner() throws {
+        struct Stub: AgentRunner {
+            let platform: Platform
+            let runnerID: String
+            let binaryName = "echo"
+            func command(prompt: String, cwd: String)
+                -> (launchPath: String, args: [String], env: [String: String]) {
+                ("/bin/echo", [prompt], [:])
+            }
+        }
+        var task = WorkTask(id: "legacy", prompt: "改玩法代码", repo: "/tmp/repo")
+        task.platform = .kimi
+        task.triedPlatforms = [.kimi]
+        let runners: [AgentRunner] = [
+            Stub(platform: .kimi, runnerID: "kimi.code"),
+            Stub(platform: .minimax, runnerID: "minimax.code"),
+        ]
+
+        let owner = try XCTUnwrap(ContextAffinityPolicy.samePlatformRetryOwner(
+            for: task, runners: runners))
+
+        XCTAssertEqual(owner.runnerID, "kimi.code")
+        XCTAssertEqual(owner.platform, .kimi)
+    }
+
+    func testDifferentOwnerRetryClearsEveryAffinityField() {
+        var task = WorkTask(id: "retry", prompt: "继续实现", repo: "/tmp/repo")
+        task.ownerPlatform = .kimi
+        task.ownerRunnerID = "kimi.code"
+        task.ownerAssignedAt = Date()
+        task.platform = .kimi
+        task.preferredPlatform = .kimi
+        task.triedPlatforms = [.kimi, .qwen]
+
+        ContextAffinityPolicy.prepareForDifferentOwner(task: &task)
+
+        XCTAssertNil(task.ownerPlatform)
+        XCTAssertNil(task.ownerRunnerID)
+        XCTAssertNil(task.ownerAssignedAt)
+        XCTAssertNil(task.platform)
+        XCTAssertNil(task.preferredPlatform)
+        XCTAssertTrue(task.triedPlatforms.isEmpty)
+    }
+
+    func testProcessTreeFindsAllDescendantsWithoutTouchingSiblings() {
+        let parents: [Int32: Int32] = [
+            20: 10, 30: 20, 40: 30,
+            21: 10, 50: 99,
+        ]
+
+        XCTAssertEqual(Proc.descendants(of: 10, parents: parents), [20, 21, 30, 40])
+        XCTAssertFalse(Proc.descendants(of: 10, parents: parents).contains(50))
+        XCTAssertTrue(Proc.descendants(of: 0, parents: parents).isEmpty,
+                      "0 代表进程组，绝不能作为清理根节点")
     }
 
     func testUnknownRunnerMigrationRefusesAmbiguousGuess() {

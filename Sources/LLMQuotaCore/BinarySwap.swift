@@ -60,4 +60,8 @@ public enum BinarySwap {
     public static func shouldExit(changed: Bool, inFlight: Bool) -> Bool {
         changed && !inFlight
     }
+
+    /// Executor 已是独立 launchd job 后，Coordinator/Projector 的换版不再等待
+    /// 模型任务。新 Coordinator 从持久化 lease/PID 接管观察，不会重复启动。
+    public static func shouldExitCoordinator(changed: Bool) -> Bool { changed }
 }

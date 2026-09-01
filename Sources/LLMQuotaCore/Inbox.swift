@@ -61,6 +61,12 @@ public struct RepoAlias: Codable, Sendable {
     /// 别的仓库空着就空着。开:`llmq repo autofill <别名> on`。
     public var autoRefill: Bool = false
 
+    /// 唯一允许为这个项目生成自动续活任务的机器。
+    ///
+    /// iCloud 没有跨机 CAS，不能再用“谁先写时间戳谁赢”冒充租约。指定一个稳定
+    /// machineID 是当前不做跨机执行前提下最小、可审计的单写者规则；缺失时失败关闭。
+    public var coordinatorMachineID: String?
+
     /// 这个仓库的功能实现固定由谁连续负责。
     ///
     /// 只约束普通编码任务；媒体生成、看效果和合入审核仍走各自的能力泳道。
@@ -76,7 +82,7 @@ public struct RepoAlias: Codable, Sendable {
 
     /// 本机上的实际路径。
     public var localPath: String {
-        pathByMachine[Paths.machineName()] ?? path
+        pathByMachine[Paths.machineID()] ?? pathByMachine[Paths.machineName()] ?? path
     }
 
     public init(alias: String, path: String, isDefault: Bool = false,
@@ -99,6 +105,7 @@ public struct RepoAlias: Codable, Sendable {
                                               forKey: .pathByMachine) ?? [:]
         manualReview = try c.decodeIfPresent(Bool.self, forKey: .manualReview) ?? false
         autoRefill = try c.decodeIfPresent(Bool.self, forKey: .autoRefill) ?? false
+        coordinatorMachineID = try c.decodeIfPresent(String.self, forKey: .coordinatorMachineID)
         implementationOwner = try c.decodeIfPresent(Platform.self,
                                                      forKey: .implementationOwner)
         qualityContract = try c.decodeIfPresent(String.self, forKey: .qualityContract)
@@ -161,8 +168,13 @@ public enum Verifier {
 }
 
 public enum RepoRegistry {
+    private static let document = "repos"
+    private static var loadedRevision: Int?
+    private static var loadedRevisionPath: String?
     /// 测试用。
-    public static var fileOverride: URL?
+    public static var fileOverride: URL? {
+        didSet { loadedRevision = nil; loadedRevisionPath = nil }
+    }
 
     /// 放 iCloud 共享配置目录 —— 手机端要用它来列出可选的仓库。
     static var file: URL {
@@ -172,13 +184,17 @@ public enum RepoRegistry {
     }
 
     public static func all() -> [RepoAlias] {
-        guard let data = ICloudSafe.read(file),
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: file)
+        loadedRevision = snapshot.revision
+        loadedRevisionPath = file.standardizedFileURL.path
+        guard let data = snapshot.data,
               let list = try? SnapshotCoding.decoder().decode([RepoAlias].self, from: data)
         else { return [] }
         return list.sorted { $0.alias < $1.alias }
     }
 
-    public static func save(_ list: [RepoAlias]) throws {
+    public static func save(_ list: [RepoAlias], expectedRevision: Int? = nil) throws {
         try Paths.ensureDirectories()
         // **保住老版本不认识的字段。**
         //
@@ -195,7 +211,8 @@ public enum RepoRegistry {
         // 存原始 JSON 做深合并 —— 但那要引入一层通用容器，
         // 对一份十来行的配置不值得。至少把最容易丢的这个保住。
         var merged = list
-        if let old = ICloudSafe.read(file),
+        let snapshot = SharedConfigJournal.snapshot(document: document, compatibilityFile: file)
+        if let old = snapshot.data,
            let prev = try? SnapshotCoding.decoder().decode([RepoAlias].self, from: old) {
             let byAlias = Dictionary(prev.map { ($0.alias, $0) }, uniquingKeysWith: { a, _ in a })
             for i in merged.indices {
@@ -203,18 +220,27 @@ public enum RepoRegistry {
                 for (machine, path) in p.pathByMachine where merged[i].pathByMachine[machine] == nil {
                     merged[i].pathByMachine[machine] = path
                 }
+                if merged[i].coordinatorMachineID == nil {
+                    merged[i].coordinatorMachineID = p.coordinatorMachineID
+                }
             }
         }
         let data = try SnapshotCoding.prettyEncoder().encode(merged)
         // `file` 是 iCloud 配置目录（没有才退回本地），所以这里可能永久阻塞。
-        guard ICloudSafe.write(data, to: file) else {
-            throw NSError(domain: "RepoRegistry", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: "写仓库清单超时 —— iCloud 没响应，改动没保存"])
-        }
+        let committed = try SharedConfigJournal.commit(
+            document: document, payload: data,
+            expectedRevision: expectedRevision
+                ?? (loadedRevisionPath == file.standardizedFileURL.path ? loadedRevision : nil)
+                ?? snapshot.revision,
+            compatibilityFile: file)
+        loadedRevision = committed
+        loadedRevisionPath = file.standardizedFileURL.path
     }
 
     @discardableResult
     public static func add(alias: String, path: String, makeDefault: Bool = false) throws -> RepoAlias {
+        let revision = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: file).revision
         let expanded = NSString(string: path).expandingTildeInPath
         guard GitWorkspace.isRepo(expanded) else {
             throw NSError(domain: "RepoRegistry", code: 1, userInfo: [
@@ -233,9 +259,11 @@ public enum RepoRegistry {
         entry.path = expanded
         entry.isDefault = makeDefault || list.isEmpty
         // 路径按机器记。全局那个 path 只作兜底。
+        entry.pathByMachine[Paths.machineID()] = expanded
+        // 兼容尚未升级、仍按显示名取路径的机器。
         entry.pathByMachine[Paths.machineName()] = expanded
         list.append(entry)
-        try save(list)
+        try save(list, expectedRevision: revision)
         return entry
     }
 
@@ -408,9 +436,7 @@ public enum Inbox {
                 continue
             }
 
-            var task = WorkTask(
-                id: String(UUID().uuidString.prefix(8)).lowercased(),
-                prompt: env.prompt, repo: repo)
+            var task = WorkTask(id: "pending", prompt: env.prompt, repo: repo)
             task.preferredPlatform = env.platform.flatMap(Platform.init(rawValue:))
             task.note = "来自 iCloud 收件箱 · \(url.lastPathComponent)"
             // 手机派来的任务同样要分诊 —— 而且更需要：
@@ -418,7 +444,17 @@ public enum Inbox {
             task.profile = TaskClassifier.classify(
                 prompt: env.prompt, repo: repo,
                 history: TaskStore.all(), dashboard: LLMQuota.dashboard())
-            guard (try? TaskStore.append(task)) != nil else { continue }
+            do {
+                let outcome = try TaskIntake.enqueuePrepared(
+                    task, idempotencyKey: "icloud:" + url.lastPathComponent,
+                    source: "icloud-inbox")
+                if case .single(let saved) = outcome { task = saved }
+            } catch {
+                writeResult(
+                    taskID: task.id, state: "failed",
+                    note: "任务入队写盘失败：\(error.localizedDescription)", prompt: env.prompt)
+                continue
+            }
 
             park(url, to: doneDir, suffix: task.id)
             writeResult(taskID: task.id, state: "queued", note: "已入队", prompt: env.prompt)

@@ -82,6 +82,90 @@ final class AutoLandTests: XCTestCase {
             .stdout.contains("agent/qwen/t1"), "落地后分支该清掉")
     }
 
+    /// 落地不能依赖人正好停在 main。主工作区在另一个分支、甚至有未提交
+    /// 的个人改动时，系统应在隔离工作区推进 main，且不碰当前工作现场。
+    func testSafeDoneBranchLandsWhilePrimaryWorktreeIsOnAnotherDirtyBranch() throws {
+        makeBranch("detached")
+        var task = doneTask("detached")
+        task.branch = "agent/qwen/detached"
+        try TaskStore.append(task)
+
+        git(["checkout", "-b", "codex/current-work"])
+        write("PersonalWIP.swift", "// 尚未提交的个人改动\n")
+
+        let out = Review.autoLand(repo: repo, tasks: [task])
+
+        XCTAssertEqual(out.count, 1, "当前分支不应再阻断独立落地：\(out)")
+        XCTAssertTrue(out.first?.landed == true, out.first?.note ?? "")
+        XCTAssertEqual(git(["branch", "--show-current"]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines), "codex/current-work")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: repo)
+                .appendingPathComponent("PersonalWIP.swift").path),
+            "落地不得改动或清理用户当前工作区")
+        XCTAssertTrue(git(["log", "--oneline", "main"]).stdout.contains("detached 产出"))
+        let saved = try XCTUnwrap(TaskStore.all().first { $0.id == task.id })
+        XCTAssertNotNil(saved.landedAt, "main 真正推进后必须写 landedAt")
+    }
+
+    /// 命令行丢弃要把「删分支」和「写完整终态」分开。过去删分支时先写了
+    /// discardedAt，紧接着完整终态仍拿旧 rev 写，必然被并发保护拒绝：实际
+    /// 已删却报失败，任务还显示 done。分支清理模式不得偷偷碰 TaskStore。
+    func testDiscardBranchCleanupCanDeferDispositionToCaller() throws {
+        makeBranch("discard-once")
+        var task = doneTask("discard-once")
+        task.branch = "agent/qwen/discard-once"
+        try TaskStore.append(task)
+
+        Review.discard(repo: repo, branch: task.branch!, reason: "过期派生任务",
+                       recordDisposition: false)
+
+        XCTAssertFalse(GitWorkspace.branchExists(task.branch!, in: repo))
+        var saved = try XCTUnwrap(TaskStore.all().first { $0.id == task.id })
+        XCTAssertNil(saved.discardedAt, "分支清理不能制造一条半成品任务终态")
+        saved.state = .failed
+        saved.discardedAt = Date()
+        saved.discardReason = "过期派生任务"
+        saved.note = "人工丢弃：过期派生任务"
+        XCTAssertNoThrow(try TaskStore.append(saved))
+        XCTAssertEqual(TaskStore.all().first { $0.id == task.id }?.state, .failed)
+    }
+
+    func testDirectDiscardClearsDeadExecutionState() throws {
+        makeBranch("discard-terminal")
+        var task = doneTask("discard-terminal")
+        task.branch = "agent/qwen/discard-terminal"
+        task.runnerPID = 12345
+        task.terminalFailureKind = .agentFailed
+        task.retryNotBefore = Date().addingTimeInterval(600)
+        try TaskStore.append(task)
+
+        Review.discard(repo: repo, branch: task.branch!, reason: "不再采用")
+
+        let saved = try XCTUnwrap(TaskStore.all().first { $0.id == task.id })
+        XCTAssertNotNil(saved.discardedAt)
+        XCTAssertNil(saved.runnerPID)
+        XCTAssertNil(saved.terminalFailureKind)
+        XCTAssertNil(saved.retryNotBefore)
+    }
+
+    /// 旧版本把“当前不在 main”错误记成永久否决。升级后这类环境性否决
+    /// 必须自动失效，否则代码修好了，现场任务仍会被旧脏数据永久拦住。
+    func testLegacyWrongCheckoutVetoDoesNotBlockLanding() {
+        makeBranch("old-veto")
+        let head = git(["rev-parse", "--short", "agent/qwen/old-veto"]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        Review.setAutoLandVeto(
+            branch: "agent/qwen/old-veto",
+            note: "当前在 codex/work 上，不是 main。先切过去再合。",
+            head: head)
+
+        let out = Review.autoLand(repo: repo, tasks: [doneTask("old-veto")])
+
+        XCTAssertTrue(out.first?.landed == true,
+                      "环境错误不能成为永久代码否决：\(out)")
+    }
+
     /// 高危产出不自动合 —— 高危本来就该人看。
     func testSensitiveTaskIsLeftForHumans() {
         makeBranch("t2")
@@ -185,6 +269,48 @@ final class AutoLandTests: XCTestCase {
         XCTAssertTrue(out.first?.landed == true)
     }
 
+    /// 自动派生的评审报告不能因为文件少，就连续占掉每轮唯一的合入名额。
+    /// 主任务必须先落地；报告随后仍可按普通队列保留和消化。
+    func testSupportingReviewBranchDoesNotBlockPrimaryDelivery() {
+        makeBranch("review", file: "reviews/REVIEW.md")
+        makeBranch("primary", file: "Sources/FeatureA.swift")
+        git(["checkout", "agent/qwen/primary"])
+        write("Sources/FeatureB.swift", "// primary second file\n")
+        git(["add", "."]); git(["commit", "-m", "primary second file"])
+        git(["checkout", "main"])
+
+        var supporting = doneTask("review")
+        supporting.origin = "merge-review"
+        let out = Review.autoLand(
+            repo: repo,
+            tasks: [supporting, doneTask("primary")],
+            maxPerCall: 1)
+
+        XCTAssertEqual(out.first?.branch, "agent/qwen/primary",
+                       "系统附属报告不能挡住真正产出：\(out)")
+        XCTAssertTrue(out.first?.landed == true)
+        XCTAssertTrue(git(["branch", "--list", "agent/qwen/review"]).stdout
+            .contains("agent/qwen/review"), "报告分支应保留到后续轮次")
+    }
+
+    /// worker、命令行和手机触发不能同时对一个仓库跑落地验证。
+    /// 后到者应明确让开，而不是白跑完后才在 update-ref 处发现 main 变了。
+    func testConcurrentLandingRoundIsSkippedBeforeVerification() {
+        makeBranch("concurrent")
+        let lock = SingleInstanceLock(
+            name: Review.landingLockName(repo: repo, base: "main"))
+        XCTAssertTrue(lock.acquire())
+        defer { lock.release() }
+
+        let out = Review.autoLand(repo: repo, tasks: [doneTask("concurrent")])
+
+        XCTAssertEqual(out.count, 1)
+        XCTAssertFalse(out[0].landed)
+        XCTAssertTrue(out[0].note.contains("另一轮落地"), "\(out)")
+        XCTAssertTrue(git(["branch", "--list", "agent/qwen/concurrent"]).stdout
+            .contains("agent/qwen/concurrent"), "让开时不能改分支")
+    }
+
     /// 主仓库有未提交改动 → 整轮跳过，且**不记否决**。
     /// 环境脏是人的状态，不是分支的错；否决记上就再也不自动重试了。
     func testDirtyRepoSkipsRoundWithoutVeto() {
@@ -268,8 +394,18 @@ extension AutoLandTests {
         var entry = RepoAlias(alias: "game", path: repo)
         entry.qualityContract = "QUALITY.md"
         try? RepoRegistry.save([entry])
-        let task = doneTask("t31")
-        let out = Review.autoLand(repo: repo, tasks: [task])
+        var task = doneTask("t31")
+        task.prompt = "冻结美术；本轮只验收功能闭环，不因占位资产否决。"
+        let head = git(["rev-parse", "--short", "agent/qwen/t31"]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var mergeReview = WorkTask(
+            id: "merge-pass",
+            prompt: "【审查·合入】分支 agent/qwen/t31 的改动能不能合进 main。\n"
+                + "被审提交：\(head)", repo: repo)
+        mergeReview.origin = "merge-review"
+        mergeReview.state = .done
+        mergeReview.outputs = ["**结论**：合入"]
+        let out = Review.autoLand(repo: repo, tasks: [task, mergeReview])
 
         XCTAssertTrue(out.isEmpty, "没经过多模态逐帧验收前不能自动落地：\(out)")
         XCTAssertTrue(GitWorkspace.git(
@@ -280,6 +416,27 @@ extension AutoLandTests {
             + "任务=\(TaskStore.all().map { ($0.origin ?? "nil") + ":" + $0.prompt.prefix(20) })")
         XCTAssertEqual(visual?.preferredPlatform, .minimax)
         XCTAssertTrue(visual?.prompt.contains("agent/qwen/t31") == true)
+        XCTAssertTrue(visual?.prompt.contains("冻结美术；本轮只验收功能闭环") == true,
+                      "视觉票必须继承来源任务的专属范围，不能退回旧 QUALITY")
+        XCTAssertTrue(visual?.prompt.contains("来源任务专属契约 >") == true)
+    }
+
+    func testVisualReviewWaitsUntilMergeReviewPasses() {
+        git(["checkout", "-b", "agent/qwen/t31-code-first"])
+        write("Feature.swift", "// visible behavior\n")
+        write("docs/evidence/t31-code-first.mov", "fake-video-bytes")
+        git(["add", "."]); git(["commit", "-m", "visible change"])
+        git(["checkout", "main"])
+
+        var entry = RepoAlias(alias: "game", path: repo)
+        entry.qualityContract = "QUALITY.md"
+        try? RepoRegistry.save([entry])
+        let task = doneTask("t31-code-first")
+
+        _ = Review.autoLand(repo: repo, tasks: [task])
+
+        XCTAssertFalse(TaskStore.all().contains { $0.origin == "visual-quality-review" },
+                       "代码合入复核未通过前不得先烧视觉验收额度")
     }
 
     func testOrdinaryMergeCannotBypassRejectedVisualVerdict() {

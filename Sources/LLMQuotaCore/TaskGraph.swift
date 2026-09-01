@@ -234,10 +234,51 @@ public enum TaskGraph {
     ///
     /// 判据是 `frozenBy` 而不是 `.blocked`：人工闸门拦下的 blocked 也是
     /// blocked，但那是在等人做决定 —— 解冻逻辑碰它就等于替人放行。
-    public static func reconcile(_ all: [WorkTask]) -> [WorkTask] {
+    public static func reconcile(_ all: [WorkTask], now: Date = Date()) -> [WorkTask] {
         var byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var touched: [String: WorkTask] = [:]
         var changed = true
+
+        // 所有派生对账共用一条状态优先级。过去每个 reconciler 都直接覆盖 byID，
+        // 实际语义变成“最后运行的规则获胜”；历史视觉票因此能覆盖刚写下的平台
+        // 失败。这里至少保护真实运行态、较新 revision 和基础设施失败终态。
+        func applyDerived(_ candidate: WorkTask) {
+            if let current = byID[candidate.id] {
+                guard candidate.rev >= current.rev else { return }
+                if current.state == .running && candidate.state != .running { return }
+                if current.state == .failed,
+                   current.terminalFailureKind?.blocksDerivedRequeue == true,
+                   (candidate.state != current.state
+                    || candidate.terminalFailureKind != current.terminalFailureKind) {
+                    return
+                }
+            }
+            byID[candidate.id] = candidate
+            touched[candidate.id] = candidate
+        }
+
+        // 额度失败不是人工重试，也不是视觉整改。冷却到期后只恢复原任务、原
+        // owner 和原分支；质量拒绝计数、上下文与交接证据全部保留。
+        for current in byID.values where current.state == .failed
+            && current.terminalFailureKind == .quotaExhausted
+            && current.pausedAt == nil && current.pendingAsk == nil {
+            guard let retryAt = current.retryNotBefore, retryAt <= now else { continue }
+            var ready = current
+            ready.state = .queued
+            ready.createdAt = now
+            ready.startedAt = nil
+            ready.endedAt = nil
+            ready.exitCode = nil
+            ready.runnerPID = nil
+            ready.terminalFailureKind = nil
+            ready.retryNotBefore = nil
+            if let owner = ready.ownerPlatform ?? ready.platform {
+                ready.triedPlatforms.removeAll { $0 == owner }
+            }
+            ready.note = "额度冷却已到期，沿用原 Owner、分支和上下文重新排队"
+            byID[ready.id] = ready
+            touched[ready.id] = ready
+        }
 
         while changed {
             changed = false
@@ -269,6 +310,7 @@ public enum TaskGraph {
                 if t.state == .queued, let b = blocker, let up = byID[b] {
                     var x = t
                     x.state = .blocked
+                    x.waitReason = .dependency
                     x.frozenBy = b
                     // **两种上游状态的后果完全不同，不能说同一句话。**
                     //
@@ -321,38 +363,88 @@ public enum TaskGraph {
                 if t.state == .blocked, t.frozenBy != nil, blocker == nil {
                     var x = t
                     x.state = .queued
+                    x.waitReason = nil
                     x.frozenBy = nil
                     x.note = "上游恢复了，重新排队"
                     byID[t.id] = x; touched[t.id] = x; changed = true
                 }
             }
         }
+        // 质量连续不收敛后先生成独立的前置架构设计任务。原实现仍保持暂停，
+        // 只有完整报告明确允许恢复时才回到原 Owner。
+        for task in QualityArchitectureReview.reconcile(Array(byID.values)) {
+            applyDerived(task)
+        }
+        // 技术高危路径先进入架构师处置闭环。它必须早于其它质量派生任务，
+        // 让原任务在同一轮就显示“谁正在处理”，而不是停在静态 blocked 标签。
+        for task in TechnicalDisposition.reconcile(Array(byID.values)) {
+            applyDerived(task)
+        }
         // MiniMax 的通过结论直接生效；负面主观结论先生成一条架构复核。
         // 必须排在下面两个整改器前面，让同一轮对账就看见“正在复核”。
         for task in ArchitectReview.reconcile(Array(byID.values)) {
-            byID[task.id] = task
-            touched[task.id] = task
+            applyDerived(task)
+        }
+        // 唯一合入终审拒绝后，恢复原实现任务沿用同一 Owner/分支/会话整改。
+        // 它必须早于视觉整改：终审可能同时汇总视觉、门禁和运行时阻塞项，
+        // 同一轮只应形成一份聚合整改上下文。
+        for task in MergeReview.reconcileRemediation(Array(byID.values)) {
+            applyDerived(task)
         }
         // 合入后审查的确定缺陷经架构师确认后，生成同 owner 的项目续作。
         for task in PostLandRepair.reconcile(Array(byID.values)) {
-            byID[task.id] = task
-            touched[task.id] = task
+            applyDerived(task)
         }
         // 视觉否决先把原实现任务重开，再让黄金样板闸看见它已经回到 queued；
         // 顺序反过来会有一轮短暂把 fan-out 误放出去。
         for task in VisualQualityGate.reconcileRemediation(Array(byID.values)) {
-            byID[task.id] = task
-            touched[task.id] = task
+            applyDerived(task)
         }
         // 生产质量闸和图依赖共用同一条“每轮对账”入口，避免新增一种 blocked
         // 却漏掉 retry / done / worker 启动等恢复路径。
         for task in GoldenSampleGate.reconcile(Array(byID.values)) {
-            byID[task.id] = task
-            touched[task.id] = task
+            applyDerived(task)
         }
         return touched.values.sorted {
             ($0.stepIndex ?? 0, $0.createdAt) < ($1.stepIndex ?? 0, $1.createdAt)
         }
+    }
+
+    /// 重新读取最新任务后计算并持久化整轮对账。并发写冲突时有界重算；调用方
+    /// 不再各自拿一组旧快照逐条 append，导致半轮成功、半轮静默消失。
+    @discardableResult
+    public static func persistReconciliation(
+        actor: String,
+        reason: String,
+        now: Date = Date(),
+        maxAttempts: Int = 3
+    ) throws -> [WorkTask] {
+        var persisted: [String: WorkTask] = [:]
+        let attempts = max(1, maxAttempts)
+        for attempt in 1...attempts {
+            let snapshot = TaskStore.all()
+            let existing = Set(snapshot.map(\.id))
+            let updates = reconcile(snapshot, now: now)
+            do {
+                for update in updates {
+                    let saved: WorkTask
+                    if existing.contains(update.id) {
+                        saved = try TaskStore.transition(
+                            update, actor: actor, reason: reason)
+                    } else {
+                        saved = try TaskStore.create(
+                            update, actor: actor, reason: reason)
+                    }
+                    persisted[saved.id] = saved
+                }
+                return persisted.values.sorted { $0.id < $1.id }
+            } catch let error as StaleWrite {
+                guard attempt < attempts else { throw error }
+            } catch let error as DuplicateTask {
+                guard attempt < attempts else { throw error }
+            }
+        }
+        return persisted.values.sorted { $0.id < $1.id }
     }
 
     /// 旧名字，保留给已有调用点。

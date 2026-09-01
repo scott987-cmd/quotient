@@ -195,6 +195,10 @@ if [ "$INSTALL" -eq 1 ]; then
   # 其实系统一直在跑（2026-08-22 实测两次）。
   if [ -x "$HOME/.local/bin/llmq" ]; then
     "$HOME/.local/bin/llmq" work restart-app || true
+    # 安装只换二进制不等于手机页面已经换版。协作页可能在下一次定时刷新前
+    # 继续保留旧结构，让本机看似修好、手机仍显示旧的散卡。
+    "$HOME/.local/bin/llmq" view collaboration >/dev/null \
+      || echo "   (协作页即时刷新失败，后台会在下一轮重试)"
   else
     open /Applications/"$APP_NAME".app
   fi

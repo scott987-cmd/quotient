@@ -125,6 +125,20 @@ final class MultiMachineDigestTests: XCTestCase {
         XCTAssertTrue(Review.worthWriting(merged: mine, previous: []))
     }
 
+    func testRejectedReminderUsesPublishedDigestWithoutRepositoryScan() {
+        var rejected = digest(repo: "/Users/x/dev/Maw", branch: "agent/kimi/b2")
+        rejected.evidence = ["evidence/frame.png"]
+        rejected.rejected = true
+        var accepted = digest(repo: "/Users/x/dev/Maw", branch: "agent/kimi/c3")
+        accepted.evidence = ["evidence/frame.png"]
+        var noEvidence = digest(repo: "/Users/x/dev/Maw", branch: "agent/kimi/d4")
+        noEvidence.rejected = true
+
+        let got = Review.publishedRejectedWithEvidence([rejected, accepted, noEvidence])
+
+        XCTAssertEqual(got.map(\.branch), ["agent/kimi/b2"])
+    }
+
     // MARK: 每机一份：根治，而不是靠守卫挡
 
     /// **两台机器永远不会写同一个文件。**

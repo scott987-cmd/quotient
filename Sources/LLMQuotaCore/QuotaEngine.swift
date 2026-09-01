@@ -21,13 +21,15 @@ public struct QuotaEngine: Sendable {
     /// - Parameters:
     ///   - tasks: 传 nil 就现读 `TaskStore.all()`。给测试留的注入口 ——
     ///     不注入的话这个函数会去读本机真实的 tasks.jsonl，测不出确定的结果。
-    ///   - machineName / repoAliases: 同理，默认值就是真实环境。
+    ///   - machineID / machineName / repoAliases: 同理，默认值就是真实环境。
     public func buildDashboard(
         snapshots: [MachineSnapshot],
         now: Date = Date(),
         tasks: [WorkTask]? = nil,
+        machineID: String = Paths.machineID(),
         machineName: String = Paths.machineName(),
-        repoAliases: [RepoAlias]? = nil
+        repoAliases: [RepoAlias]? = nil,
+        cooldowns: [Platform: Cooldown]? = nil
     ) -> Dashboard {
         // **同一台机器只留最新的那一份。**
         //
@@ -37,27 +39,35 @@ public struct QuotaEngine: Sendable {
         // 老板 2026-08-23 早看到手机上「好几个 mac mini,有的离线有的正常」,
         // 我逐个删了三轮,每轮都被同步回来。
         //
-        // 与其追着删文件,不如在算看板这一步认账:**按机器名去重,
-        // 只留 generatedAt 最新的那份**。旧身份自然消失,不需要谁去清理,
-        // 也不怕哪个角落又冒出来一份。
-        let deduped = Dictionary(grouping: snapshots, by: \.machineName)
+        // 旧身份由 StaleIdentitySweep 清理；聚合层必须只认稳定 machineID。
+        // 两台机器可以拥有完全相同的显示名，按名字折叠会把其中一台的额度、
+        // 健康和任务状态直接吞掉。
+        let deduped = Dictionary(grouping: snapshots, by: \.machineID)
             .values
             .compactMap { $0.max(by: { $0.generatedAt < $1.generatedAt }) }
-            .sorted { $0.machineName < $1.machineName }
-        let machines = deduped.map {
+            .sorted {
+                $0.machineName == $1.machineName
+                    ? $0.machineID < $1.machineID : $0.machineName < $1.machineName
+            }
+        var machines: [MachineInfo] = deduped.map {
             MachineInfo(
                 machineID: $0.machineID,
                 machineName: $0.machineName,
                 lastSeen: $0.generatedAt,
                 isStale: now.timeIntervalSince($0.generatedAt) > machineStaleAfter
             )
-        }.sorted { $0.machineName < $1.machineName }
+        }
+        machines.sort { lhs, rhs in
+            if lhs.machineName != rhs.machineName { return lhs.machineName < rhs.machineName }
+            return lhs.machineID < rhs.machineID
+        }
 
         var reports: [PlatformReport] = []
         for platform in Platform.allCases {
             guard let plan = config.plan(for: platform), plan.enabled else { continue }
             // 用去重后的 —— 否则旧身份的用量被重复计算,额度百分比虚高。
-            reports.append(buildReport(plan: plan, snapshots: deduped, now: now))
+            reports.append(buildReport(
+                plan: plan, snapshots: deduped, localMachineID: machineID, now: now))
         }
 
         // **从 429 学来的「已打空」盖过本地估算。**
@@ -67,7 +77,9 @@ public struct QuotaEngine: Sendable {
         //（用户原话：「qwen 额度用完了，但是还是显示可调度」）。
         // 冷却台账里 cause=quotaExhausted 且未到期的，注入一条 exhausted
         // 状态置顶：手机、报表、调度器从此看到同一个事实。
-        let cooling = CooldownLedger.active(now: now)
+        // 冷却和 tasks 一样是外部状态：生产默认读真实账本，测试/预览可显式
+        // 注入，避免本机恰好有平台冷却时把额度计算用例污染成两条状态。
+        let cooling = cooldowns ?? CooldownLedger.active(now: now)
         for i in reports.indices {
             guard let cd = cooling[reports[i].platform],
                   cd.cause == .quotaExhausted else { continue }
@@ -94,8 +106,12 @@ public struct QuotaEngine: Sendable {
             from: boardTasks,
             machineName: machineName,
             repoAliases: repoAliases ?? RepoRegistry.all(),
+            platformReports: reports,
             progressByTaskID: tasks == nil
                 ? WorkProgressStore.latestByTaskID(taskIDs: Set(boardTasks.map(\.id))) : [:],
+            // 显式注入 tasks 是测试/离线计算入口，不得再偷偷读取真实机器的
+            // Flint 专注配置；产品采集（tasks == nil）才应用本机作用域。
+            executionScope: tasks == nil ? ProjectExecutionScope.current() : nil,
             now: now)
 
         return Dashboard(generatedAt: now, machines: machines, reports: reports,
@@ -107,23 +123,24 @@ public struct QuotaEngine: Sendable {
     private func buildReport(
         plan: PlatformPlan,
         snapshots: [MachineSnapshot],
+        localMachineID: String,
         now: Date
     ) -> PlatformReport {
         var byMachineBuckets: [String: [UsageBucket]] = [:]
+        var machineLabels: [String: String] = [:]
         var allBuckets: [UsageBucket] = []
         var officials: [OfficialQuota] = []
         var detected = false
         var installed = false
         var lastActivity: Date?
-        var machineNames: [String] = []
 
         for snap in snapshots {
             guard let ps = snap.platforms.first(where: { $0.platform == plan.platform }) else { continue }
             if ps.installed { installed = true }
             guard ps.detected else { continue }
             detected = true
-            machineNames.append(snap.machineName)
-            byMachineBuckets[snap.machineName, default: []].append(contentsOf: ps.buckets)
+            machineLabels[snap.machineID] = snap.machineName
+            byMachineBuckets[snap.machineID, default: []].append(contentsOf: ps.buckets)
             allBuckets.append(contentsOf: ps.buckets)
             officials.append(contentsOf: ps.officialQuotas)
             if let la = ps.lastActivity, lastActivity == nil || la > lastActivity! {
@@ -173,7 +190,8 @@ public struct QuotaEngine: Sendable {
             }
             statuses.append(localStatus(
                 limit: limit, plan: plan,
-                buckets: allBuckets, byMachine: byMachineBuckets, now: now
+                buckets: allBuckets, byMachine: byMachineBuckets,
+                machineLabels: machineLabels, now: now
             ))
         }
 
@@ -193,7 +211,7 @@ public struct QuotaEngine: Sendable {
             .map(\.start).max()
         // 同一件事，但只看**本机**。调度器的「让开」判据要用这个 ——
         // 人在另一台上敲代码，不该让这台的 agent 跟着闲置。
-        let humanLastHere = (byMachineBuckets[Paths.machineName()] ?? [])
+        let humanLastHere = (byMachineBuckets[localMachineID] ?? [])
             .filter { $0.lane != .headless && ($0.requests > 0 || $0.prompts > 0) }
             .map(\.start).max()
 
@@ -213,7 +231,11 @@ public struct QuotaEngine: Sendable {
             enabled: plan.enabled,
             lastHumanActivity: humanLast,
             lastHumanActivityHere: humanLastHere,
-            machines: Array(Set(machineNames)).sorted(),
+            machines: machineLabels.keys.map { id in
+                let name = machineLabels[id] ?? id
+                let duplicate = machineLabels.values.filter { $0 == name }.count > 1
+                return duplicate ? name + " · " + id : name
+            }.sorted(),
             lastActivity: lastActivity,
             statuses: statuses,
             last30dRequests: req30,
@@ -334,6 +356,7 @@ public struct QuotaEngine: Sendable {
         plan: PlatformPlan,
         buckets: [UsageBucket],
         byMachine: [String: [UsageBucket]],
+        machineLabels: [String: String],
         now: Date
     ) -> QuotaStatus {
         // lane 为 nil 表示这条上限不区分额度池；指定了就只算那个池子的用量。
@@ -371,7 +394,7 @@ public struct QuotaEngine: Sendable {
         let used = limit.metric.value(from: inWindow, pricing: plan.pricing)
 
         var machineSplit: [String: Double] = [:]
-        for (name, mb) in byMachine {
+        for (machineID, mb) in byMachine {
             let v = limit.metric.value(
                 from: mb.filter {
                     (limit.lane == nil || $0.lane == limit.lane)
@@ -379,7 +402,12 @@ public struct QuotaEngine: Sendable {
                 },
                 pricing: plan.pricing
             )
-            if v > 0 { machineSplit[name] = v }
+            if v > 0 {
+                let name = machineLabels[machineID] ?? machineID
+                let duplicate = machineLabels.values.filter { $0 == name }.count > 1
+                let label = duplicate ? name + " · " + machineID : name
+                machineSplit[label] = v
+            }
         }
 
         let elapsed: Double

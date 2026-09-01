@@ -106,8 +106,42 @@ public enum CooldownLedger {
     /// - `QuotaEngine.report()` 拿它在额度报告里标注 `cooldownUntil` / `cooldownReason`，
     ///   否则冷却中的平台会显示成"连续空闲"让人误以为只是没派活；
     /// - `llmq work cooldowns` 拿它给用户列出当前冷却表。
-    public static func active(now: Date = Date()) -> [Platform: Cooldown] {
-        load().filter { $0.value.isActive(now: now) }
+    public static func active(now: Date = Date(), config: PlansConfig? = nil)
+        -> [Platform: Cooldown] {
+        var map = load()
+        let plans = config ?? PlansStore.load()
+
+        // 旧记录里 Kimi 明说的是「current 7-day window ends」，但没有给绝对
+        // 时间。旧版一律只冻 5 小时，于是周额度还没恢复，看板却提前撤掉
+        // “已用尽”。只修复仍属于当前周窗的这类记录；跨过窗口后绝不续冻。
+        for (platform, cooldown) in map
+        where cooldown.cause == .quotaExhausted && !cooldown.isActive(now: now) {
+            guard let window = configuredQuotaWindow(
+                platform: platform, detail: cooldown.detail, config: plans, now: now),
+                  cooldown.since >= window.start, cooldown.since < window.end else { continue }
+            var repaired = cooldown
+            repaired.until = window.end
+            map[platform] = repaired
+        }
+        return map.filter { $0.value.isActive(now: now) }
+    }
+
+    /// 只从平台明确说出的窗口类型推断重置时刻。没有窗口提示仍走 5 小时
+    /// 保守兜底，不能把一句含糊的 “next cycle” 擅自解释成周额度。
+    static func configuredQuotaWindow(platform: Platform, detail: String,
+                                      config: PlansConfig, now: Date)
+        -> (start: Date, end: Date)? {
+        let text = detail.lowercased()
+        let weeklyMarkers = ["7-day window", "7 day window", "weekly quota",
+                             "weekly limit", "week window", "每周", "周额度",
+                             "7 天窗口", "七天窗口"]
+        guard weeklyMarkers.contains(where: text.contains),
+              let plan = config.plan(for: platform),
+              let limit = plan.limits.first(where: {
+                  $0.kind == .periodic
+                      && ($0.id == "weekly" || $0.windowMinutes == 10_080)
+              }) else { return nil }
+        return QuotaEngine(config: config).window(for: limit, now: now)
     }
 
     /// 记一次失败，返回这次定下的冷却。
@@ -135,6 +169,11 @@ public enum CooldownLedger {
             until = now.addingTimeInterval(30 * 86400)
         } else if let knownResetAt, knownResetAt > now {
             until = knownResetAt
+        } else if cause == .quotaExhausted,
+                  let window = configuredQuotaWindow(
+                    platform: platform, detail: detail,
+                    config: PlansStore.load(), now: now) {
+            until = window.end
         } else if cause == .quotaExhausted {
             // **额度用尽不做指数退避。**
             //
@@ -142,7 +181,7 @@ public enum CooldownLedger {
             // 额度用尽不满足这个前提：它有确定的恢复时刻，最坏也就是
             // 窗口长度。实测代价 —— strikes 堆到 4 之后 Claude 被冻
             // 1 天 16 小时，而它是 5 小时窗，那 35 小时是白冻的，
-            // 期间所有高危任务（Claude 是本机指挥兼架构师）全线停摆。
+            // 期间所有依赖 Claude 主力开发的高危实现任务全线停摆。
             //
             // 没拿到确切重置时间就按 5 小时保守估：猜早了下次撞 429 再记
             // 一条（而且现在撞顶还会被 QuotaCeiling 采成上限样本，不算白撞），
@@ -224,6 +263,7 @@ public enum CooldownLedger {
         let unambiguous = ["rate limit exceeded", "quota exhausted",
                            "you've reached your usage limit",
                            "you've hit your session limit",
+                           "you've hit your weekly limit",
                            "refreshed in the next cycle", "upgrade your plan",
                            "purchase extra usage", "已达到 5 小时的使用上限"]
         if unambiguous.contains(where: { t.contains($0) }) { return .quotaExhausted }
@@ -238,7 +278,8 @@ public enum CooldownLedger {
         if permanent.contains(where: { t.contains($0) }) { return .permanentlyUnsupported }
 
         let env = ["command not found", "enoent", "econnrefused", "enotfound",
-                   "cannot combine"]
+                   "cannot combine", "stream disconnected before completion",
+                   "error sending request for url"]
         if env.contains(where: { t.contains($0) }) { return .environmentBroken }
 
         return nil
@@ -305,20 +346,21 @@ extension CooldownLedger {
             }
         }
 
-        // Claude Code 2.1.246："resets 5:50pm (Asia/Shanghai)"。
+        // Claude Code 2.1.246："resets 5:50pm (Asia/Shanghai)"；2.1.247
+        // 在整点会省略分钟，写成 "resets 7am (Asia/Shanghai)"。
         // 日期省略时按报错所带时区取“今天”；若该时刻已过，则取次日。
-        let localClock = #"resets?\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*\(([^)]+)\)"#
+        let localClock = #"resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)"#
         if let regex = try? NSRegularExpression(pattern: localClock,
                                                  options: [.caseInsensitive]),
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let hourRange = Range(match.range(at: 1), in: text),
-           let minuteRange = Range(match.range(at: 2), in: text),
            let meridiemRange = Range(match.range(at: 3), in: text),
            let zoneRange = Range(match.range(at: 4), in: text),
            let rawHour = Int(text[hourRange]),
-           let minute = Int(text[minuteRange]),
-           (1...12).contains(rawHour), (0...59).contains(minute),
            let zone = TimeZone(identifier: String(text[zoneRange])) {
+            let minute = Range(match.range(at: 2), in: text)
+                .flatMap { Int(text[$0]) } ?? 0
+            guard (1...12).contains(rawHour), (0...59).contains(minute) else { return nil }
             let meridiem = text[meridiemRange].lowercased()
             let hour = (rawHour % 12) + (meridiem == "pm" ? 12 : 0)
             var localCalendar = Calendar(identifier: .gregorian)

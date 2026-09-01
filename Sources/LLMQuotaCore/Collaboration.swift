@@ -16,7 +16,7 @@ public struct CollaborationEvent: Codable, Sendable, Equatable {
     }
 
     public enum Kind: String, Codable, Sendable, CaseIterable {
-        case started, question, answer, decision, finding, checkpoint, result, handoff, ack
+        case claim, started, question, answer, decision, finding, checkpoint, result, handoff, ack
 
         public var needsResponse: Bool {
             switch self {
@@ -37,6 +37,8 @@ public struct CollaborationEvent: Codable, Sendable, Equatable {
     public var senderMachineID: String
     /// nil 表示同项目内广播。
     public var recipientRunnerID: String?
+    /// 定向消息实际归哪台机器处理。Runner ID 在多台机器上可以相同，不能靠名字猜。
+    public var recipientMachineID: String?
     public var kind: Kind
     public var summary: String
     public var details: String?
@@ -54,6 +56,7 @@ public struct CollaborationEvent: Codable, Sendable, Equatable {
                 senderRunnerID: String, senderPlatform: Platform? = nil,
                 senderMachineID: String = Paths.machineID(),
                 recipientRunnerID: String? = nil,
+                recipientMachineID: String? = nil,
                 kind: Kind, summary: String, details: String? = nil,
                 replyTo: String? = nil, branch: String? = nil,
                 commitSHA: String? = nil, artifacts: [String] = [],
@@ -68,6 +71,7 @@ public struct CollaborationEvent: Codable, Sendable, Equatable {
         self.senderPlatform = senderPlatform
         self.senderMachineID = senderMachineID
         self.recipientRunnerID = recipientRunnerID
+        self.recipientMachineID = recipientMachineID
         self.kind = kind
         self.summary = summary
         self.details = details
@@ -92,6 +96,7 @@ public struct CollaborationEvent: Codable, Sendable, Equatable {
         senderPlatform = try c.decodeIfPresent(Platform.self, forKey: .senderPlatform)
         senderMachineID = try c.decodeIfPresent(String.self, forKey: .senderMachineID) ?? "unknown"
         recipientRunnerID = try c.decodeIfPresent(String.self, forKey: .recipientRunnerID)
+        recipientMachineID = try c.decodeIfPresent(String.self, forKey: .recipientMachineID)
         kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .checkpoint
         summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
         details = try c.decodeIfPresent(String.self, forKey: .details)
@@ -143,14 +148,34 @@ public enum CollaborationStore {
         }
         // 文件枚举顺序没有保证；先按时间排，再以 ID 去重，冲突时才能稳定保留
         // 最早写下的事实，而不是两台机器每次读取随机赢一台。
-        decoded.sort {
-            $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt
-        }
+        decoded.sort(by: timelineOrder)
         var byID: [String: CollaborationEvent] = [:]
         for event in decoded where byID[event.id] == nil { byID[event.id] = event }
-        return byID.values.sorted {
-            $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt
+        return byID.values.sorted(by: timelineOrder)
+    }
+
+    /// ISO-8601 落盘只保留到秒，同一秒内不能再拿字典序冒充时间顺序。
+    /// 先尊重显式 replyTo，再按工作语义排；最后才用 ID 保证跨机确定性。
+    private static func timelineOrder(_ lhs: CollaborationEvent,
+                                      _ rhs: CollaborationEvent) -> Bool {
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        if lhs.replyTo == rhs.id { return false }
+        if rhs.replyTo == lhs.id { return true }
+        func rank(_ kind: CollaborationEvent.Kind) -> Int {
+            switch kind {
+            case .claim: return 0
+            case .started: return 1
+            case .question: return 2
+            case .answer: return 3
+            case .decision, .finding: return 4
+            case .checkpoint: return 5
+            case .result: return 6
+            case .handoff: return 7
+            case .ack: return 8
+            }
         }
+        let leftRank = rank(lhs.kind), rightRank = rank(rhs.kind)
+        return leftRank == rightRank ? lhs.id < rhs.id : leftRank < rightRank
     }
 
     /// 同一个事件 ID 重试不会追加第二份。
@@ -294,9 +319,28 @@ public enum CollaborationStore {
         if let taskID { command += " --task " + shellQuote(taskID) }
         if let graphID { command += " --graph " + shellQuote(graphID) }
         command += " --kind finding --summary '替换成一句可执行结论'"
-        return "\n\n【协作约定】遇到会影响下一棒的发现、决定、问题或检查点时，"
-            + "请用以下命令留下结构化事实；不要写隐藏推理。若环境已配置 MCP，"
-            + "也可调用 collaboration_publish。\n" + command
+        var ask = "llmq collaboration ask --project "
+            + shellQuote(normalizeProject(project))
+            + " --sender " + shellQuote(runnerID)
+        if let taskID { ask += " --task " + shellQuote(taskID) }
+        if let graphID { ask += " --graph " + shellQuote(graphID) }
+        ask += " --to <runner-id> --id <稳定问题ID> --question '一句具体问题'"
+        var ack = "llmq collaboration ack <事件ID> --project "
+            + shellQuote(normalizeProject(project))
+            + " --sender " + shellQuote(runnerID)
+        if let taskID { ack += " --task " + shellQuote(taskID) }
+        let agents = "llmq collaboration agents"
+        return "\n\n【协作约定】遇到会影响下一棒的发现、决定或检查点时，"
+            + "用下面的 publish 留下结构化事实；不要写隐藏推理。遇到确实会造成返工、"
+            + "而另一位 Agent 的岗位更适合回答的工作疑问时，先问再实现，不要自行假设。"
+            + "先用 agents 列出当前可咨询的稳定 ID；架构、契约、技术边界或是否偏离目标的疑问，"
+            + "若列表中存在 codex.code，优先向 codex.code 定向咨询一次。咨询会进入接收机器的"
+            + "独立一次性进程异步回答；提交后继续处理不依赖答案的工作，不改变当前任务 owner，"
+            + "不得广播拉群或循环互问。回答到达后必须 ack 表明是否采用。收到定向的发现、决定或交接后，"
+            + "先明确确认并纳入后续工作，不能静默跳过。若 MCP 可用，优先调用 "
+            + "collaboration_list_agents / collaboration_ask / collaboration_publish / "
+            + "collaboration_ack。\n"
+            + agents + "\n" + command + "\n" + ask + "\n" + ack
     }
 
     public static func contract(project: String, taskID: String? = nil,
@@ -311,8 +355,8 @@ public enum CollaborationStore {
                 userInfo: [NSLocalizedDescriptionKey: message])
     }
 
-    /// 显式 answer/ack 关闭所引用事件；同任务更晚的终态 result 也会关闭此前
-    /// 的交接/发现，避免任务已经收工，协作页还永久挂着“待回应”。
+    /// 显式 answer/ack 关闭所引用事件；接收方把同一任务继续交给下一棒时，
+    /// 上一棒交接也已处理；同任务更晚的终态 result 会关闭此前的交接/发现。
     ///
     /// 「一个事件算不算已解决」只能有一套判据 —— ContextProjection 也用
     /// 这份；两处各写一份迟早分叉（这个形状本项目踩过不止一次）。
@@ -322,11 +366,17 @@ public enum CollaborationStore {
             return event.replyTo
         })
         let results = events.filter { $0.kind == .result && $0.taskID != nil }
+        let handoffs = events.filter { $0.kind == .handoff && $0.taskID != nil }
         for event in events where event.kind.needsResponse {
             if results.contains(where: {
                 $0.project == event.project && $0.taskID == event.taskID
                     && $0.createdAt >= event.createdAt
             }) { resolved.insert(event.id) }
+            if event.kind == .handoff, let recipient = event.recipientRunnerID,
+               handoffs.contains(where: {
+                   $0.project == event.project && $0.taskID == event.taskID
+                       && $0.senderRunnerID == recipient && $0.createdAt > event.createdAt
+               }) { resolved.insert(event.id) }
         }
         return resolved
     }
@@ -389,6 +439,9 @@ public enum CollaborationMCP {
     }
 
     private static var tools: [[String: Any]] {[
+        ["name": "collaboration_list_agents",
+         "description": "列出本机可定向咨询的 Agent 稳定 ID；不调用模型、不消耗额度",
+         "inputSchema": objectSchema(required: [], properties: [:])],
         ["name": "collaboration_get_context",
          "description": "读取同项目、当前任务和当前 Agent 可见的协作事实与待回应项",
          "inputSchema": objectSchema(required: ["project", "runnerID"], properties: [
@@ -410,7 +463,19 @@ public enum CollaborationMCP {
          "inputSchema": objectSchema(required: ["eventID", "project", "senderRunnerID"], properties: [
             "eventID": stringSchema("要确认的事件 ID"), "project": stringSchema("仓库绝对路径"),
             "taskID": stringSchema("任务 ID"), "senderRunnerID": stringSchema("确认者 Runner ID"),
-            "summary": stringSchema("确认说明")])]
+            "summary": stringSchema("确认说明")])],
+        ["name": "collaboration_ask",
+         "description": "向指定机器上的 Agent 投递一次异步、只读、最小上下文咨询；原任务 owner 不变，禁止嵌套咨询",
+         "inputSchema": objectSchema(required: ["id", "project", "senderRunnerID",
+                                                  "recipientRunnerID", "question"], properties: [
+            "id": stringSchema("稳定问题 ID；重试必须复用"),
+            "project": stringSchema("仓库绝对路径"), "taskID": stringSchema("当前任务 ID"),
+            "graphID": stringSchema("任务图 ID"),
+            "senderRunnerID": stringSchema("提问 Runner ID"),
+            "recipientRunnerID": stringSchema("回答 Runner ID"),
+            "question": stringSchema("一个具体、可执行的问题，最多 1200 字符"),
+            "details": stringSchema("必要背景，最多 4000 字符"),
+            "artifacts": ["type": "array", "items": ["type": "string"]]])]
     ]}
 
     private static func call(name: String, arguments a: [String: Any]) throws -> Any {
@@ -422,6 +487,11 @@ public enum CollaborationMCP {
             return value
         }
         switch name {
+        case "collaboration_list_agents":
+            return AgentConsultation.availableAgents().map {
+                ["runnerID": $0.runnerID, "platform": $0.platform.displayName,
+                 "machineID": $0.machineID, "machineName": $0.machineName]
+            }
         case "collaboration_get_context":
             return CollaborationStore.context(
                 project: try required("project"), taskID: a["taskID"] as? String,
@@ -448,6 +518,15 @@ public enum CollaborationMCP {
                 eventID: try required("eventID"), project: try required("project"),
                 taskID: a["taskID"] as? String, senderRunnerID: try required("senderRunnerID"),
                 summary: a["summary"] as? String ?? "已收到并纳入后续工作"))
+        case "collaboration_ask":
+            let question = try AgentConsultation.submit(.init(
+                id: try required("id"), project: try required("project"),
+                taskID: a["taskID"] as? String, graphID: a["graphID"] as? String,
+                senderRunnerID: try required("senderRunnerID"),
+                recipientRunnerID: try required("recipientRunnerID"),
+                question: try required("question"), details: a["details"] as? String,
+                artifacts: a["artifacts"] as? [String] ?? []))
+            return eventObject(question)
         default:
             throw NSError(domain: "CollaborationMCP", code: 3,
                           userInfo: [NSLocalizedDescriptionKey: "未知工具：" + name])
@@ -476,5 +555,294 @@ public enum CollaborationMCP {
     private static func failure(id: Any?, code: Int, message: String) -> [String: Any] {
         ["jsonrpc": "2.0", "id": id ?? NSNull(),
          "error": ["code": code, "message": message]]
+    }
+}
+
+/// 一次有边界的 Agent → Agent 工作咨询。
+///
+/// 它不是第二个任务 owner，也不是让几个模型先开会。调用方保持在原生会话里，
+/// 接收方使用自己在该项目上的稳定工作区和会话，只拿到一个问题、必要背景和
+/// 协作账摘要。提问只追加问题事件并立即返回；接收方机器用独立进程真正开始处理时
+/// 才发布 claim，回答随后异步写回。原任务 owner 始终不变。
+public enum AgentConsultation {
+    public struct Request: Sendable {
+        public var id: String
+        public var project: String
+        public var taskID: String?
+        public var graphID: String?
+        public var senderRunnerID: String
+        public var recipientRunnerID: String
+        public var recipientMachineID: String?
+        public var question: String
+        public var details: String?
+        public var artifacts: [String]
+
+        public init(id: String, project: String, taskID: String? = nil,
+                    graphID: String? = nil, senderRunnerID: String,
+                    recipientRunnerID: String, recipientMachineID: String? = nil,
+                    question: String,
+                    details: String? = nil, artifacts: [String] = []) {
+            self.id = id; self.project = project; self.taskID = taskID
+            self.graphID = graphID; self.senderRunnerID = senderRunnerID
+            self.recipientRunnerID = recipientRunnerID
+            self.recipientMachineID = recipientMachineID; self.question = question
+            self.details = details; self.artifacts = artifacts
+        }
+    }
+
+    /// 测试注入口。产品环境为 nil，真正调用目标 Runner。
+    public static var responseOverride: ((Request) throws -> String)?
+
+    public static func availableAgents(
+        runners: [AgentRunner] = RunnerRegistry.all
+    ) -> [AgentRegistration] {
+        let local = runners.filter {
+            $0.isAvailable && $0.canReadFiles && !$0.mediaOnly
+                && supportsReadOnlyConsultation($0)
+        }.map {
+            AgentRegistration(machineID: Paths.machineID(), machineName: Paths.machineName(),
+                              runnerID: $0.runnerID, platform: $0.platform,
+                              canConsult: true)
+        }
+        var byIdentity = Dictionary(uniqueKeysWithValues: AgentRegistry.all().map {
+            ($0.machineID + "|" + $0.runnerID, $0)
+        })
+        for item in local { byIdentity[item.machineID + "|" + item.runnerID] = item }
+        return byIdentity.values.filter(\.canConsult).sorted {
+            if $0.runnerID != $1.runnerID { return $0.runnerID < $1.runnerID }
+            return $0.machineID < $1.machineID
+        }
+    }
+
+    /// 发现结果必须和真正可执行的只读咨询命令一致；否则 Agent 会看到一个
+    /// 能选择、但提交后才报“不支持”的虚假目标。
+    static func supportsReadOnlyConsultation(_ runner: AgentRunner) -> Bool {
+        runner.runnerID == CodexRunner().runnerID
+            || runner.runnerID == ClaudeRunner().runnerID
+            || runner is OpenCodeRunner
+    }
+
+    /// 只发布问题，不替接收方认领，也不在提问进程里同步消耗另一模型的额度。
+    @discardableResult
+    public static func submit(
+        _ request: Request,
+        registrations: [AgentRegistration] = availableAgents()
+    ) throws -> CollaborationEvent {
+        guard ProcessInfo.processInfo.environment["LLMQ_CONSULTATION_DEPTH"] != "1" else {
+            throw error(1, "咨询回答过程中不能再发起咨询，避免 Agent 循环互问")
+        }
+        guard request.senderRunnerID != request.recipientRunnerID else {
+            throw error(2, "不能向自己发起 Agent 咨询")
+        }
+        guard !request.id.isEmpty, request.question.count <= 1_200,
+              (request.details?.count ?? 0) <= 4_000,
+              request.artifacts.count <= 5 else {
+            throw error(3, "咨询必须有稳定 ID；问题最多 1200 字、背景最多 4000 字、材料最多 5 个")
+        }
+        let project = CollaborationStore.normalizeProject(request.project)
+        let events = CollaborationStore.all()
+        if let existing = events.first(where: { $0.id == request.id && $0.kind == .question }) {
+            return existing
+        }
+        if CollaborationStore.unresolved(project: project).contains(where: {
+            $0.id != request.id && $0.kind == .question
+                && $0.taskID == request.taskID
+                && $0.senderRunnerID == request.senderRunnerID
+                && $0.recipientRunnerID != nil
+        }) {
+            throw error(4, "当前任务已有一条 Agent 咨询待回答；先处理它，不能广播拉群")
+        }
+        let candidates = registrations.filter {
+            $0.runnerID == request.recipientRunnerID && $0.canConsult
+                && (request.recipientMachineID == nil
+                    || $0.machineID == request.recipientMachineID)
+        }.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.machineID < $1.machineID
+        }
+        guard let target = candidates.first else {
+            throw error(5, "目标 Agent 未注册或不具备只读咨询能力："
+                        + request.recipientRunnerID)
+        }
+        let question = try CollaborationStore.publish(CollaborationEvent(
+            id: request.id, project: project, taskID: request.taskID,
+            graphID: request.graphID, senderRunnerID: request.senderRunnerID,
+            recipientRunnerID: request.recipientRunnerID,
+            recipientMachineID: target.machineID, kind: .question,
+            summary: request.question, details: request.details,
+            artifacts: CollaborationEvent.boundedArtifacts(request.artifacts)))
+        _ = ViewFeed.publish(ViewFeed.collaborationPage())
+        return question
+    }
+
+    /// 由事件中指定的接收机器执行。claim 的 senderMachineID 因而是真实处理者，
+    /// 不是提问方代写的 UI 轨迹。
+    @discardableResult
+    public static func respond(
+        questionID: String, machineID: String = Paths.machineID(),
+        runners: [AgentRunner] = RunnerRegistry.all
+    ) throws -> CollaborationEvent {
+        let events = CollaborationStore.all()
+        if let existing = events.first(where: { $0.kind == .answer && $0.replyTo == questionID }) {
+            return existing
+        }
+        guard let question = events.first(where: { $0.id == questionID && $0.kind == .question })
+        else { throw error(10, "找不到要回答的问题：" + questionID) }
+        guard question.recipientMachineID == nil || question.recipientMachineID == machineID else {
+            throw error(11, "这个问题属于另一台机器：" + (question.recipientMachineID ?? "unknown"))
+        }
+        guard let target = runners.first(where: {
+            $0.runnerID == question.recipientRunnerID && $0.isAvailable
+                && $0.canReadFiles && !$0.mediaOnly
+                && (responseOverride != nil || supportsReadOnlyConsultation($0))
+        }) else {
+            throw error(5, "本机没有可回答问题的 Agent：" + (question.recipientRunnerID ?? "unknown"))
+        }
+        let request = Request(
+            id: question.id, project: question.project, taskID: question.taskID,
+            graphID: question.graphID, senderRunnerID: question.senderRunnerID,
+            recipientRunnerID: target.runnerID, recipientMachineID: machineID,
+            question: question.summary, details: question.details,
+            artifacts: question.artifacts)
+        _ = try CollaborationStore.publish(CollaborationEvent(
+            id: question.id + ":claim:" + machineID,
+            project: question.project, taskID: question.taskID,
+            graphID: question.graphID, senderRunnerID: target.runnerID,
+            senderPlatform: target.platform, senderMachineID: machineID,
+            recipientRunnerID: question.senderRunnerID,
+            kind: .claim, summary: "认领咨询：" + String(question.summary.prefix(120)),
+            replyTo: question.id))
+        _ = ViewFeed.publish(ViewFeed.collaborationPage())
+        let started = Date()
+        let rawAnswer: String
+        if let responseOverride {
+            rawAnswer = try responseOverride(request)
+        } else {
+            rawAnswer = try runTarget(target, request: request, project: question.project)
+        }
+        let cleaned = rawAnswer.replacingOccurrences(
+            of: "\u{001B}\\[[0-9;?]*[ -/]*[@-~]", with: "",
+            options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { throw error(6, "目标 Agent 没有返回可用答复") }
+        let answer = try CollaborationStore.publish(CollaborationEvent(
+            id: "answer:" + request.id + ":" + request.recipientRunnerID,
+            project: question.project, taskID: request.taskID, graphID: request.graphID,
+            senderRunnerID: request.recipientRunnerID, senderPlatform: target.platform,
+            senderMachineID: machineID,
+            recipientRunnerID: request.senderRunnerID, kind: .answer,
+            summary: String(cleaned.prefix(2_000)),
+            details: "咨询耗时 " + Format.duration(Date().timeIntervalSince(started)),
+            replyTo: request.id))
+        _ = ViewFeed.publish(ViewFeed.collaborationPage())
+        return answer
+    }
+
+    /// 兼容旧调用者的本机同步入口；生产 CLI/MCP 已改走 submit + 独立 responder。
+    @discardableResult
+    public static func ask(_ request: Request,
+                           runners: [AgentRunner] = RunnerRegistry.all) throws
+        -> CollaborationEvent {
+        let local = runners.filter { $0.isAvailable }.map {
+            AgentRegistration(machineID: Paths.machineID(), machineName: Paths.machineName(),
+                              runnerID: $0.runnerID, platform: $0.platform,
+                              canConsult: responseOverride != nil
+                                || supportsReadOnlyConsultation($0))
+        }
+        let question = try submit(request, registrations: local)
+        return try respond(questionID: question.id, machineID: Paths.machineID(), runners: runners)
+    }
+
+    private static func runTarget(_ target: AgentRunner, request: Request,
+                                  project: String) throws -> String {
+        let safeID = request.id.map { $0.isLetter || $0.isNumber ? $0 : Character("-") }
+        let consultID = "consult-" + String(safeID.prefix(20))
+        let workspace = try GitWorkspace.prepare(
+            repo: project, taskID: consultID, platform: target.platform, base: "main")
+        let lane = TaskCapabilityLane.review
+        let context = GraphSession.Context(
+            taskID: request.taskID ?? consultID, graphID: request.graphID,
+            capability: lane, runnerID: target.runnerID, machineID: Paths.machineID())
+        GraphSession.migrateLegacyProject(
+            context: context, support: target.sessionSupport, workspace: workspace.path,
+            repo: project, platform: target.platform)
+        let session = GraphSession.mode(
+            context: context, support: target.sessionSupport, workspace: workspace.path)
+        let briefing = CollaborationStore.briefing(
+            project: project, taskID: request.taskID, graphID: request.graphID,
+            runnerID: target.runnerID)
+        let prompt = """
+        【Agent 定向咨询｜只读】
+        你正在回答另一位 Agent 的一个具体工作疑问，不是接管它的实现任务。
+        只读取仓库并给出可执行结论；不要编辑、创建或删除任何文件，不要提交，
+        不要再咨询第三位 Agent。回答控制在 1200 字以内，先给结论，再给依据和建议动作。
+
+        提问者：\(request.senderRunnerID)
+        问题：\(request.question)
+        \(request.details.map { "必要背景：" + $0 } ?? "")
+        \(request.artifacts.isEmpty ? "" : "材料：" + request.artifacts.joined(separator: "、"))
+        \(briefing)
+        """
+        let command = try readOnlyCommand(
+            for: target, prompt: prompt, cwd: workspace.path, session: session)
+        var env = command.env
+        env["LLMQ_CONSULTATION_DEPTH"] = "1"
+        let result = Proc.run(command.launchPath, command.args, cwd: workspace.path,
+                              env: env, timeout: 480)
+        GraphSession.markLaunched(
+            context: context, support: target.sessionSupport, workspace: workspace.path)
+        guard result.exitCode == 0, !result.timedOut else {
+            let why = result.timedOut ? "咨询超时" : "咨询退出码 \(result.exitCode)"
+            throw error(7, why + "：" + String((result.stderr + result.stdout).suffix(600)))
+        }
+        guard GitWorkspace.touchedFiles(in: workspace.path).isEmpty else {
+            throw error(8, "咨询 Agent 违反只读边界并改动了工作区，答复未采纳")
+        }
+        return result.stdout
+    }
+
+    private static func readOnlyCommand(
+        for target: AgentRunner, prompt: String, cwd: String, session: GraphSession.Mode
+    ) throws -> (launchPath: String, args: [String], env: [String: String]) {
+        if target.runnerID == CodexRunner().runnerID {
+            // `--approve-for-me` 会把沙箱提升为 workspace-write，不适合咨询。
+            // Codex 的 exec 级选项必须位于 resume 子命令之前。
+            var args = ["exec", "--sandbox", "read-only", "--color", "never"]
+            if case .projectResume = session {
+                args += ["resume", "--last", prompt]
+            } else {
+                args.append(prompt)
+            }
+            return (target.binaryPath ?? "codex", args, [:])
+        }
+        if target.runnerID == ClaudeRunner().runnerID {
+            var args = ["-p", prompt, "--add-dir", cwd,
+                        "--tools", "Read,Glob,Grep", "--permission-mode", "default"]
+            if let model = RunnerConfigStore.load().model(for: target.platform) {
+                args += ["--model", model]
+            }
+            switch session {
+            case .create(let id): args += ["--session-id", id]
+            case .resume(let id): args += ["--resume", id]
+            case .fresh, .projectResume: break
+            }
+            return (target.binaryPath ?? "claude", args, [:])
+        }
+        if target is OpenCodeRunner {
+            var args = ["run", "--dir", cwd, "--agent", "plan"]
+            if case .projectResume = session { args.append("-c") }
+            let configured = RunnerConfigStore.load().model(for: target.platform)
+            let model = configured ?? (target.platform == .openrouter
+                ? "openrouter/stealth/ox-alpha" : nil)
+            if let model { args += ["-m", model] }
+            args.append(prompt)
+            return (target.binaryPath ?? "opencode", args, [:])
+        }
+        throw error(9, "目标 Runner 尚未实现只读咨询命令：" + target.runnerID)
+    }
+
+    private static func error(_ code: Int, _ message: String) -> NSError {
+        NSError(domain: "AgentConsultation", code: code,
+                userInfo: [NSLocalizedDescriptionKey: message])
     }
 }

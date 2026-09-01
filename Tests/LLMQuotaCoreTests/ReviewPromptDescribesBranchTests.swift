@@ -26,4 +26,38 @@ final class ReviewPromptDescribesBranchTests: XCTestCase {
         let p = MergeReview.reviewPrompt(c)
         XCTAssertTrue(p.contains("这条分支：修一个空指针"))
     }
+
+    func test_任务专属范围原样传给评审且优先于通用质量规则() {
+        var c = MergeReview.Candidate(
+            branch: "agent/kimi/alpha", repo: "/tmp/x",
+            files: ["Flint/Render/Game.swift"], subject: "完成功能 Alpha",
+            whyNotMechanical: "仓库要求评审", needed: 1)
+        c.taskContract = """
+        【功能 Alpha｜冻结美术】
+        本轮不整改美术质量，不因占位资产阻断功能完成。
+        不得修改 Production/，必须修复真实功能缺陷。
+        """
+
+        let prompt = MergeReview.reviewPrompt(c)
+        XCTAssertTrue(prompt.contains("本轮不整改美术质量"))
+        XCTAssertTrue(prompt.contains("不得修改 Production/"))
+        XCTAssertTrue(prompt.contains(
+            "本次任务专属契约 > 当前阶段契约 > 仓库通用"))
+        XCTAssertTrue(prompt.contains("非目标的质量，不得单独作为不合入理由"))
+        XCTAssertTrue(prompt.contains("冻结目录、破坏既有功能"),
+            "冻结质量和触碰冻结目录必须明确区分")
+        XCTAssertFalse(prompt.contains("自己拉出来看"),
+                       "MiniMax 没有仓库读取能力，不能再给它无法执行的指令")
+    }
+
+    func test_过长任务历史保留开头契约并明确截断() {
+        var c = MergeReview.Candidate(
+            branch: "agent/kimi/alpha", repo: "/tmp/x", files: ["a.swift"],
+            subject: "实现", whyNotMechanical: "评审", needed: 1)
+        c.taskContract = "冻结美术；功能优先。\n" + String(repeating: "旧反馈", count: 5_000)
+        let section = MergeReview.taskContractSection(c)
+        XCTAssertTrue(section.hasPrefix("冻结美术；功能优先。"))
+        XCTAssertTrue(section.contains("截断"))
+        XCTAssertLessThanOrEqual(section.count, 12_100)
+    }
 }

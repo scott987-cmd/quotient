@@ -17,8 +17,16 @@ final class GoldenSampleGateTests: XCTestCase {
         appSupport = root.appendingPathComponent("support")
         try FileManager.default.createDirectory(
             at: repo.appendingPathComponent(".llmq"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: repo.appendingPathComponent("docs/reference"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: appSupport,
                                                 withIntermediateDirectories: true)
+        for path in ["QUALITY.md", "BENCHMARK.md", "PRODUCTION.md"] {
+            try "# \(path)\n".write(to: repo.appendingPathComponent(path),
+                                    atomically: true, encoding: .utf8)
+        }
+        try Data([0x89, 0x50, 0x4e, 0x47]).write(
+            to: repo.appendingPathComponent("docs/reference/csonline.png"))
         Paths.appSupportOverride = appSupport
         try JSONEncoder().encode(contract()).write(
             to: repo.appendingPathComponent(ProjectContract.relativePath), options: .atomic)
@@ -158,6 +166,21 @@ final class GoldenSampleGateTests: XCTestCase {
                       "绑定 Experience 条款的样板不能退化成只要合入就放行")
     }
 
+    func testGoldenSampleCannotStartBeforeProductionDesignPassesDoctor() throws {
+        var invalid = contract()
+        invalid.routes = []
+        try JSONEncoder().encode(invalid).write(
+            to: repo.appendingPathComponent(ProjectContract.relativePath), options: .atomic)
+
+        XCTAssertThrowsError(try GoldenSampleGate.prepare(
+            .init(stage: .goldenSample, deliverableKind: "operator-character",
+                  goldenSampleID: "operator-v1"),
+            repo: repo.path, tasks: [])) { error in
+                XCTAssertTrue(error.localizedDescription.contains("前置生产设计未通过"))
+                XCTAssertTrue(error.localizedDescription.contains("没有登记任何生产路线"))
+            }
+    }
+
     func testMobileBriefShowsProductionStageAndExactBlockReason() throws {
         let sample = sampleTask(kind: "zombie-character", sampleID: "zombie-v1")
         var fanOut = fanOutTask(source: sample)
@@ -201,6 +224,21 @@ final class GoldenSampleGateTests: XCTestCase {
         ProjectContract(
             profile: "game",
             outcomeSummary: "Flint：先做出一件可验证的成熟样板，再扩张同类资产",
+            requiredOutcomes: ["playable-character"],
+            referenceRequired: true,
+            experienceRequired: false,
+            goldenSampleRequired: true,
+            referenceFile: "BENCHMARK.md",
+            productionFile: "PRODUCTION.md",
+            referenceFiles: ["docs/reference/csonline.png"],
+            referenceDimensions: ["silhouette", "material", "motion"],
+            routes: [
+                .init(id: "asset-first-production",
+                      provides: ["playable-character"],
+                      sourceAssets: ["licensed-or-cc0-source"],
+                      requiredCapabilities: ["asset-production", "device-playtest"],
+                      validationStages: ["golden-render", "runtime-review"])
+            ],
             criteria: [
                 .init(id: "integrity", layer: "integrity",
                       evidenceTypes: ["test-log"]),

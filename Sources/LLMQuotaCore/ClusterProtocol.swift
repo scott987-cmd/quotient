@@ -163,8 +163,7 @@ public enum ClusterService {
                 return .failed(reason: repo.map { "找不到仓库别名「\($0)」" }
                     ?? "没有配置默认仓库")
             }
-            var t = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(),
-                             prompt: trimmed, repo: path)
+            var t = WorkTask(id: "pending", prompt: trimmed, repo: path)
             t.note = "来自节点 \(node)"
             // 画像由派发方在它自己那台机器上算好带过来，本机不再算一遍 ——
             // 分诊要花一次调用，让发起的人出这笔钱。
@@ -172,8 +171,13 @@ public enum ClusterService {
             // 对端可以在这里撒谎（把复杂任务标成 trivial），但它反正已经能提交
             // 任意提示词了，谎报难度并不会让它拿到多的权限，只会让活派得更差。
             t.profile = profile
-            guard (try? TaskStore.append(t)) != nil else {
-                return .failed(reason: "写入任务队列失败")
+            do {
+                let requestKey = "cluster:\(node):\(repo ?? "default"):\(trimmed)"
+                let outcome = try TaskIntake.enqueuePrepared(
+                    t, idempotencyKey: requestKey, source: "cluster-submit")
+                if case .single(let saved) = outcome { t = saved }
+            } catch {
+                return .failed(reason: "写入任务队列失败：\(error.localizedDescription)")
             }
             return .accepted(taskID: t.id, repo: path)
         }

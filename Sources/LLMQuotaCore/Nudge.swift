@@ -172,9 +172,8 @@ public enum Nudge {
         // rejectedWithEvidence 自己跑一遍本地仓库算数,而手机读的是已发布的
         // reviews.json —— 2026-08-22 早老板点进推送,页面空的。
         // 数据源只能有一个:已发布的那份。
-        let published = Set(Review.publishedDigests().map { $0.repo + "|" + $0.branch })
-        let killed = Review.rejectedWithEvidence()
-            .filter { published.contains($0.repo + "|" + $0.branch) }
+        let published = Review.publishedDigests()
+        let killed = Review.publishedRejectedWithEvidence(published)
         if !killed.isEmpty {
             let body = killed.count == 1
                 ? "「\(killed[0].subject.prefix(24))」被评审判了不合入 —— 你看看该不该翻案"
@@ -216,7 +215,7 @@ public enum Nudge {
         //
         // 现在直接读已发布的那份：**推送里说的数，就是人点进去能看到的数**。
         // 数据源只有一个，就不会有两套算法打架。
-        let awaiting = Review.publishedDigests()
+        let awaiting = published
         // **只推「人一眼能看出成败」的那些，其余一律不打扰。**
         //
         // 老板的原话：「验收任务发给我的，怎么还有一堆合代码的，
@@ -251,7 +250,7 @@ public enum Nudge {
         // 而 App 里连操作入口都没有 —— 老板的原话是「还是能收到虚假的
         // 审批任务」。WorkTask.frozenBy 早就是为了区分这两者而存在的，
         // 这里漏用了。
-        // 口径必须和 blockedPage 一份(ViewFeed.awaitsBoss):归 Claude 处置的
+        // 口径必须和 blockedPage 一份(ViewFeed.awaitsBoss):归架构师处置的
         // 技术拦截不算「等你放行」,不然角标有数、页面没卡片。
         let blocked = tasks.filter { ViewFeed.awaitsBoss($0) }
         if !blocked.isEmpty {

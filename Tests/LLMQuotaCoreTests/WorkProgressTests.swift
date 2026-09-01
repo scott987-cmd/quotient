@@ -124,6 +124,17 @@ final class WorkProgressTests: XCTestCase {
         XCTAssertNil(WorkProgressSentinel.finding(for: task, progress: fresh, now: now))
     }
 
+    func testTwentyMinuteSentinelAlsoFindsStalledTechnicalDisposition() {
+        var task = WorkTask(id: "task", prompt: "Flint 高危工程改动", repo: "/tmp/repo")
+        task.state = .blocked
+        task.endedAt = now.addingTimeInterval(-1_201)
+        task.note = "技术处置任务 tabc1234：等待 Claude 领取；实现 Owner 保持 MiniMax"
+
+        let finding = WorkProgressSentinel.finding(for: task, progress: nil, now: now)
+        XCTAssertEqual(finding?.taskID, task.id)
+        XCTAssertEqual(finding?.neverReported, true)
+    }
+
     func testPhoneProjectionMarksTwentyMinutesWithoutMilestone() throws {
         var task = WorkTask(id: "task", prompt: "长任务", repo: "/tmp/repo")
         task.state = .running

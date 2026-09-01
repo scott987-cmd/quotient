@@ -56,14 +56,17 @@ final class ShowcaseTests: XCTestCase {
                      "ViewFeed.playbookPage", "ViewFeed.menu"] {
             XCTAssertTrue(src.contains(must), "默认发布器少了 \(must)")
         }
-        // 主循环末尾不许再抄一份发布清单(同一件事两处判的老毛病)。
+        // 发布必须在独立 Projector，不再是 Coordinator 里的定时器或轮末尾任务。
         let main = try String(contentsOf: root.appendingPathComponent("Sources/llmq/main.swift"), encoding: .utf8)
-        XCTAssertTrue(main.contains("Showcase.refresh(force: true)"), "轮末尾要走同一套发布器")
-        // 只认真代码行(行首缩进 + 语句),注释里提一嘴不算。
-        let armed = main.split(separator: "\n").contains { line in
-            let t = line.trimmingCharacters(in: .whitespaces)
-            return t == "showcase.resume()"
-        }
-        XCTAssertTrue(armed, "要有独立定时器,不然 agent 一跑手机就静止")
+        XCTAssertTrue(main.contains("case \"projector\""), "CLI 必须能独立启动 Projector")
+        XCTAssertTrue(main.contains("ProjectorService.publishAll(token: token)"),
+                      "独立 Projector 必须走唯一发布入口")
+        XCTAssertTrue(main.contains("com.llmquotabar.projector"),
+                      "安装常驻循环时必须同时安装独立 Projector")
+        let loopStart = try XCTUnwrap(main.range(of: "func cmdWorkLoop("))
+        let projectorStart = try XCTUnwrap(main.range(of: "func cmdWorkProjector("))
+        let loopBody = main[loopStart.lowerBound..<projectorStart.lowerBound]
+        XCTAssertFalse(loopBody.contains("Showcase.trigger"),
+                       "Coordinator 不得再发布手机视图")
     }
 }

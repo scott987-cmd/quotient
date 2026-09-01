@@ -8,6 +8,12 @@ import XCTest
 /// visualRemediationReviewID 连接）、P0/P1 保留、超预算先删 P4/P3、
 /// Ox（不能看图）能力渲染、原任务正文不丢失。
 final class ContextPackTests: XCTestCase {
+    func test火山上下文预算为模型输出预留窗口() {
+        XCTAssertEqual(ContextPackBuilder.budget(for: .volcark), 8_000)
+        XCTAssertEqual(ContextPackBuilder.budget(for: .openrouter),
+                       ContextPackBuilder.defaultBudget)
+    }
+
     private var scratch: URL!
     private var appSupport: URL!
     private var repoA: URL!
@@ -123,6 +129,21 @@ final class ContextPackTests: XCTestCase {
     }
 
     // MARK: - 1. 项目隔离
+
+    func testPriorityContractsRenderAheadOfLargeTaskBodyWithoutDuplication() {
+        let marker = "TASK-BODY-START"
+        let source = task("large", prompt: marker
+            + String(repeating: "超长任务正文", count: 8_000), repo: repoA)
+        let pack = build(task: source, all: [source], runnerID: "kimi.code",
+                         platform: .kimi, canReadFiles: true)
+
+        let contract = try! XCTUnwrap(pack.text.range(of: "【协作约定】"))
+        let body = try! XCTUnwrap(pack.text.range(of: marker))
+        XCTAssertLessThan(contract.lowerBound, body.lowerBound,
+            "P0 契约必须先于不计预算的任务正文，避免尾部截断让 Agent 丢失工具")
+        XCTAssertEqual(pack.text.components(separatedBy: "## 长任务进度与续期").count - 1,
+                       1, "进度契约不能重复注入并浪费上下文")
+    }
 
     func testFactsFromOtherProjectsNeverEnterThePack() throws {
         try publishEvent(id: "foreign-decision", project: repoB, taskID: "t1",
@@ -282,7 +303,7 @@ final class ContextPackTests: XCTestCase {
 
     // MARK: - 6. 原任务不丢失
 
-    func testOriginalTaskBodyAlwaysLeadsThePackVerbatim() {
+    func testOriginalTaskBodySurvivesVerbatimAfterPriorityContext() {
         let prompt = """
             给设置页补一个导出按钮。
             【视觉整改：rev-old｜保持原 owner 和原会话】
@@ -296,8 +317,10 @@ final class ContextPackTests: XCTestCase {
                          platform: .openrouter, canReadFiles: true)
 
         let expectedBody = VisualQualityGate.compactRemediationPrompt(prompt)
-        XCTAssertTrue(pack.text.hasPrefix(expectedBody),
-            "任务正文（压缩整改票之后）必须是提示词的第一段")
+        let contract = try! XCTUnwrap(pack.text.range(of: "【协作约定】"))
+        let body = try! XCTUnwrap(pack.text.range(of: expectedBody))
+        XCTAssertLessThan(contract.lowerBound, body.lowerBound,
+            "P0 协作契约必须先交付，随后仍要完整保留压缩后的任务正文")
         XCTAssertTrue(pack.text.contains("给设置页补一个导出按钮。"))
         XCTAssertTrue(pack.text.contains("rev-new"), "最新的视觉票必须保留")
         XCTAssertFalse(pack.text.contains("rev-old"), "旧票已被新票取代，不得重复携带")
@@ -483,6 +506,7 @@ final class ContextPackTests: XCTestCase {
         XCTAssertFalse(MiniMaxRunner().canReadFiles)
         XCTAssertFalse(MiniMaxMediaRunner().canReadFiles)
         // 编码执行器默认能读文件。
+        XCTAssertTrue(MiniMaxCodeRunner().canReadFiles)
         XCTAssertTrue(ClaudeRunner().canReadFiles)
         XCTAssertTrue(QwenRunner().canReadFiles)
         XCTAssertTrue(KimiRunner().canReadFiles)

@@ -128,8 +128,308 @@ final class TaskRevisionTests: XCTestCase {
         try (line + "\n").data(using: .utf8)!.write(to: f)
         var t = TaskStore.all().first!
         XCTAssertEqual(t.rev, 0)
+        XCTAssertNil(t.terminalFailureKind,
+                     "新增失败原因字段必须向后兼容，旧任务记录不能解码消失")
         t.state = .running
         XCTAssertNoThrow(try TaskStore.append(t))
         XCTAssertEqual(TaskStore.all().first?.state, .running)
+    }
+
+    func test_结构化失败原因和重试期限会持久化() throws {
+        var t = make("quota-persistence")
+        t.state = .failed
+        t.terminalFailureKind = .quotaExhausted
+        t.retryNotBefore = Date(timeIntervalSince1970: 1_800_000_000)
+
+        try TaskStore.append(t)
+
+        let loaded = try XCTUnwrap(TaskStore.all().first)
+        XCTAssertEqual(loaded.terminalFailureKind, .quotaExhausted)
+        XCTAssertEqual(try XCTUnwrap(loaded.retryNotBefore).timeIntervalSince1970,
+                       1_800_000_000, accuracy: 0.001)
+    }
+
+    func test_短写会继续直到整条记录写完() throws {
+        let payload = Data("abcdefgh".utf8)
+        var received: [UInt8] = []
+        var calls = 0
+
+        try TaskStore.writeCompletely(payload) { base, count in
+            calls += 1
+            let n = min(3, count)
+            received.append(contentsOf: UnsafeRawBufferPointer(start: base, count: n))
+            return n
+        }
+
+        XCTAssertEqual(Data(received), payload)
+        XCTAssertEqual(calls, 3, "8 字节按 3/3/2 短写，必须调用三次")
+    }
+
+    func test_写入零进展必须明确失败() {
+        XCTAssertThrowsError(try TaskStore.writeCompletely(Data("x".utf8)) { _, _ in 0 })
+    }
+
+    func test_追加写到一半失败会回滚坏尾巴() throws {
+        let ledger = dir.appendingPathComponent("rollback.jsonl")
+        let original = Data("old-record\n".utf8)
+        try original.write(to: ledger)
+        let fd = open(ledger.path, O_WRONLY | O_APPEND)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { close(fd) }
+
+        var calls = 0
+        XCTAssertThrowsError(
+            try TaskStore.appendCompletely(Data("new-record\n".utf8), to: fd) { base, count in
+                calls += 1
+                if calls == 1 { return write(fd, base, min(3, count)) }
+                return 0
+            }
+        )
+
+        XCTAssertEqual(try Data(contentsOf: ledger), original,
+                       "失败的半条记录必须从账本里完整撤销")
+    }
+
+    func test_mutate并发修改同一任务不丢更新() throws {
+        try TaskStore.append(make("mutate-concurrent"))
+        let count = 100
+        let group = DispatchGroup()
+        let errorLock = NSLock()
+        var errors: [Error] = []
+
+        for _ in 0..<count {
+            group.enter()
+            DispatchQueue.global().async {
+                defer { group.leave() }
+                do {
+                    try TaskStore.transition(
+                        id: "mutate-concurrent", actor: "test", reason: "并发计数"
+                    ) {
+                        $0.qualityRejectionCount += 1
+                    }
+                } catch {
+                    errorLock.lock(); errors.append(error); errorLock.unlock()
+                }
+            }
+        }
+        group.wait()
+
+        XCTAssertTrue(errors.isEmpty, "每次转换都必须成功或显式报错：\(errors)")
+        let loaded = try XCTUnwrap(TaskStore.all().first)
+        XCTAssertEqual(loaded.qualityRejectionCount, count)
+        XCTAssertEqual(loaded.rev, count, "初始 rev 0，100 次转换后必须是 rev 100")
+    }
+
+    func test_mutate找不到任务会明确失败() {
+        XCTAssertThrowsError(try TaskStore.mutate(id: "missing") { $0.state = .done }) {
+            XCTAssertTrue($0 is MissingTask)
+        }
+    }
+
+    func test_并发领取同一任务只有一个赢家() throws {
+        try TaskStore.append(make("claim-once"))
+        let group = DispatchGroup()
+        let resultLock = NSLock()
+        var winners = 0
+        var rejected = 0
+
+        for pid in 100..<120 {
+            group.enter()
+            DispatchQueue.global().async {
+                defer { group.leave() }
+                do {
+                    try TaskStore.claimForExecution(
+                        id: "claim-once", runnerPID: Int32(pid))
+                    resultLock.lock(); winners += 1; resultLock.unlock()
+                } catch is InvalidTaskTransition {
+                    resultLock.lock(); rejected += 1; resultLock.unlock()
+                } catch {
+                    XCTFail("出现非预期写入错误：\(error)")
+                }
+            }
+        }
+        group.wait()
+
+        XCTAssertEqual(winners, 1)
+        XCTAssertEqual(rejected, 19)
+        XCTAssertEqual(TaskStore.all().first?.state, .running)
+        XCTAssertNotNil(TaskStore.all().first?.runnerPID)
+    }
+
+    func test_派发租约把任务限速凭据和快照原子绑定() throws {
+        _ = try TaskStore.create(make("dispatch"), actor: "test", reason: "创建")
+        let head = try XCTUnwrap(TaskStore.all().first)
+        let leased = try TaskStore.claimForDispatch(
+            id: head.id, expectedRevision: head.rev, coordinatorPID: 42,
+            snapshotID: "snapshot-1", quotaReservationID: "quota-1",
+            leaseID: "lease-1", at: Date(),
+            leaseSeconds: 60)
+
+        XCTAssertEqual(leased.state, .queued)
+        XCTAssertEqual(leased.dispatchLeaseID, "lease-1")
+        XCTAssertEqual(leased.dispatchLeaseOwnerPID, 42)
+        XCTAssertEqual(leased.quotaReservationID, "quota-1")
+        XCTAssertEqual(leased.dispatchSnapshotID, "snapshot-1")
+        XCTAssertTrue(TaskStore.readyQueue().isEmpty,
+                      "未到期租约必须从下一轮候选集消失")
+    }
+
+    func test_两个协调器同时领取同一任务只有一个获得派发租约() throws {
+        _ = try TaskStore.create(make("dispatch-race"), actor: "test", reason: "创建")
+        let head = try XCTUnwrap(TaskStore.all().first)
+        let lock = NSLock()
+        var winners: [String] = []
+        DispatchQueue.concurrentPerform(iterations: 12) { index in
+            let lease = "lease-\(index)"
+            if (try? TaskStore.claimForDispatch(
+                id: head.id, expectedRevision: head.rev,
+                coordinatorPID: Int32(index + 1), snapshotID: "snapshot-\(index)",
+                quotaReservationID: "quota-\(index)", leaseID: lease,
+                leaseSeconds: 60)) != nil {
+                lock.lock(); winners.append(lease); lock.unlock()
+            }
+        }
+
+        XCTAssertEqual(winners.count, 1)
+        let saved = try XCTUnwrap(TaskStore.all().first)
+        XCTAssertEqual(saved.dispatchLeaseID, winners.first)
+        XCTAssertEqual(saved.rev, head.rev + 1)
+    }
+
+    func test_只有持租约子进程能把任务转为运行() throws {
+        _ = try TaskStore.create(make("lease-owner"), actor: "test", reason: "创建")
+        let head = try XCTUnwrap(TaskStore.all().first)
+        _ = try TaskStore.claimForDispatch(
+            id: head.id, expectedRevision: head.rev, coordinatorPID: 42,
+            snapshotID: "snapshot", quotaReservationID: "quota",
+            leaseID: "right", leaseSeconds: 60)
+
+        XCTAssertThrowsError(try TaskStore.claimForExecution(
+            id: head.id, runnerPID: 7, dispatchLeaseID: "wrong")) {
+            XCTAssertTrue($0 is InvalidTaskTransition)
+        }
+        let running = try TaskStore.claimForExecution(
+            id: head.id, runnerPID: 8, dispatchLeaseID: "right")
+        XCTAssertEqual(running.state, .running)
+        XCTAssertEqual(running.runnerPID, 8)
+    }
+
+    func test_启动失败释放租约后任务重新可见() throws {
+        _ = try TaskStore.create(make("release"), actor: "test", reason: "创建")
+        let head = try XCTUnwrap(TaskStore.all().first)
+        _ = try TaskStore.claimForDispatch(
+            id: head.id, expectedRevision: head.rev, coordinatorPID: 42,
+            snapshotID: "snapshot", quotaReservationID: "quota",
+            leaseID: "lease", leaseSeconds: 60)
+        _ = try TaskStore.releaseDispatchLease(
+            id: head.id, leaseID: "lease", reason: "模拟启动失败")
+
+        let released = try XCTUnwrap(TaskStore.all().first)
+        XCTAssertNil(released.dispatchLeaseID)
+        XCTAssertNil(released.quotaReservationID)
+        XCTAssertEqual(TaskStore.readyQueue().map(\.id), ["release"])
+    }
+
+    func test_create拒绝覆盖同ID任务() throws {
+        _ = try TaskStore.create(make("create-once"), actor: "test", reason: "首次创建")
+
+        XCTAssertThrowsError(
+            try TaskStore.create(make("create-once"), actor: "test", reason: "重复创建")
+        ) { error in
+            XCTAssertTrue(error is DuplicateTask)
+        }
+        XCTAssertEqual(TaskStore.all().filter { $0.id == "create-once" }.count, 1)
+    }
+
+    func test_transition记录审计信息并规范等待原因() throws {
+        _ = try TaskStore.create(make("audit"), actor: "intake", reason: "创建任务")
+        let saved = try TaskStore.transition(
+            id: "audit", actor: "scheduler", reason: "等待用户确认",
+            configVersion: "cfg-7"
+        ) {
+            $0.state = .blocked
+        }
+
+        XCTAssertEqual(saved.waitReason, .humanApproval)
+        XCTAssertEqual(saved.transitionActor, "scheduler")
+        XCTAssertEqual(saved.transitionReason, "等待用户确认")
+        XCTAssertEqual(saved.transitionPreviousState, .queued)
+        XCTAssertEqual(saved.transitionConfigVersion, "cfg-7")
+        XCTAssertNotNil(saved.transitionedAt)
+    }
+
+    func test_transition完整快照冲突必须可见且不覆盖() throws {
+        _ = try TaskStore.create(make("cas"), actor: "test", reason: "创建")
+        var stale = try XCTUnwrap(TaskStore.all().first)
+        _ = try TaskStore.transition(id: "cas", actor: "newer", reason: "先推进") {
+            $0.state = .running
+            $0.runnerPID = 88
+        }
+        stale.state = .failed
+
+        XCTAssertThrowsError(
+            try TaskStore.transition(stale, actor: "stale", reason: "迟到结果")
+        ) { error in
+            XCTAssertTrue(error is StaleWrite)
+        }
+        XCTAssertEqual(TaskStore.all().first?.state, .running)
+        XCTAssertEqual(TaskStore.all().first?.runnerPID, 88)
+        XCTAssertEqual(TaskStore.staleRejections.count, 1)
+        XCTAssertEqual(TaskStore.staleRejections.first?.id, "cas")
+        XCTAssertEqual(TaskStore.staleRejections.first?.mine, stale.rev)
+    }
+
+    func test_旧blocked记录会补出结构化等待原因() throws {
+        let line = #"{"id":"legacy-wait","prompt":"p","repo":"/tmp/r","state":"blocked","createdAt":"2026-08-01T00:00:00Z","pausedAt":"2026-08-01T00:01:00Z"}"#
+        try (line + "\n").data(using: .utf8)!
+            .write(to: dir.appendingPathComponent("tasks.jsonl"))
+
+        XCTAssertEqual(TaskStore.all().first?.waitReason, .paused)
+    }
+
+    func test_旧blocked记录缺少线索时仍显示需要人工处置() throws {
+        let line = #"{"id":"legacy-generic-block","prompt":"p","repo":"/tmp/r","state":"blocked","createdAt":"2026-08-01T00:00:00Z"}"#
+        try (line + "\n").data(using: .utf8)!
+            .write(to: dir.appendingPathComponent("tasks.jsonl"))
+
+        XCTAssertEqual(TaskStore.all().first?.waitReason, .humanApproval)
+    }
+
+    func test_任务图对账通过控制内核持久化() throws {
+        var upstream = make("upstream")
+        upstream.state = .failed
+        var downstream = make("downstream")
+        downstream.dependsOn = [upstream.id]
+        _ = try TaskStore.create(upstream, actor: "test", reason: "创建上游")
+        _ = try TaskStore.create(downstream, actor: "test", reason: "创建下游")
+
+        let saved = try TaskGraph.persistReconciliation(
+            actor: "test-reconciler", reason: "传播上游失败")
+        let blocked = try XCTUnwrap(saved.first { $0.id == downstream.id })
+        XCTAssertEqual(blocked.state, .blocked)
+        XCTAssertEqual(blocked.waitReason, .dependency)
+        XCTAssertEqual(blocked.transitionActor, "test-reconciler")
+    }
+
+    func test_生产代码不能绕过控制内核直接写TaskStore() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources")
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: nil))
+        var violations: [String] = []
+        var scannedFiles = 0
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            scannedFiles += 1
+            let source = try String(contentsOf: url, encoding: .utf8)
+            for forbidden in ["TaskStore.append(", "TaskStore.mutate("]
+                where source.contains(forbidden) {
+                violations.append(url.lastPathComponent + " 包含 " + forbidden)
+            }
+        }
+        XCTAssertGreaterThan(scannedFiles, 10, "源码扫描异常，不能把空扫描当通过")
+        XCTAssertTrue(violations.isEmpty, "业务代码必须使用 create/transition：\(violations)")
     }
 }

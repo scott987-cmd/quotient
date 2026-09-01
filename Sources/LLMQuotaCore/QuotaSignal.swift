@@ -129,6 +129,15 @@ public enum QuotaSignal {
     /// 从消息里抠重置时间。中文「将在 YYYY-MM-DD HH:MM:SS 重置」和
     /// 英文 ISO 两种都认 —— 前者是 GLM 的写法，后者是 Qwen 的。
     static func parseReset(_ line: String, now: Date = Date()) -> Date? {
+        // 明确带 UTC / Z 的时间不能先交给“本地时间”解析，否则上海机器会
+        // 把 Qwen 的重置点提前 8 小时。先走统一的 UTC 解析器。
+        let explicitUTC = #"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?\s*(?:UTC|Z)"#
+        if line.range(of: explicitUTC,
+                      options: [.regularExpression, .caseInsensitive]) != nil,
+           let reset = CooldownLedger.parseResetTime(line, now: now) {
+            return reset
+        }
+
         // 中文：本地时区（服务端按用户所在时区报）
         if let r = line.range(of: #"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})"#,
                               options: .regularExpression) {
@@ -136,9 +145,7 @@ public enum QuotaSignal {
             let df = DateFormatter()
             df.dateFormat = "yyyy-MM-dd HH:mm:ss"
             df.locale = Locale(identifier: "en_US_POSIX")
-            // 中文措辞用本地时区，带 Z/UTC 的走 UTC
-            df.timeZone = line.contains("UTC") || line.contains("Z]")
-                ? TimeZone(identifier: "UTC") : TimeZone.current
+            df.timeZone = TimeZone.current
             if let d = df.date(from: s), d > now,
                d.timeIntervalSince(now) < 40 * 86400 { return d }
         }
@@ -195,8 +202,8 @@ public enum QuotaSignal {
                     // ~/.claude 里跑的不一定是 Claude：用 Claude CLI 接 GLM
                     // 端点（ANTHROPIC_BASE_URL 指过去）是常见玩法，日志照样落在
                     // ~/.claude 下，而模型名是 glm-5.2。按目录归属会把 GLM 的
-                    // 打满算到 Claude 头上 —— 而 Claude 是本机的指挥兼架构师，
-                    // 冻住它等于高危任务全线停摆。宁可多花一次扫描。
+                    // 打满算到 Claude 头上会错误冻结主力开发额度；真实模型
+                    // 可能是 GLM，必须按会话内容归属。宁可多花一次扫描。
                     let owner = dominantPlatform(in: lines) ?? platform
                     let hit = Hit(platform: owner, at: mod,
                                   resetsAt: parseReset(s, now: now),
@@ -207,6 +214,53 @@ public enum QuotaSignal {
             }
         }
         return newest
+    }
+
+    /// 从不可覆盖的执行尝试台账恢复额度信号。
+    ///
+    /// Runner 的原始会话日志不一定写进平台自己的目录（Qwen 这次就是由 worker
+    /// 外壳收到 429），但终态 attempt 一定会保存 `handoffReason`。过去只在执行
+    /// 当下写 cooldown；当时二进制较旧、iCloud 写失败或进程被杀，事实就留在
+    /// attempts 里、额度台账却是空的，看板和调度随即把“已打空”误报成“可用”。
+    ///
+    /// 每个平台只看最新一次终态：后来的成功会证明旧 429 已经失效，不能翻旧账。
+    static func hitsFromAttempts(
+        _ attempts: [WorkAttempt], now: Date = Date(), within: TimeInterval = 14 * 86400
+    ) -> [Hit] {
+        var latestByID: [String: (index: Int, value: WorkAttempt)] = [:]
+        for (index, attempt) in attempts.enumerated() {
+            latestByID[attempt.attemptID] = (index, attempt)
+        }
+
+        var latestByPlatform: [Platform: (index: Int, value: WorkAttempt)] = [:]
+        for item in latestByID.values where item.value.outcome != .running {
+            let at = item.value.endedAt ?? item.value.startedAt
+            guard now.timeIntervalSince(at) >= 0, now.timeIntervalSince(at) <= within else {
+                continue
+            }
+            if let current = latestByPlatform[item.value.platform] {
+                let currentAt = current.value.endedAt ?? current.value.startedAt
+                if currentAt > at || (currentAt == at && current.index > item.index) { continue }
+            }
+            latestByPlatform[item.value.platform] = item
+        }
+
+        return latestByPlatform.values.compactMap { item in
+            let attempt = item.value
+            guard attempt.outcome == .failed,
+                  let reason = attempt.handoffReason,
+                  CooldownLedger.classify(reason) == .quotaExhausted else { return nil }
+            let at = attempt.endedAt ?? attempt.startedAt
+            let reset = parseReset(reason, now: at)
+            // 没有重置时间的信号只在默认 5 小时保守窗内有效；有明确时间则
+            // 一直保留到那个时刻。这样重启能恢复，过期后又不会继续误冻。
+            guard reset.map({ $0 > now }) ?? (now.timeIntervalSince(at) <= 5 * 3600) else {
+                return nil
+            }
+            return Hit(platform: attempt.platform, at: at, resetsAt: reset,
+                       message: String(reason.prefix(200)))
+        }
+        .sorted { $0.at < $1.at }
     }
 
     /// 采集时顺手学一遍：把发现的额度打满写进冷却台账。
@@ -224,19 +278,26 @@ public enum QuotaSignal {
             (.kimi, ["~/.kimi-code"]),
             (.qwen, ["~/.qwen"]),
         ]
-        var hits: [Hit] = []
+        // 先收 attempts，再收平台会话日志。两条都是持久事实来源；谁能提供
+        // 更晚、更精确的重置时间，下面的 active-until 比较就采信谁。
+        var candidates = hitsFromAttempts(WorkAttemptStore.all(), now: now)
         for (p, roots) in sources {
-            guard let hit = scan(roots: roots, platform: p, now: now) else { continue }
+            if let hit = scan(roots: roots, platform: p, now: now) {
+                candidates.append(hit)
+            }
+        }
+
+        var hits: [Hit] = []
+        for hit in candidates.sorted(by: { $0.at < $1.at }) {
             // **别覆盖更晚的重置时间。** 已经在冷却且冷得更久的，
             // 说明有更权威的信息（比如我们自己撞到的 429），不动它。
-            if let existing = CooldownLedger.active(now: now)[p],
+            if let existing = CooldownLedger.active(now: now)[hit.platform],
                existing.until >= (hit.resetsAt ?? now) { continue }
-            CooldownLedger.record(platform: p, cause: .quotaExhausted,
-                                  detail: "从会话日志学到：" + hit.message.prefix(120),
-                                  knownResetAt: hit.resetsAt, now: now)
+            CooldownLedger.record(platform: hit.platform, cause: .quotaExhausted,
+                                  detail: "从持久记录恢复：" + hit.message.prefix(120),
+                                  knownResetAt: hit.resetsAt, now: hit.at)
             hits.append(hit)
         }
         return hits
     }
 }
-

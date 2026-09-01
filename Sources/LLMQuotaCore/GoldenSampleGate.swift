@@ -73,6 +73,20 @@ public enum GoldenSampleGate {
         guard !kind.isEmpty else { throw invalid("交付物类型不能为空") }
         let contract = try loadContract(repo: repo)
 
+        // 架构设计必须发生在实现之前。过去统一入队只核对“样板 ID 存在”，
+        // 即使生产路线覆盖不了目标、参考物缺失或 PRODUCTION.md 仍是空壳，
+        // 黄金样板也能直接开跑；架构师只能等视觉否决后再救火。这里复用已经
+        // 存在的 ProjectDoctor 作为开工闸，不再维护第二套契约判定。
+        let design = ProjectDoctor.inspect(contract: contract, repo: repo)
+        if !design.canStartProduction {
+            let reasons = design.issues
+                .filter { $0.severity == .error }
+                .prefix(4)
+                .map(\.message)
+                .joined(separator: "；")
+            throw invalid("前置生产设计未通过，禁止开始黄金样板：" + reasons)
+        }
+
         switch requested.stage {
         case .goldenSample:
             let sampleID = requested.goldenSampleID.trimmingCharacters(
@@ -156,6 +170,7 @@ public enum GoldenSampleGate {
                 guard task.state == .queued || context.blockedReason != nil else { continue }
                 var out = task
                 out.state = .blocked
+                out.waitReason = .productionGate
                 context.blockedReason = reason
                 out.production = context
                 out.note = "黄金样板闸：" + reason
@@ -164,7 +179,10 @@ public enum GoldenSampleGate {
                 var out = task
                 context.blockedReason = nil
                 out.production = context
-                if task.state == .blocked { out.state = .queued }
+                if task.state == .blocked {
+                    out.state = .queued
+                    out.waitReason = nil
+                }
                 out.note = "黄金样板已通过，批量扩张重新排队"
                 changed.append(out)
             }

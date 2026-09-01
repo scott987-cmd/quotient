@@ -38,6 +38,9 @@ public enum Review {
         /// 关联的任务记录（如果还在 tasks.jsonl 里）。
         public var prompt: String?
         public var hasWorktree: Bool
+        /// 调度器自动派生的评审/证据/架构处置分支只负责留下审计记录。
+        /// 它们不能排在真正的用户产出前面，占掉每轮唯一的落地名额。
+        public var isSupportingTask: Bool = false
 
         /// agent 交的**证据截图**（相对仓库根的路径）。
         ///
@@ -47,6 +50,12 @@ public enum Review {
         /// 把它们列出来，人看图就能判，不必自己下场 ——
         /// 实测这是产出积压的头号原因：56% 的完成产出没人来得及审。
         public var evidence: [String]
+        /// 当前 HEAD 这一版新增或修改的证据。历史证据可以补充上下文，但不能
+        /// 挤掉这一版真正要验收的截图/录屏。
+        public var currentRevisionEvidence: [String] = []
+        /// true 表示证据来自生产合同明确指定的当前里程碑目录。这种情况下必须
+        /// 整包下发，不能再套普通首屏的 4 图 + 1 视频采样上限。
+        public var contractBoundEvidence: Bool = false
 
         public var netLines: Int { insertions - deletions }
     }
@@ -136,11 +145,18 @@ public enum Review {
         // 任务集去查会拿到上一次的结果 —— 测试立刻抓到了这一点
         //（testUnfinishedGraphIsExcludedFromReview）。
         //
-        // 指纹只取 id + 状态：这两样变了结果才可能变，而算它比一次 git 便宜
-        // 好几个数量级。
+        // Owner 交接时 id / 状态可能都不变，但当前产出分支会变。分支和 Owner
+        // 不进指纹的话，交接后的 12 秒内仍会把旧 Agent 分支发给手机、甚至派去
+        // 自动刷新；这正是同一 Flint 任务出现六份验收的原因。
         var fp = Hasher()
         fp.combine(tasks.count)
-        for x in tasks { fp.combine(x.id); fp.combine(x.state.rawValue) }
+        for x in tasks {
+            fp.combine(x.id)
+            fp.combine(x.state.rawValue)
+            fp.combine(x.branch)
+            fp.combine(x.ownerPlatform?.rawValue)
+            fp.combine(x.ownerRunnerID)
+        }
         let cacheKey = repo + "|" + base + "|" + String(fp.finalize())
         listCacheLock.lock()
         if let hit = listCache[cacheKey],
@@ -221,6 +237,22 @@ public enum Review {
             let platform = parts.count >= 2 ? String(parts[1]) : "?"
             let taskID = parts.count >= 3 ? String(parts[2]) : ""
 
+            // 冻结/丢弃/换 Owner 后留下的派生评审分支只保留作审计，不再进入
+            // 待审和自动落地。源分支故意保留时，单看“分支存在”识别不出来。
+            if let task = byID[taskID],
+               TaskKind.obsoleteSupportingReason(task, among: tasks) != nil {
+                continue
+            }
+
+            // 同一逻辑任务跨 Agent 接力后，历史分支仍会留在 Git 里。任务记录的
+            // `branch` 才是当前 Owner 正在交付的唯一产出；旧分支只能留作历史，
+            // 不能继续进入验收、证据转码或 StaleBranch 自动刷新。
+            if !b.hasPrefix("agent/graph/"),
+               let activeBranch = byID[taskID]?.branch,
+               !activeBranch.isEmpty, activeBranch != b {
+                continue
+            }
+
             // **普通任务跑到一半也不能送审。**
             //
             // 图任务此前有终态闸，普通任务却没有。只要 agent 中途提交过一次，
@@ -243,6 +275,16 @@ public enum Review {
             let newestFiles = GitWorkspace.git(
                 ["show", "--pretty=format:", "--name-only", "--first-parent", b],
                 in: repo).stdout.split(separator: "\n").map(String.init)
+            let milestoneEvidence = productionMilestoneEvidence(
+                repo: repo, branch: b, changedFiles: stat.files,
+                evidenceFiles: allEvidence)
+            let reviewEvidence = milestoneEvidence.isEmpty
+                ? newestRevisionEvidenceFirst(
+                    allEvidence, newestRevisionFiles: newestFiles)
+                : milestoneEvidence
+            let preferredEvidence = milestoneEvidence.isEmpty
+                ? newestFiles.filter { allEvidence.contains($0) }
+                : milestoneEvidence
 
             items.append(Item(
                 branch: b, taskID: taskID, platform: platform,
@@ -254,6 +296,8 @@ public enum Review {
                 overlapsWith: [],
                 prompt: byID[taskID]?.prompt,
                 hasWorktree: worktrees.contains(b),
+                isSupportingTask: taskFor(taskID, in: byID, all: tasks)
+                    .map(TaskKind.isSupportingTask) ?? false,
                 // **人能直接看出成败的东西才算证据。**
                 //
                 // 老板的原话：「我只看人可阅读验证的成功，比如游戏截图、
@@ -269,8 +313,9 @@ public enum Review {
                 // 少一条会被忘掉的规矩。
                 // 判定在 EvidenceGate.isEvidenceFile —— 和「什么算证据」的
                 // 条款同一个家。原来内联在这里，条款改了它不会跟着改。
-                evidence: newestRevisionEvidenceFirst(
-                    allEvidence, newestRevisionFiles: newestFiles)))
+                evidence: reviewEvidence,
+                currentRevisionEvidence: preferredEvidence,
+                contractBoundEvidence: !milestoneEvidence.isEmpty))
         }
 
         // 交叉比对文件重叠。O(n²) 但 n 是待审分支数，几十个顶天了。
@@ -281,10 +326,46 @@ public enum Review {
                 .map(\.element.branch)
         }
         return items.sorted { (a, b) in
-            // 能干净合的排前面（先摘容易的），其次按改动小的优先 —— 小改动审得快。
+            // 真正的用户产出永远排在系统派生的评审/证据报告前面。
+            // 否则一次主任务产生十条评审，按“小改动优先”会让十份一文件
+            // 报告连续占掉每轮唯一名额，正主看起来就像永久卡住。
             if a.mergesCleanly != b.mergesCleanly { return a.mergesCleanly }
+            if a.isSupportingTask != b.isSupportingTask { return !a.isSupportingTask }
+            // 同类里再按改动小的优先 —— 小改动审得快。
             return a.files.count < b.files.count
         }
+    }
+
+    /// 生产样板的验收证据由合同明确指定的当前里程碑目录决定，不能从整条历史
+    /// 分支里按关键词猜。猜测会把 v12 握枪图塞进 M0 Blender 母版验收，既让
+    /// 人看错对象，也会为旧视频启动无谓转码。
+    static func productionMilestoneEvidence(repo: String, branch: String,
+                                             changedFiles: [String],
+                                             evidenceFiles: [String]) -> [String] {
+        struct Contract: Decodable {
+            var currentMilestone: String?
+            var reviewBoard: String?
+        }
+        let contracts = changedFiles.filter {
+            $0.hasPrefix("Production/") && $0.hasSuffix("/contract.json")
+        }
+        for path in contracts {
+            let shown = GitWorkspace.git(["show", "\(branch):\(path)"], in: repo)
+            guard shown.exitCode == 0,
+                  let data = shown.stdout.data(using: .utf8),
+                  let contract = try? JSONDecoder().decode(Contract.self, from: data),
+                  let milestone = contract.currentMilestone?.lowercased(),
+                  let board = contract.reviewBoard, !milestone.isEmpty else { continue }
+            let dir = (board as NSString).deletingLastPathComponent
+            let components = dir.split(separator: "/").map { $0.lowercased() }
+            guard components.contains(milestone) else { continue }
+            let prefix = dir.hasSuffix("/") ? dir : dir + "/"
+            let explicit = evidenceFiles.filter {
+                $0.hasPrefix(prefix) && (isImageName($0) || isVideoName($0))
+            }.sorted()
+            if !explicit.isEmpty { return explicit }
+        }
+        return []
     }
 
     /// 合并一个分支。
@@ -355,6 +436,7 @@ public enum Review {
                                    command: String, timeout: Int = 900) -> VerifyFailure? {
         let tmp = NSTemporaryDirectory() + "llmq-verify-\(UUID().uuidString.prefix(8))"
         defer {
+            _ = cleanupTemporaryDerivedData(worktree: tmp)
             _ = GitWorkspace.git(["worktree", "remove", "--force", tmp], in: repo)
             _ = GitWorkspace.git(["worktree", "prune"], in: repo)
         }
@@ -409,6 +491,36 @@ public enum Review {
             return VerifyFailure(message: "验证没过（退出码 \(r.exitCode)）"
                 + (out.isEmpty ? "" : "：\(out.prefix(240))"), transient: false)
         }
+    }
+
+    /// 删除只属于一次性验证 worktree 的 Xcode DerivedData。
+    ///
+    /// Xcode 用 workspace 的绝对路径生成缓存目录名；随机 `llmq-verify-*`
+    /// worktree 每跑一次就留下约 240 MB，不能被下一轮复用。只按 info.plist
+    /// 里的 WorkspacePath 精确匹配，用户正常项目缓存和并行构建一律不碰。
+    @discardableResult
+    static func cleanupTemporaryDerivedData(
+        worktree: String, rootOverride: URL? = nil
+    ) -> Int {
+        let root = rootOverride ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Developer/Xcode/DerivedData", isDirectory: true)
+        guard let dirs = try? FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]) else { return 0 }
+        let prefix = URL(fileURLWithPath: worktree).standardizedFileURL.path
+        var removed = 0
+        for dir in dirs {
+            let info = dir.appendingPathComponent("info.plist")
+            guard let data = try? Data(contentsOf: info),
+                  let plist = try? PropertyListSerialization.propertyList(
+                    from: data, options: [], format: nil),
+                  let dict = plist as? [String: Any],
+                  let workspace = dict["WorkspacePath"] as? String else { continue }
+            let path = URL(fileURLWithPath: workspace).standardizedFileURL.path
+            guard path == prefix || path.hasPrefix(prefix + "/") else { continue }
+            if (try? FileManager.default.removeItem(at: dir)) != nil { removed += 1 }
+        }
+        return removed
     }
 
     /// 合并一个分支。
@@ -476,6 +588,10 @@ public enum Review {
     static func activeVeto(_ vetoes: [String: VetoEntry],
                            branch: String, head: String) -> String? {
         guard let e = vetoes[branch] else { return nil }
+        // 旧实现把“主工作区当前不在 main”当成分支质量否决永久写盘。
+        // 这是落地环境问题，不是候选提交的问题；升级后必须自动放掉这类
+        // 历史脏数据，否则新实现即使已能独立合入，也永远走不到合入代码。
+        if e.note.contains("不是 main。先切过去再合") { return nil }
         if !e.head.isEmpty, !head.isEmpty, e.head != head { return nil }
         return e.note
     }
@@ -492,6 +608,21 @@ public enum Review {
         public var branch: String
         public var landed: Bool
         public var note: String
+    }
+
+    /// 同一仓库所有落地入口共用的跨进程锁名。
+    ///
+    /// worker、命令行和手机动作是不同进程；只靠 Git 的 update-ref CAS 虽能
+    /// 防止覆盖新提交，却会让两边各自白跑一遍昂贵验证。FNV-1a 是稳定散列，
+    /// 不能用 Swift `hashValue`（它每个进程随机，恰好挡不住跨进程竞态）。
+    static func landingLockName(repo: String, base: String) -> String {
+        let key = URL(fileURLWithPath: repo).standardizedFileURL.path + "|" + base
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in key.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return "landing-" + String(hash, radix: 16)
     }
 
     /// 把「机器有把握」的那部分待审分支自动合进 main。
@@ -561,7 +692,7 @@ public enum Review {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == wantPath
                 && !($0.qualityContract ?? "").isEmpty
         }
-        if let _ = dirtBlockingLanding(repo: repo) {
+        if let _ = dirtBlockingLanding(repo: repo, base: base) {
             return pending0(repo: repo, base: base, tasks: tasks).map {
                 Blocked(branch: $0.branch,
                         reason: "仓库里有未提交的改动（多半是人正在里面写代码）"
@@ -620,7 +751,12 @@ public enum Review {
                     note("质量契约要求真正看过录屏/截图 —— 尚未派多模态验收")
                     continue
                 case .pending:
-                    note("多模态 agent 正在逐帧对照质量契约")
+                    if let reason = VisualQualityGate.blockedReason(
+                        branch: item.branch, head: item.head, tasks: tasks) {
+                        note("多模态验收已停止：" + String(reason.prefix(160)))
+                    } else {
+                        note("多模态 agent 正在逐帧对照质量契约")
+                    }
                     continue
                 case .rejected:
                     note("多模态质量验收判定未达标 —— 不自动合入，留给整改/人工处置")
@@ -666,14 +802,19 @@ public enum Review {
     /// 只有 STATUS.md 脏 = 上一次落地自己留下的(提交撞 index.lock 没成),
     /// 先补提交掉再判 —— 不然落地被自己的脏堵死(2026-08-23 Flint 两小时)。
     /// 返回 nil = 干净可落地;非 nil = 脏(porcelain 原文),让开。
-    public static func dirtBlockingLanding(repo: String) -> String? {
+    public static func dirtBlockingLanding(repo: String, base: String = "main") -> String? {
+        // 只检查真正承载目标分支的 worktree。用户可以在主目录的另一条分支
+        // 上继续写代码；那份未提交改动与一个独立的 main 合入没有关系。
+        // main 没有被任何 worktree 检出时，mergeUnverified 会使用临时
+        // detached worktree，因此也没有需要阻断的用户工作区。
+        guard let landingPath = worktreePath(repo: repo, branch: base) else { return nil }
         func porcelain() -> String {
-            GitWorkspace.git(["status", "--porcelain"], in: repo).stdout
+            GitWorkspace.git(["status", "--porcelain"], in: landingPath).stdout
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let first = porcelain()
         if first.isEmpty { return nil }
-        if ProgressLog.healStatusOnlyDirt(repo: repo) {
+        if ProgressLog.healStatusOnlyDirt(repo: landingPath) {
             let again = porcelain()
             return again.isEmpty ? nil : again
         }
@@ -683,12 +824,23 @@ public enum Review {
     public static func autoLand(repo: String, base: String = "main",
                                 tasks: [WorkTask] = TaskStore.all(),
                                 maxPerCall: Int = 1) -> [AutoLandOutcome] {
+        // **一个仓库同一时刻只能有一轮落地。** worker、前台 `work land`、
+        // 手机动作都可能同时进来；没有跨进程锁时，两边会并行跑全量验证，
+        // 然后其中一边在 update-ref CAS 处因 main 已变化而白费整轮。
+        let landingLock = SingleInstanceLock(name: landingLockName(repo: repo, base: base))
+        guard landingLock.acquire() else {
+            return [AutoLandOutcome(
+                branch: base, landed: false,
+                note: "另一轮落地正在验证这个仓库；本轮未重复执行")]
+        }
+        defer { landingLock.release() }
+
         let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         // 主仓库脏着（多半是人正在里面改代码）就整轮跳过，
         // 也**不给任何分支记否决**：环境没就绪不是分支的错。
         // 真实翻车：自动落地首航撞上一次会话的未提交改动，
         // 一份完全没问题的产出被记了否决、从此不再自动重试。
-        guard dirtBlockingLanding(repo: repo) == nil else {
+        guard dirtBlockingLanding(repo: repo, base: base) == nil else {
             return []
         }
 
@@ -820,16 +972,6 @@ public enum Review {
                EvidenceGate.changesVisibleBehavior(item.files) {
                 continue
             }
-            // 项目级质量契约不是一段提示词装饰：可见改动必须由真正能看图/
-            // 录屏的执行器逐帧判过。代码审核票不能替代视觉质量票。
-            if needsVisualQuality, EvidenceGate.changesVisibleBehavior(item.files) {
-                let visual = VisualQualityGate.status(
-                    branch: item.branch, head: item.head, tasks: tasks)
-                if visual == .missing {
-                    _ = VisualQualityGate.dispatch(item: item, repo: repo, tasks: tasks)
-                }
-                guard visual == .approved else { continue }
-            }
             // **走统一判据，别再内联一份。**
             //
             // 这里原先是第六份手写的同款逻辑，而且用的是无条件的
@@ -850,6 +992,18 @@ public enum Review {
                                      head: item.head,
                                      headAt: item.committedAt) {
                 continue
+            }
+            // 项目级质量契约不是一段提示词装饰：可见改动必须由真正能看图/
+            // 录屏的执行器逐帧判过。代码审核票不能替代视觉质量票。
+            // 顺序也不能反：代码合入复核尚未通过时派视觉票，既浪费视觉额度，
+            // 又会在代码被维持拒绝后留下一个“视觉仍在处理”的假主责。
+            if needsVisualQuality, EvidenceGate.changesVisibleBehavior(item.files) {
+                let visual = VisualQualityGate.status(
+                    branch: item.branch, head: item.head, tasks: tasks)
+                if visual == .missing {
+                    _ = VisualQualityGate.dispatch(item: item, repo: repo, tasks: tasks)
+                }
+                guard visual == .approved else { continue }
             }
             // **重叠不是「永远不合」，是「排队一个一个合」。**
             //
@@ -931,6 +1085,8 @@ public enum Review {
     static func isOldestInOverlapGroup(_ item: Item, among all: [Item]) -> Bool {
         let group = all.filter { item.overlapsWith.contains($0.branch) } + [item]
         let oldest = group.min { a, b in
+            // 支撑报告即使更老，也不能挡住它所支撑的主产出。
+            if a.isSupportingTask != b.isSupportingTask { return !a.isSupportingTask }
             let ta = a.committedAt ?? .distantFuture
             let tb = b.committedAt ?? .distantFuture
             if ta != tb { return ta < tb }
@@ -948,6 +1104,9 @@ public enum Review {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == want
                 && !($0.qualityContract ?? "").isEmpty
         }) else { return nil }
+        if let violation = QualityGuardrailGate.violation(repo: repo, branch: branch) {
+            return violation
+        }
         let files = GitWorkspace.git(
             ["diff", "--name-only", "\(base)...\(branch)"], in: repo).stdout
             .split(separator: "\n").map(String.init)
@@ -958,7 +1117,12 @@ public enum Review {
         switch VisualQualityGate.status(branch: branch, head: head, tasks: tasks) {
         case .approved: return nil
         case .missing: return "质量契约要求先逐帧验收截图/录屏；当前还没有视觉结论"
-        case .pending: return "多模态 Agent 正在逐帧验收；结论出来前不能合入"
+        case .pending:
+            if let reason = VisualQualityGate.blockedReason(
+                branch: branch, head: head, tasks: tasks) {
+                return "多模态验收已停止：" + String(reason.prefix(160))
+            }
+            return "多模态 Agent 正在逐帧验收；结论出来前不能合入"
         case .rejected: return "多模态视觉验收判定未达标；已交回原 Agent 会话整改，不能合入"
         }
     }
@@ -1011,7 +1175,7 @@ public enum Review {
         // 分支里，几个分支各写各的进度，合过来每次都冲突在同一段。
         // 合并是串行的，写在合并之后天然不打架。
         if case .success = r {
-            ProgressLog.recordLanding(repo: repo, branch: branch)
+            recordLandingProgress(repo: repo, branch: branch, base: base)
             // **带录屏的成果落地了 → 记一笔，等着推给老板看。**
             //
             // 老板（2026-08-22）的原话：「这个不应该你驱动，应该是我们的
@@ -1043,6 +1207,30 @@ public enum Review {
             enqueuePostLandReview(repo: repo, branch: branch)
         }
         return r
+    }
+
+    /// 在目标分支自己的工作区里更新 STATUS.md。目标分支未被检出时使用
+    /// 临时 worktree，并以 update-ref 的旧值参数防止覆盖并发落地。
+    private static func recordLandingProgress(repo: String, branch: String, base: String) {
+        if let path = worktreePath(repo: repo, branch: base) {
+            _ = ProgressLog.recordLanding(repo: path, branch: branch)
+            return
+        }
+        let oldBase = GitWorkspace.git(["rev-parse", "refs/heads/\(base)"], in: repo)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !oldBase.isEmpty else { return }
+        let tmp = NSTemporaryDirectory() + "llmq-progress-\(UUID().uuidString.prefix(8))"
+        let add = GitWorkspace.git(["worktree", "add", "--detach", tmp, oldBase], in: repo)
+        guard add.exitCode == 0 else { return }
+        defer {
+            _ = GitWorkspace.git(["worktree", "remove", "--force", tmp], in: repo)
+            _ = GitWorkspace.git(["worktree", "prune"], in: repo)
+        }
+        guard ProgressLog.recordLanding(repo: tmp, branch: branch) else { return }
+        let updated = GitWorkspace.git(["rev-parse", "HEAD"], in: tmp)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !updated.isEmpty else { return }
+        _ = GitWorkspace.git(["update-ref", "refs/heads/\(base)", updated, oldBase], in: repo)
     }
 
     /// 为一次已完成的合并生成复查任务。
@@ -1102,28 +1290,85 @@ public enum Review {
         t.preferredPlatform = .minimax
         t.origin = "post-land-review"
         t.note = "落地自动排的复查 · \(branch)"
-        try? TaskStore.append(t)
+        do {
+            _ = try TaskIntake.enqueuePrepared(
+                t, idempotencyKey: "post-land-review:" + sha,
+                source: "post-land-review")
+        } catch {
+            fputs("合入后复查任务入队失败：\(error)\n", stderr)
+        }
     }
 
     static func mergeUnverified(repo: String, branch: String, base: String = "main",
                                 deleteBranch: Bool = true) -> Result<String, NSError> {
-        let head = GitWorkspace.git(["rev-parse", "--abbrev-ref", "HEAD"], in: repo)
-            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard head == base else {
-            return .failure(ClusterCA.err("当前在 \(head) 上，不是 \(base)。先切过去再合。"))
+        func failure(_ message: String, transient: Bool) -> Result<String, NSError> {
+            .failure(NSError(domain: "Review", code: transient ? 2 : 1, userInfo: [
+                NSLocalizedDescriptionKey: message,
+                transientKey: transient
+            ]))
         }
-        guard dirtBlockingLanding(repo: repo) == nil else {
-            // 工作区脏的时候合并会把用户没提交的改动卷进冲突里，很难收拾。
-            return .failure(ClusterCA.err("工作区有未提交的改动，先处理掉再合。"))
+
+        let oldBase = GitWorkspace.git(["rev-parse", "refs/heads/\(base)"], in: repo)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !oldBase.isEmpty else {
+            return failure("找不到目标分支 \(base)", transient: true)
+        }
+
+        let existingBasePath = worktreePath(repo: repo, branch: base)
+        if existingBasePath != nil, dirtBlockingLanding(repo: repo, base: base) != nil {
+            return failure("目标分支 \(base) 的工作区有未提交改动，先处理后再合。",
+                           transient: true)
+        }
+
+        // main 没有被检出时，绝不能要求用户先切分支，更不能在用户当前的
+        // 功能分支上执行 merge。用一次性 worktree 生成合并提交，再用 CAS
+        // 推进 main：期间若 main 被别人推进，update-ref 会拒绝而不是覆盖。
+        let temporaryPath = existingBasePath == nil
+            ? NSTemporaryDirectory() + "llmq-land-\(UUID().uuidString.prefix(8))"
+            : nil
+        let landingPath = existingBasePath ?? temporaryPath!
+        if let temporaryPath {
+            let add = GitWorkspace.git(
+                ["worktree", "add", "--detach", temporaryPath, oldBase], in: repo)
+            guard add.exitCode == 0 else {
+                return failure("建独立合入工作区失败：\(add.stderr.prefix(200))",
+                               transient: true)
+            }
+        }
+        defer {
+            if let temporaryPath {
+                _ = GitWorkspace.git(["worktree", "remove", "--force", temporaryPath], in: repo)
+                _ = GitWorkspace.git(["worktree", "prune"], in: repo)
+            }
         }
 
         let r = GitWorkspace.git(
-            ["merge", "--no-ff", "-m", "merge \(branch)", branch], in: repo)
+            ["merge", "--no-ff", "-m", "merge \(branch)", branch], in: landingPath)
         guard r.exitCode == 0 else {
             // 合失败要把状态还原，不能留一个半合并的仓库给用户。
-            _ = GitWorkspace.git(["merge", "--abort"], in: repo)
-            return .failure(ClusterCA.err("合并失败，已还原：\(r.stderr.prefix(200))"))
+            _ = GitWorkspace.git(["merge", "--abort"], in: landingPath)
+            let detail = (r.stderr + " " + r.stdout)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let conflict = detail.contains("CONFLICT") || detail.contains("Automatic merge failed")
+            return failure("合并失败，已还原：\(detail.prefix(200))", transient: !conflict)
         }
+
+        if temporaryPath != nil {
+            let merged = GitWorkspace.git(["rev-parse", "HEAD"], in: landingPath)
+                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !merged.isEmpty else {
+                return failure("独立工作区没有生成合并提交", transient: true)
+            }
+            let advance = GitWorkspace.git(
+                ["update-ref", "refs/heads/\(base)", merged, oldBase], in: repo)
+            guard advance.exitCode == 0 else {
+                return failure("目标分支在合入期间发生变化，未覆盖新进展；下一轮重试",
+                               transient: true)
+            }
+        }
+
+        // 合入事实先落账；删分支只是清理，不能决定 landedAt 是否存在。
+        markDisposition(branch: branch, landed: true, base: base)
         guard deleteBranch else { return .success(r.stdout) }
 
         // 顺序错了会静默失败。
@@ -1143,7 +1388,6 @@ public enum Review {
             _ = GitWorkspace.git(["worktree", "remove", "--force", path], in: repo)
         }
         _ = GitWorkspace.git(["worktree", "prune"], in: repo)
-        markDisposition(branch: branch, landed: true)
         let del = GitWorkspace.git(["branch", "-d", branch], in: repo)
         if del.exitCode != 0 {
             // 合并本身是成功的，只是没清干净。照实说，别谎报。
@@ -1155,8 +1399,10 @@ public enum Review {
 
     /// 把这次产出的去向写回任务记录。
     ///
-    /// TaskStore 是 append-only + 后写覆盖，所以「更新」就是再 append 一条。
-    static func markDisposition(branch: String, landed: Bool, reason: String? = nil) {
+    /// 只改处置字段；必须在 TaskStore 的最新 revision 上原子合并，不能拿评审
+    /// 开始时读到的完整旧快照覆盖执行器或用户刚写入的字段。
+    static func markDisposition(branch: String, landed: Bool, reason: String? = nil,
+                                base: String = "main") {
         let id = String(branch.split(separator: "/").last ?? "")
         guard !id.isEmpty else { return }
         let all = TaskStore.all()
@@ -1174,25 +1420,74 @@ public enum Review {
         if branch.hasPrefix("agent/graph/") {
             let nodes = all.filter { $0.graphID == id }
             guard !nodes.isEmpty else { return }
-            for var t in nodes {
-                if landed { t.landedAt = Date() }
-                else { t.discardedAt = Date(); t.discardReason = reason }
-                try? TaskStore.append(t)
+            for node in nodes {
+                do {
+                    let saved = try TaskStore.transition(
+                        id: node.id, actor: "review",
+                        reason: landed ? "任务图产出已合入 \(base)" : "任务图产出已丢弃"
+                    ) { t in
+                        if landed {
+                            t.state = .done
+                            t.landedAt = Date()
+                            t.runnerPID = nil
+                            t.terminalFailureKind = nil
+                            t.retryNotBefore = nil
+                            t.note = "已合入 \(base)"
+                        } else {
+                            t.discardedAt = Date()
+                            t.discardReason = reason
+                            t.runnerPID = nil
+                            t.terminalFailureKind = nil
+                            t.retryNotBefore = nil
+                        }
+                    }
+                    Inbox.writeResult(for: saved)
+                } catch {
+                    fputs("任务 \(node.id) 落地状态写入失败：\(error)\n", stderr)
+                }
             }
             return
         }
 
-        guard var t = all.first(where: { $0.id == id }) else { return }
-        if landed { t.landedAt = Date() }
-        else { t.discardedAt = Date(); t.discardReason = reason }
-        try? TaskStore.append(t)
+        guard all.contains(where: { $0.id == id }) else { return }
+        do {
+            let saved = try TaskStore.transition(
+                id: id, actor: "review",
+                reason: landed ? "任务产出已合入 \(base)" : "任务产出已丢弃"
+            ) { t in
+                if landed {
+                    t.state = .done
+                    t.landedAt = Date()
+                    t.runnerPID = nil
+                    t.terminalFailureKind = nil
+                    t.retryNotBefore = nil
+                    t.note = "已合入 \(base)"
+                } else {
+                    t.discardedAt = Date()
+                    t.discardReason = reason
+                    t.runnerPID = nil
+                    t.terminalFailureKind = nil
+                    t.retryNotBefore = nil
+                }
+            }
+            Inbox.writeResult(for: saved)
+        } catch {
+            fputs("任务 \(id) 落地状态写入失败：\(error)\n", stderr)
+        }
     }
 
     /// 丢弃一个分支和它的工作区。
-    public static func discard(repo: String, branch: String, reason: String? = nil) {
+    public static func discard(repo: String, branch: String, reason: String? = nil,
+                               recordDisposition: Bool = true) {
         // 和 merge 同理：丢弃立刻改变待审集合。
         defer { invalidateListCache() }
-        markDisposition(branch: branch, landed: false, reason: reason)
+        // `llmq work discard` 会在清理分支后一次性写完整终态。若这里也先写，
+        // 它手里的任务快照立刻过期，结果就会变成「分支已经删了、discardedAt
+        // 也写了，但命令最后报 stale write」，既是假失败又留下 state=done。
+        // 手机端直接丢分支仍沿用默认值，由这里负责记录去向。
+        if recordDisposition {
+            markDisposition(branch: branch, landed: false, reason: reason)
+        }
         // 先摘 worktree 再删分支：分支被 worktree 占用时 git 拒绝删除，
         // 而错误信息（"used by worktree at ..."）不看文档很难懂。
         if let path = worktreePath(repo: repo, branch: branch) {
@@ -1200,6 +1495,110 @@ public enum Review {
         }
         _ = GitWorkspace.git(["worktree", "prune"], in: repo)
         _ = GitWorkspace.git(["branch", "-D", branch], in: repo)
+    }
+
+    /// 处理人对一份产出的“拒绝”。体验型黄金样板的拒绝表示“保留现有成果，
+    /// 沿同一任务/Owner 继续整改”，绝不是“删除整条分支”。普通一次性产出仍
+    /// 沿用原来的 discard 语义。
+    ///
+    /// 这条区分必须在服务端完成：手机只回传 review/discard，不能让客户端
+    /// 猜任务是不是生产样板。否则一句“两个手的握枪姿势都不对”会把几十个
+    /// 提交和完整上下文一起删掉，派生的架构复核也会因为目标分支消失而作废。
+    @discardableResult
+    public static func reject(repo: String, branch: String,
+                              reason: String? = nil) -> Bool {
+        let id = String(branch.split(separator: "/").last ?? "")
+        let explanation = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let feedback = explanation?.isEmpty == false ? explanation! : "效果未达到验收要求"
+        if var task = TaskStore.all().first(where: { $0.id == id }),
+           task.production?.requiresExperienceApproval == true {
+            guard GitWorkspace.branchExists(branch, in: repo) else { return false }
+            let head = GitWorkspace.git(["rev-parse", branch], in: repo)
+                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !head.isEmpty else { return false }
+            task = requeuedAfterHumanRejection(task, reason: feedback, head: head)
+            do {
+                _ = try TaskStore.transition(
+                    task, actor: "human-review", reason: "人工拒绝体验样板并交回整改")
+            } catch {
+                fputs("体验样板整改重排失败：\(error)\n", stderr)
+                return false
+            }
+            invalidateListCache()
+            return true
+        }
+        discard(repo: repo, branch: branch, reason: feedback)
+        return true
+    }
+
+    /// 纯状态转换，单测可以精确覆盖“保留 owner/branch/context，只重置本轮执行”。
+    public static func requeuedAfterHumanRejection(_ task: WorkTask, reason: String,
+                                                    head: String,
+                                                    countsTowardVisualQualityLimit: Bool = true,
+                                                    now: Date = Date()) -> WorkTask {
+        var retry = task
+        let marker = "【你的效果反馈：\(String(head.prefix(8)))】"
+        if !retry.prompt.contains(marker) {
+            retry.prompt += "\n\n\(marker)\n\(String(reason.prefix(2_000)))\n"
+        }
+        let authorityMarker = "【本轮整改授权：\(String(head.prefix(8)))】"
+        if !retry.prompt.contains(authorityMarker) {
+            retry.prompt += "\n\(authorityMarker)\n"
+                + "这条最新人工反馈已经明确要求继续修复上述缺陷。历史上下文里与"
+                + "该缺陷同主题的“等老板决定”、pending ask 或产线选择均视为已被"
+                + "本轮决定覆盖。可以修改资产生成、Blender 烘焙或握姿实现，但不得"
+                + "修改、绕过或放宽质量门槛来换取通过；现有路线无法满足硬门槛时，"
+                + "必须如实停在架构阻断，不能继续重复调参。只有出现与本反馈无关、"
+                + "且必须由人选择的新分叉时，才允许重新提问。\n"
+        }
+        retry.state = .queued
+        retry.createdAt = now
+        retry.startedAt = nil
+        retry.endedAt = nil
+        retry.exitCode = nil
+        retry.changedFiles = nil
+        retry.runnerPID = nil
+        retry.outputs = []
+        retry.triedPlatforms = []
+        retry.pendingAsk = nil
+        // 最新人工反馈已经直接写进 prompt，才会被所有 runner 稳定读到。
+        // answeredAsk 必须和 pendingAsk 的 askID 成对才会进入恢复 briefing；
+        // 单独伪造一个答案既不会生效，还会制造“已经答了哪个问题”的假状态。
+        retry.answeredAsk = nil
+        retry.askRounds = 0
+        retry.landedAt = nil
+        retry.discardedAt = nil
+        retry.discardReason = nil
+        retry.handoff = nil
+        retry.pausedAt = nil
+        retry.pauseReason = nil
+        retry.branch = task.branch
+        retry.preferredPlatform = task.ownerPlatform ?? task.platform
+        retry.note = "你拒绝了这版效果（\(String(reason.prefix(160)))）；"
+            + "已保留分支并交回 "
+            + (task.ownerRunnerID ?? task.ownerPlatform?.displayName
+                ?? task.platform?.displayName ?? "原 Agent")
+            + " 的同一任务继续整改"
+        if countsTowardVisualQualityLimit {
+            _ = TaskPause.registerQualityRejection(
+                &retry, reason: String(reason.prefix(400)), now: now)
+        }
+        return retry
+    }
+
+    /// 取最近一次人工效果反馈，供失败后的人工重试继续沿用。反馈段到下一条
+    /// `【...】` 指令为止；不能拿整份历史 prompt 当理由再次灌回上下文。
+    public static func latestHumanFeedback(in prompt: String) -> String? {
+        guard let marker = prompt.range(of: "【你的效果反馈：", options: .backwards),
+              let lineEnd = prompt[marker.upperBound...].firstIndex(of: "\n") else {
+            return nil
+        }
+        let bodyStart = prompt.index(after: lineEnd)
+        let tail = prompt[bodyStart...]
+        let bodyEnd = tail.range(of: "\n【")?.lowerBound ?? prompt.endIndex
+        let value = prompt[bodyStart..<bodyEnd]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 
     /// 清理已经合并过的分支留下的 worktree。
@@ -1325,6 +1724,9 @@ extension Review {
         public var evidenceFiles: [String] = []
         /// 非空时服务端不提供普通“合入”动作，并直接把原因展示给人。
         public var landingBlockReason: String? = nil
+        /// 发布这一版摘要时，机器评审是否已明确否决。
+        /// Optional 保证旧客户端写出的摘要仍能解码。
+        public var rejected: Bool? = nil
     }
 
     /// 手机上的验收结论。写进 `shared/verdicts/<repo>|<branch>.json`，
@@ -1398,6 +1800,7 @@ extension Review {
     /// 从可能很长的证据清单里挑手机首屏最值得看的内容。
     /// 图片和视频分别限额，避免“一段录屏占掉一张关键近景”的旧行为。
     public static func prioritizedEvidence(_ files: [String], context: String?,
+                                           preferredFiles: Set<String> = [],
                                            imageLimit: Int = 4,
                                            videoLimit: Int = 1) -> [String] {
         let text = (context ?? "").lowercased()
@@ -1411,6 +1814,9 @@ extension Review {
             let tokens = name.components(separatedBy: CharacterSet.alphanumerics.inverted)
                 .filter { $0.count >= 3 }
             var value = tokens.reduce(0) { $0 + (text.contains($1) ? 3 : 0) }
+            // 评审的首要对象永远是当前提交。关键词只能在同一版证据里帮忙
+            // 挑近景，不能让历史素材压过刚交付的新截图。
+            if preferredFiles.contains(path) { value += 10_000 }
             if gripContext {
                 if name.contains("grip") { value += 12 }
                 if name.contains("hands") { value += 8 }
@@ -1451,6 +1857,7 @@ extension Review {
     static func extractEvidence(repo: String, branch: String,
                                 files: [String], digestID: String,
                                 revision: String = "", context: String? = nil,
+                                preferredFiles: Set<String> = [],
                                 imageLimit: Int = 4, videoLimit: Int = 1) -> [String] {
         // **平铺，不建子目录。** 镜像的目录推送只看平铺文件
         //（regularFiles 不递归），放进子目录的话一张都推不过去 ——
@@ -1463,6 +1870,7 @@ extension Review {
         let basePrefix = evidencePrefix(digestID: digestID, revision: "")
         let prefix = evidencePrefix(digestID: digestID, revision: revision)
         let selected = prioritizedEvidence(files, context: context,
+                                           preferredFiles: preferredFiles,
                                            imageLimit: imageLimit,
                                            videoLimit: videoLimit)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1626,7 +2034,8 @@ extension Review {
                                        decided: Set<String>? = nil) -> [Item] {
         let d = decided ?? decidedBranches()
         return list(repo: repo, base: base, tasks: tasks)
-            .filter { !isDecided(repo: repo, branch: $0.branch, in: d) }
+            .filter { !shouldHideAfterDecision(
+                repo: repo, branch: $0.branch, tasks: tasks, done: d) }
             // **人的队列里只放「有东西可看」的。**
             //
             // 老板 2026-08-22:「minimax 咋都让人审批,不是说没有图片或者
@@ -1678,22 +2087,36 @@ extension Review {
             .flatMap { try? dec.decode([Digest].self, from: $0) } ?? []
     }
 
+    /// 提醒阶段只筛已经发布的摘要，不能再现场遍历每个仓库。
+    public static func publishedRejectedWithEvidence(_ digests: [Digest]) -> [Digest] {
+        digests.filter { $0.rejected == true && !$0.evidence.isEmpty }
+    }
+
     /// 把所有仓库的待审产出写给手机。
     @discardableResult
     public static func publishDigests(repos: [RepoAlias] = RepoRegistry.all()) -> [Digest] {
         var out: [Digest] = []
+        let tasks = TaskStore.all()
         // 已经表过态的不再发给手机 —— 人做过决定了，列表里还挂着只会
         // 让他以为自己点了没用。执行失败的走 verdicts-failed 单独暴露。
         let decided = decidedBranches()
         for r in repos {
             let path = NSString(string: r.localPath).expandingTildeInPath
             guard GitWorkspace.isRepo(path) else { continue }
-            for item in pendingForHuman(repo: path, decided: decided) {
+            for item in pendingForHuman(repo: path, tasks: tasks, decided: decided) {
+                let review = MergeReview.approvalsSoFar(
+                    branch: item.branch, tasks: tasks,
+                    head: item.head, headAt: item.committedAt)
+                let contractImageCount = item.evidence.filter(isImageName).count
+                let contractVideoCount = item.evidence.filter(isVideoName).count
                 let extracted = extractEvidence(
                     repo: path, branch: item.branch, files: item.evidence,
                     digestID: path + "|" + item.branch,
                     revision: item.head,
-                    context: [item.subject, item.prompt ?? ""].joined(separator: "\n"))
+                    context: [item.subject, item.prompt ?? ""].joined(separator: "\n"),
+                    preferredFiles: Set(item.currentRevisionEvidence),
+                    imageLimit: item.contractBoundEvidence ? contractImageCount : 4,
+                    videoLimit: item.contractBoundEvidence ? contractVideoCount : 1)
                 out.append(Digest(
                     repo: path, repoName: r.alias, branch: item.branch,
                     platform: item.platform, subject: item.subject,
@@ -1708,7 +2131,8 @@ extension Review {
                     evidence: extracted,
                     evidenceFiles: extracted,
                     landingBlockReason: qualityLandingBlock(
-                        repo: path, branch: item.branch)))
+                        repo: path, branch: item.branch),
+                    rejected: review.rejected ? true : nil))
             }
         }
         // **按仓库合并，绝不整份覆盖。**
@@ -1838,6 +2262,34 @@ extension Review {
         return done.contains { $0.hasPrefix(two + "|") }
     }
 
+    /// 体验样板的按钮和办结语义都由服务端按任务元数据决定，客户端不用猜。
+    public static func isExperienceRemediation(branch: String,
+                                                tasks: [WorkTask] = TaskStore.all()) -> Bool {
+        let id = String(branch.split(separator: "/").last ?? "")
+        return tasks.last(where: { $0.id == id })?
+            .production?.requiresExperienceApproval == true
+    }
+
+    public static func rejectionLabel(branch: String,
+                                      tasks: [WorkTask] = TaskStore.all()) -> String {
+        isExperienceRemediation(branch: branch, tasks: tasks) ? "退回整改" : "丢弃"
+    }
+
+    public static func shouldHideAfterDecision(repo: String, branch: String,
+                                               tasks: [WorkTask], done: Set<String>) -> Bool {
+        // 体验样板的拒绝是“同一分支继续改”，不是该分支永久办结。老的
+        // branch 级 `.done` 只能压住旧版，不能吞掉整改后的新 HEAD。
+        !isExperienceRemediation(branch: branch, tasks: tasks)
+            && isDecided(repo: repo, branch: branch, in: done)
+    }
+
+    /// 新格式把一次具体点击（含时间）作为幂等键。同一个分支改好后再次拒绝，
+    /// 是一次新决定，不能被两天前的 `repo|branch|discard` 永久拦住。
+    static func verdictDoneKey(_ verdict: Verdict) -> String {
+        verdict.repo + "|" + verdict.branch + "|" + verdict.action + "|"
+            + ISO8601DateFormatter().string(from: verdict.decidedAt)
+    }
+
     public static func decidedBranches() -> Set<String> {
         let doneFile = verdictsDir.appendingPathComponent(".done")
         return Set((try? String(contentsOf: doneFile, encoding: .utf8))?
@@ -1865,8 +2317,15 @@ extension Review {
             guard let v = SafeDecode.json(
                 at: verdictsDir.appendingPathComponent(name), as: Verdict.self)
             else { continue }
-            let key = v.repo + "|" + v.branch + "|" + v.action
+            let key = verdictDoneKey(v)
             guard !done.contains(key) else { continue }
+            let legacyKey = v.repo + "|" + v.branch + "|" + v.action
+            // 老台账没有点击时间。普通产出继续认它，避免升级后把历史结论
+            // 全重放一遍；体验样板一旦进入整改链，则允许同一动作再次发生。
+            if done.contains(legacyKey),
+               !isExperienceRemediation(branch: v.branch) {
+                continue
+            }
             // **这台机器没有这个仓库就别碰这条结论。**
             //
             // 契约评审实锤(2026-08-23):verdicts/ 双向同步,两台机器都跑 ingest。
@@ -1903,9 +2362,9 @@ extension Review {
                 case .failure(let e): failure = e.localizedDescription
                 }
             } else {
-                discard(repo: v.repo, branch: v.branch,
-                        reason: v.reason ?? "手机上丢弃")
-                ok = true
+                ok = reject(repo: v.repo, branch: v.branch,
+                            reason: v.reason ?? "手机上拒绝")
+                if !ok { failure = "要继续整改的生产分支已经不存在" }
             }
 
             // **只有成功才记进 .done。**

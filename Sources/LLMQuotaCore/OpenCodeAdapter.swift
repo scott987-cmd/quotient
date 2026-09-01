@@ -143,13 +143,12 @@ public struct OpenCodeRunner: AgentRunner {
     /// 它能改文件。
     public let canEdit = true
 
-    /// OpenRouter 是远端 provider：机器上只有 opencode 二进制还不够，
-    /// 没有该 provider 的本机凭据就不能进入候选。否则共享配置会让另一台
-    /// 尚未登录 OpenRouter 的机器误领任务，跑一轮才报认证失败。
+    /// Ox Alpha 已退役；OpenRouter 历史数据仍可解析，但执行端永久不可用。
     public var binaryPath: String? {
+        // Ox Alpha 预览端点已经退役。保留 Platform/openrouter 的历史解析能力，
+        // 但执行器必须在最底层也不可用，避免旧任务或手工构造绕过注册表误调用。
+        guard platform != .openrouter else { return nil }
         guard let executable = Proc.which(binaryName) else { return nil }
-        if platform == .openrouter,
-           !OpenCodeCredentials.hasProvider("openrouter") { return nil }
         return executable
     }
 
@@ -164,6 +163,9 @@ public struct OpenCodeRunner: AgentRunner {
 
     public func command(prompt: String, cwd: String, session: GraphSession.Mode)
         -> (launchPath: String, args: [String], env: [String: String]) {
+        // command 是非 throwing 协议；用永不访问网络的 false 兜住任何绕过
+        // isAvailable 的旧调用点，确保退役模型不会被真正发起请求。
+        guard platform != .openrouter else { return ("/usr/bin/false", [], [:]) }
         var args = ["run", "--auto", "--dir", cwd]
         if case .projectResume = session { args.append("-c") }
         // `--auto` 是它的 yolo：自动批准没有被显式拒绝的权限请求。
@@ -171,32 +173,16 @@ public struct OpenCodeRunner: AgentRunner {
         // 这个坑在 Qwen 上踩过一次（consecutive_identical_tool_calls
         // 的根因就是编辑被审批拦住）。
         let configured = RunnerConfigStore.load().model(for: platform)
-        // Ox Alpha 是这个调度通道的身份，不跟随 opencode 的全局默认模型。
-        // 默认模型一变就会出现「账记在 Ox 名下，实际跑了别的模型」的假象。
-        let model = configured ?? (platform == .openrouter
-            ? "openrouter/stealth/ox-alpha" : nil)
+        let fallbackModel: String?
+        switch platform {
+        case .volcark: fallbackModel = "gateway/volc-coding"
+        default: fallbackModel = nil
+        }
+        let model = configured ?? fallbackModel
         if let m = model, !m.isEmpty {
             args += ["-m", m]
         }
-        // Ox Alpha 经 OpenRouter/OpenCode 传图片会稳定返回 400
-        // invalid_request。它的代码能力仍然值得用（且免费），所以这里只切断
-        // 会炸掉整轮任务的图片工具调用；画面判断由前置 MiniMax 视觉票完成，
-        // Ox 读取票里的文字结论继续改代码。修完照常产出证据，再由独立视觉闸复验。
-        let effectivePrompt: String
-        if platform == .openrouter {
-            effectivePrompt = """
-            【Ox 输入能力边界】当前通道只接收文本。不要直接读取图片或视频文件，
-            也不要对 .png/.jpg/.jpeg/.gif/.mov/.mp4 调用 Read/视觉工具；这会让请求以
-            400 invalid_request 失败。请依据任务中已有的独立多模态验收文字结论修改代码。
-            如果还缺视觉信息，完成可由代码、数值和测试验证的部分并产出新证据，交给
-            独立多模态验收复验；不要猜测自己看见了画面，也不要因此停止编码。
-
-            \(prompt)
-            """
-        } else {
-            effectivePrompt = prompt
-        }
-        args.append(effectivePrompt)
+        args.append(prompt)
         return (binaryPath ?? "/opt/homebrew/bin/opencode", args, [:])
     }
 }

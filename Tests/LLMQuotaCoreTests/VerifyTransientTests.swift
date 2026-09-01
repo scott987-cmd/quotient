@@ -67,4 +67,27 @@ final class VerifyTransientTests: XCTestCase {
         XCTAssertTrue(evidence?.summary.contains("退出码 0") == true)
         XCTAssertTrue(evidence?.details?.contains("42 tests passed") == true)
     }
+
+    func testCleanupRemovesOnlyDerivedDataOwnedByTemporaryWorktree() throws {
+        let root = sandbox.appendingPathComponent("DerivedData")
+        let mine = root.appendingPathComponent("Flint-mine")
+        let users = root.appendingPathComponent("Flint-users")
+        try FileManager.default.createDirectory(at: mine, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: users, withIntermediateDirectories: true)
+        let temporary = "/tmp/llmq-verify-ABC123"
+        func info(_ dir: URL, workspace: String) throws {
+            let data = try PropertyListSerialization.data(
+                fromPropertyList: ["WorkspacePath": workspace],
+                format: .xml, options: 0)
+            try data.write(to: dir.appendingPathComponent("info.plist"))
+        }
+        try info(mine, workspace: temporary + "/Flint.xcodeproj")
+        try info(users, workspace: "/Users/test/dev/Flint/Flint.xcodeproj")
+
+        XCTAssertEqual(Review.cleanupTemporaryDerivedData(
+            worktree: temporary, rootOverride: root), 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mine.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: users.path),
+                      "用户正常 DerivedData 绝不能被清理")
+    }
 }

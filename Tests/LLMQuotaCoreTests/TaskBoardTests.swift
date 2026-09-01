@@ -40,7 +40,65 @@ final class TaskBoardTests: XCTestCase {
 
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
+    private func report(_ platform: Platform, health: QuotaHealth,
+                        resetsAt: Date? = nil) -> PlatformReport {
+        PlatformReport(
+            platform: platform, planName: platform.displayName, monthlyCost: nil,
+            currency: "CNY", detected: true, installed: true, enabled: true,
+            machines: ["M"], lastActivity: now,
+            statuses: [QuotaStatus(
+                platform: platform, planName: platform.displayName,
+                limitID: "test", label: "5 小时", metric: .percent,
+                kind: .periodic, used: health == .exhausted ? 100 : 0,
+                limit: 100, usedFraction: health == .exhausted ? 1 : 0,
+                windowStart: now.addingTimeInterval(-3600), resetsAt: resetsAt,
+                windowElapsedFraction: 0.5, projectedUsedFraction: nil,
+                projectedWaste: nil, health: health, isOfficial: true,
+                sourceNote: "测试")],
+            last30dRequests: 0, last30dBillableTokens: 0, last7dRequests: 0,
+            topModels: [])
+    }
+
     // MARK: - 截断留痕
+
+    func testCurrentBoardShowsPrimaryWorkInsteadOfFlatteningSupportingEvents() {
+        var main = task("main", state: .running, prompt: "完成一项完整功能")
+        main.ownerPlatform = .kimi
+
+        var mergeReview = task("review", state: .queued, prompt: "【审查·合入】分支 x")
+        mergeReview.origin = "merge-review"
+
+        var architect = task("architect", state: .done, prompt: "【架构复核】给出结论")
+        architect.origin = "architect-review:review"
+        architect.endedAt = now.addingTimeInterval(-20)
+
+        var frozen = task("frozen", state: .blocked, prompt: "继续旧角色美术")
+        frozen.pausedAt = now.addingTimeInterval(-60)
+        frozen.note = "本轮停止美术；冻结并保留旧分支"
+
+        // 用户主动建立的独立评审没有机器 origin，仍是一个真正的主任务。
+        let manualReview = task("manual", state: .queued, prompt: "【评审】独立安全审计")
+
+        let result = TaskBoard.build(
+            from: [main, mergeReview, architect, frozen, manualReview],
+            machineName: "M", now: now)
+
+        XCTAssertEqual(Set(result.tasks.map(\.id)), Set(["main", "manual"]))
+    }
+
+    func testFocusedBoardHidesPausedOtherProjectButExposesIllegalRunning() {
+        let flint = task("flint", state: .running, repo: "/dev/Flint")
+        var pausedMaw = task("maw-paused", state: .blocked, repo: "/dev/Maw")
+        pausedMaw.pausedAt = now
+        let runningMaw = task("maw-running", state: .running, repo: "/dev/Maw")
+        let finishedMaw = task("maw-finished", state: .done, repo: "/dev/Maw")
+
+        let result = TaskBoard.build(
+            from: [flint, pausedMaw, runningMaw, finishedMaw], machineName: "M",
+            executionScope: ProjectExecutionScope(allowedRepo: "/dev/Flint"), now: now)
+
+        XCTAssertEqual(Set(result.tasks.map(\.id)), Set(["flint", "maw-running"]))
+    }
 
     func testTruncationIsFlaggedAndCapped() {
         // 全是活的：61 条排队任务，一条终态都没有。
@@ -182,6 +240,21 @@ final class TaskBoardTests: XCTestCase {
         XCTAssertEqual(r.tasks.map(\.id), ["r", "q", "b", "d"])
     }
 
+    func testBlockedTaskExposesStructuredWaitReasonToMobile() throws {
+        var t = task("blocked", state: .blocked)
+        t.waitReason = .dependency
+
+        let result = TaskBoard.build(from: [t], machineName: "M", now: now)
+        let brief = try XCTUnwrap(result.tasks.first)
+
+        XCTAssertEqual(brief.waitReason, .dependency)
+        XCTAssertEqual(brief.progressPhase, "等待上游任务")
+
+        let roundTrip = try JSONDecoder().decode(
+            TaskBrief.self, from: JSONEncoder().encode(brief))
+        XCTAssertEqual(roundTrip.waitReason, .dependency)
+    }
+
     func testLongestRunningComesFirst() {
         let tasks = [
             task("young", state: .running, startedAt: Date(timeIntervalSince1970: 1_999_000)),
@@ -210,6 +283,48 @@ final class TaskBoardTests: XCTestCase {
         XCTAssertEqual(r.tasks.first?.elapsedSeconds, 600)
     }
 
+    func testDoneButUnlandedTaskShowsDeliveryStateInsteadOfStaleProgress() throws {
+        var t = task("waiting", state: .done, endedAt: now.addingTimeInterval(-60))
+        t.branch = "agent/kimi/waiting"
+        t.changedFiles = 20
+        t.note = "架构师已放行隔离分支"
+        let stale = WorkProgress(
+            taskID: t.id, sequence: 8, phase: "等待架构师技术处置",
+            summary: "旧阻塞快照", nextStep: "等待处置", evidence: [],
+            evidenceFingerprint: "old", updatedAt: now.addingTimeInterval(-120))
+
+        let result = TaskBoard.build(
+            from: [t], machineName: "M",
+            progressByTaskID: [t.id: stale], now: now)
+        let brief = try XCTUnwrap(result.tasks.first)
+
+        XCTAssertEqual(brief.progressPhase, "等待合入")
+        XCTAssertTrue(brief.progressSummary?.contains("已放行") == true)
+        XCTAssertTrue(brief.progressNextStep?.contains("main") == true)
+        XCTAssertFalse(brief.progressSummary?.contains("旧阻塞") == true)
+    }
+
+    func testLandedTaskShowsLandedStateInsteadOfStaleProgress() throws {
+        var t = task("landed", state: .done, endedAt: now.addingTimeInterval(-60))
+        t.branch = "agent/kimi/landed"
+        t.changedFiles = 3
+        t.landedAt = now.addingTimeInterval(-30)
+        t.note = "已合入 main"
+        let stale = WorkProgress(
+            taskID: t.id, sequence: 2, phase: "正在整改",
+            summary: "旧进度", nextStep: "继续修改", evidence: [],
+            evidenceFingerprint: "old", updatedAt: now.addingTimeInterval(-120))
+
+        let result = TaskBoard.build(
+            from: [t], machineName: "M",
+            progressByTaskID: [t.id: stale], now: now)
+        let brief = try XCTUnwrap(result.tasks.first)
+
+        XCTAssertEqual(brief.progressPhase, "已合入 main")
+        XCTAssertEqual(brief.progressSummary, "已合入 main")
+        XCTAssertNil(brief.progressNextStep)
+    }
+
     /// 排队中的任务身上可能挂着**上一轮**的 startedAt（重排、接力过的）。
     /// 照发的话手机上会显示「已经跑了 11 天」——一个在排队的任务。
     func testQueuedTaskDoesNotReportStaleElapsed() {
@@ -217,6 +332,24 @@ final class TaskBoardTests: XCTestCase {
         let r = TaskBoard.build(from: [t], machineName: "M", now: now)
         XCTAssertNil(r.tasks.first?.elapsedSeconds)
         XCTAssertNil(r.tasks.first?.startedAt)
+    }
+
+    func testQueuedOwnerQuotaWaitExplainsWhyRecoveredQwenDoesNotTakeOver() throws {
+        var t = task("74726e09", state: .queued)
+        t.ownerPlatform = .minimax
+        t.ownerRunnerID = "minimax.code"
+        let r = TaskBoard.build(
+            from: [t], machineName: "M",
+            platformReports: [
+                report(.minimax, health: .exhausted,
+                       resetsAt: now.addingTimeInterval(3 * 3600)),
+                report(.qwen, health: .unconfigured),
+            ], now: now)
+        let brief = try XCTUnwrap(r.tasks.first)
+        XCTAssertEqual(brief.progressPhase, "排队 · 等待 MiniMax 额度恢复")
+        XCTAssertTrue(brief.progressSummary?.contains("Qwen 额度已恢复") == true)
+        XCTAssertTrue(brief.progressSummary?.contains("minimax.code") == true)
+        XCTAssertTrue(brief.progressNextStep?.contains("显式交接") == true)
     }
 
     func testStepTotalIsCountedByGraphID() {

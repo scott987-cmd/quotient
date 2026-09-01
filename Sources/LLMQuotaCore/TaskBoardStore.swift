@@ -32,6 +32,9 @@ public struct MachineTaskBoard: Codable, Sendable {
     public var tasks: [TaskBrief]
     /// 被 `TaskBoard.maxTasks` 截掉过。静默截断会让手机上的条数变成假话。
     public var tasksTruncated: Bool
+    /// 本机明确专注的项目。手机用它区分“当前工作”和保留的跨项目历史。
+    /// nil 表示旧版本没发布或本机未设置，读取方必须兼容。
+    public var focusedRepoAlias: String?
 
     /// 这台机器的**计划清单**（人排的、还没放行的）。
     ///
@@ -58,12 +61,14 @@ public struct MachineTaskBoard: Codable, Sendable {
 
     public init(machineID: String, machineName: String, generatedAt: Date,
                 tasks: [TaskBrief], tasksTruncated: Bool = false,
+                focusedRepoAlias: String? = nil,
                 planned: [PlannedBrief] = []) {
         self.machineID = machineID
         self.machineName = machineName
         self.generatedAt = generatedAt
         self.tasks = tasks
         self.tasksTruncated = tasksTruncated
+        self.focusedRepoAlias = focusedRepoAlias
         self.planned = planned
     }
 
@@ -86,6 +91,7 @@ public struct MachineTaskBoard: Codable, Sendable {
         generatedAt = try c.decodeIfPresent(Date.self, forKey: .generatedAt) ?? .distantPast
         tasks = try c.decodeIfPresent([TaskBrief].self, forKey: .tasks) ?? []
         tasksTruncated = try c.decodeIfPresent(Bool.self, forKey: .tasksTruncated) ?? false
+        focusedRepoAlias = try c.decodeIfPresent(String.self, forKey: .focusedRepoAlias)
         planned = try c.decodeIfPresent([PlannedBrief].self, forKey: .planned) ?? []
     }
 }
@@ -148,6 +154,7 @@ public enum TaskBoardStore {
             machineID: machineID, machineName: machineName,
             generatedAt: dash.generatedAt,
             tasks: dash.tasks, tasksTruncated: dash.tasksTruncated,
+            focusedRepoAlias: focusedRepoAlias(),
             planned: planned)
         return publish(board)
     }
@@ -178,6 +185,7 @@ public enum TaskBoardStore {
                                     repoAliases: RepoRegistry.all(),
                                     progressByTaskID: WorkProgressStore.latestByTaskID(
                                         taskIDs: Set(tasks.map(\.id))),
+                                    executionScope: ProjectExecutionScope.current(),
                                     now: now)
         let planned = PlannedStore.all().map {
             MachineTaskBoard.PlannedBrief(
@@ -189,7 +197,16 @@ public enum TaskBoardStore {
             machineID: machineID, machineName: machineName,
             generatedAt: now,
             tasks: built.tasks, tasksTruncated: built.truncated,
+            focusedRepoAlias: focusedRepoAlias(),
             planned: planned))
+    }
+
+    private static func focusedRepoAlias() -> String? {
+        guard let focused = ProjectExecutionScope.current().allowedRepo else { return nil }
+        let path = URL(fileURLWithPath: focused).standardizedFileURL.path
+        return RepoRegistry.all().first {
+            URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == path
+        }?.alias
     }
 
     @discardableResult

@@ -440,6 +440,18 @@ public enum ReleaseChannel {
         let installed = bin.appendingPathComponent("llmq")
         _ = try FileManager.default.replaceItemAt(installed, withItemAt: staged)
 
+        // 每台机器换完二进制后，让 Claude / OpenCode 都能发现同一套协作工具。
+        // 这里只改本地 CLI 配置，不启动模型；失败要显式报出，但不能让已完成的
+        // 安全二进制替换回滚成半安装状态。
+        do {
+            let report = try CollaborationMCPInstaller.install(executable: installed.path)
+            FileHandle.standardOutput.write(Data(
+                ("  协作 MCP：Claude \(report.claude)，OpenCode \(report.openCode)\n").utf8))
+        } catch {
+            FileHandle.standardError.write(Data(
+                ("  ⚠︎ 协作 MCP 未配置完成：\(error.localizedDescription)\n").utf8))
+        }
+
         // 资源包要跟着二进制走 —— Bundle.module 按可执行文件所在目录找。
         // 少了它，凡是用到内置资源的命令都会当场
         // 「Fatal error: unable to find bundle named …」，而 --help 之类

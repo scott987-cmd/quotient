@@ -10,9 +10,8 @@ import XCTest
 /// 复用之后已经站不住：一个 agent 带着完整会话干 5 件事，
 /// 严格优于 5 个 agent 各自重新认路。
 ///
-/// 所以判据从「复杂/高危/估时长/写了编号」收紧到只剩两种
-/// **一次执行真的装不下**的情况：碰高危路径（要单独放行）、跨能力
-///（生图执行器改不了代码，编码执行器画不了图）。
+/// 所以判据从「复杂/高危/估时长/写了编号」收紧到只剩真正跨能力、
+/// **一次执行真的装不下**的情况（生图执行器改不了代码，编码执行器画不了图）。
 final class DecomposePolicyTests: XCTestCase {
 
     private func task(_ prompt: String, tier: TaskProfile.Tier = .complex,
@@ -46,11 +45,11 @@ final class DecomposePolicyTests: XCTestCase {
                        "活多 ≠ 装不下。会话能延续，一个 agent 干得完")
     }
 
-    /// 人明写了「第一步…第二步…」—— 那是顺序依赖，照办。
-    func testExplicitStepsStillSplit() {
+    /// 人明写的步骤是同一 Agent 的内部里程碑，不是换 Owner 的理由。
+    func testExplicitStepsStayInsideOneAgentTask() {
         let p = "第一步：核查现状。第二步：改脚本。第三步：验证。"
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(task(p)),
-                      "人明确表达了顺序依赖，不是我们猜的")
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(task(p)),
+                       "顺序依赖应留在同一会话，避免每一步重新加载上下文")
     }
 
     /// 跨能力：生图执行器改不了代码，编码执行器画不了图 ——
@@ -67,11 +66,10 @@ final class DecomposePolicyTests: XCTestCase {
         XCTAssertFalse(TaskDecomposer.shouldDecompose(task(p)))
     }
 
-    /// 碰高危路径仍然拆：那一步要单独拿给人放行，
-    /// 混在大任务里会把整包拖住等审批。
-    func testRiskyPathStillSplits() {
+    /// 高危路径是同一隔离分支上的放行门，不是新任务和新 Owner。
+    func testRiskyPathStaysInsideOriginalTask() {
         let p = "改 build-app.sh，让它编译前先跑一次测试。"
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(task(p)),
-                      "高危那步要单独放行，不然整包卡在审批上")
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(task(p)),
+                       "高危改动应在原任务内接受架构放行，不应切断会话")
     }
 }

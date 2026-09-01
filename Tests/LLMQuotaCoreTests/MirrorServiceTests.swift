@@ -89,6 +89,33 @@ final class MirrorServiceTests: XCTestCase {
         XCTAssertTrue(SharedLayout.dirs.contains("collaboration"))
     }
 
+    func testAgentRegistryPushesOwnAndPullsPeerWithoutNameCollision() {
+        put(local, "agent-registry/\(mid).json", "mine", age: 60)
+        put(cloud, "agent-registry/machine-B.json", "peer", age: 60)
+
+        _ = sync()
+        XCTAssertEqual(read(cloud, "agent-registry/\(mid).json"), "mine")
+        XCTAssertEqual(read(local, "agent-registry/machine-B.json"), "peer")
+    }
+
+    func testConfigJournalIsSetUnionNotMtimeOverwrite() {
+        put(local, "config-journal/entry--roles--a.json", "local-event", age: 600)
+        put(cloud, "config-journal/entry--roles--b.json", "cloud-event", age: 60)
+
+        let first = sync()
+        XCTAssertEqual(read(cloud, "config-journal/entry--roles--a.json"), "local-event")
+        XCTAssertEqual(read(local, "config-journal/entry--roles--b.json"), "cloud-event")
+        XCTAssertGreaterThanOrEqual(first.pushed, 1)
+        XCTAssertGreaterThanOrEqual(first.pulled, 1)
+
+        // 同名事件内容即使 mtime 不同也不能被改写；同名就是同一不可变事实。
+        put(local, "config-journal/entry--roles--same.json", "local", age: 600)
+        put(cloud, "config-journal/entry--roles--same.json", "cloud", age: 60)
+        _ = sync()
+        XCTAssertEqual(read(local, "config-journal/entry--roles--same.json"), "local")
+        XCTAssertEqual(read(cloud, "config-journal/entry--roles--same.json"), "cloud")
+    }
+
     // MARK: - 根下单文件：只推
 
     func testRootFilesPushOnly() {

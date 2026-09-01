@@ -17,6 +17,26 @@ public enum ContextAffinityPolicy {
         public var changed: Bool
     }
 
+    /// 人工要求“原平台重试”时，为没有持久化 owner 的旧任务补上唯一 owner。
+    /// 找不到或同平台有歧义就返回 nil，调用方必须拒绝猜测。
+    public static func samePlatformRetryOwner(
+        for task: WorkTask,
+        runners: [AgentRunner] = RunnerRegistry.all
+    ) -> AgentRunner? {
+        guard let platform = task.ownerPlatform ?? task.platform else { return nil }
+        if let runnerID = task.ownerRunnerID {
+            return RunnerRegistry.resolve(
+                ownerRunnerID: runnerID, platform: platform,
+                prompt: task.prompt, runners: runners)
+        }
+        let lane = TaskCapabilityLane.classify(task.prompt)
+        let matches = runners.filter {
+            $0.platform == platform && $0.canEdit
+                && TaskCapabilityLane.accepts($0, lane: lane)
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
     @discardableResult
     public static func assign(
         task: inout WorkTask,
@@ -48,6 +68,17 @@ public enum ContextAffinityPolicy {
         task.ownerAssignedAt = snapshot.assignedAt
         task.handoffCount = snapshot.handoffCount
         task.automaticHandoffCount = snapshot.automaticHandoffCount
+    }
+
+    /// 人工选择“换人重试”时，必须把所有会把任务吸回旧执行者的亲和字段
+    /// 一次清空。把这条规则集中起来，避免 CLI、移动端和后续入口各漏一项。
+    public static func prepareForDifferentOwner(task: inout WorkTask) {
+        task.triedPlatforms = []
+        task.ownerPlatform = nil
+        task.ownerRunnerID = nil
+        task.ownerAssignedAt = nil
+        task.platform = nil
+        task.preferredPlatform = nil
     }
 
     public static func shouldRetryOwnerAfterTimeout(

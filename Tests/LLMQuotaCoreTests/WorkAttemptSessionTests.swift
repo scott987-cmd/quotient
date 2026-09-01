@@ -57,4 +57,17 @@ final class WorkAttemptSessionTests: XCTestCase {
                 taskID: "flint", runnerID: "minimax.code")?.attemptID,
             "done")
     }
+
+    func testLatestSnapshotsDoesNotShowTerminalAttemptAsStillRunning() throws {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let id = "same-attempt"
+        try WorkAttemptStore.append(attempt(id: id, outcome: .running, startedAt: start))
+        try WorkAttemptStore.append(attempt(id: id, outcome: .failed, startedAt: start))
+        try WorkAttemptStore.append(attempt(
+            id: "active", outcome: .running, startedAt: start.addingTimeInterval(20)))
+
+        let snapshots = WorkAttemptStore.latestSnapshots()
+        XCTAssertEqual(snapshots.map(\.attemptID), [id, "active"])
+        XCTAssertEqual(snapshots.map(\.outcome), [.failed, .running])
+    }
 }

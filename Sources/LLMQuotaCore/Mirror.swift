@@ -15,7 +15,7 @@ public enum SharedLayout {
         "inbox", "inbox/processed",
         "answers", "questions", "outbox",
         "config-intents", "config-intents/processed",
-        "releases", "collaboration",
+        "releases", "collaboration", "agent-registry", "config-journal",
     ]
 
     public static func ensure(at root: URL) {
@@ -126,7 +126,7 @@ public enum MirrorService {
                                  // 来自**本机私有**的 jsonl → 两台机器互相覆盖,和当年
                                  // reviews.json 同病(对账 2026-08-23)。改成每机一份 +
                                  // 根上那份由各机合并后写,谁写都一样。
-                                 "office", "collaboration"]
+                                 "office", "collaboration", "agent-registry"]
     static let rootPushFiles = ["dashboard.json", "office.json", "repos.json",
                                 "reviews.json"]
     /// 双向同步的目录。
@@ -136,6 +136,8 @@ public enum MirrorService {
     /// 双向同步 playbook.json —— 后者两边都会改（Mac 改 runs、
     /// 手机改 approvedAt），整文件覆盖必然丢一边。
     static let bidirectionalDirs = ["config", "releases", "approvals", "push-tokens", "verdicts", "actions"]
+    /// 多写者不可变事件目录：文件名全局唯一，两边只做集合并集，不按 mtime 覆盖。
+    static let appendOnlyDirs = ["config-journal"]
     /// 只推不拉的目录：证据截图是 Mac 端产的，手机只看。
     static let pushOnlyDirs = ["evidence", "views"]
 
@@ -200,6 +202,13 @@ public enum MirrorService {
         // config/ releases/：双向，每文件新者胜。
         for d in bidirectionalDirs {
             syncBidirectional(
+                localDir: local.appendingPathComponent(d, isDirectory: true),
+                cloudDir: cloud.appendingPathComponent(d, isDirectory: true),
+                label: d, list: list, stats: &stats)
+        }
+
+        for d in appendOnlyDirs {
+            syncAppendOnly(
                 localDir: local.appendingPathComponent(d, isDirectory: true),
                 cloudDir: cloud.appendingPathComponent(d, isDirectory: true),
                 label: d, list: list, stats: &stats)
@@ -344,6 +353,30 @@ public enum MirrorService {
             case (false, false):
                 break
             }
+        }
+    }
+
+    /// 不可变事件集合并集。两边同名代表同一事件，绝不拿较新的 mtime 改写内容。
+    static func syncAppendOnly(
+        localDir: URL, cloudDir: URL, label: String,
+        list: (URL) -> ICloudSafe.Probe<[URL]>, stats: inout MirrorStats
+    ) {
+        guard let cloudFiles = listOrSkip(cloudDir, label: label, list: list, stats: &stats)
+        else { return }
+        _ = ICloudSafe.ensureDir(cloudDir)
+        let localFiles = regularFiles(in: localDir)
+        let localByName = Dictionary(uniqueKeysWithValues: localFiles.map { ($0.lastPathComponent, $0) })
+        let cloudByName = Dictionary(uniqueKeysWithValues: cloudFiles.map { ($0.lastPathComponent, $0) })
+
+        for (name, localFile) in localByName where !excluded(name) && cloudByName[name] == nil {
+            pushIfNewer(localFile: localFile,
+                        cloudFile: cloudDir.appendingPathComponent(name),
+                        label: "\(label)/\(name)", stats: &stats)
+        }
+        for (name, cloudFile) in cloudByName where !excluded(name) && localByName[name] == nil {
+            pullIfNewer(cloudFile: cloudFile,
+                        localFile: localDir.appendingPathComponent(name),
+                        label: "\(label)/\(name)", stats: &stats)
         }
     }
 

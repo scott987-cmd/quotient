@@ -56,7 +56,7 @@ public struct AgentRole: Codable, Sendable {
     /// 不存 machineID —— 后者是一串 UUID，配置文件里没法读。
     ///
     /// 为什么按机器分而不是全局关掉：同一个平台在不同机器上的处境不一样。
-    /// 比如这台 Mac 的 Claude 是控制面（就是那个决定「该干什么」的环节），
+    /// 比如这台 Mac 的 Codex 是控制面（就是那个决定「该干什么」的环节），
     /// 派活给它等于自己饿死自己；而另一台机器上同一个 Claude 完全空着，
     /// 该用就得用。全局开关表达不了这件事。
     public var mutedOn: [String]
@@ -197,13 +197,17 @@ public struct AgentRole: Codable, Sendable {
 }
 
 public enum AgentRoles {
+    private static let document = "roles"
 
     /// 测试用。
     ///
     /// `didSet` 里清缓存是必需的：换了配置文件却还读着 30 秒前的缓存，
     /// 测试之间会互相串（上一条存的角色被下一条读到）。
     public static var fileOverride: URL? {
-        didSet { cached = nil; cachedAt = nil }
+        didSet {
+            cached = nil; cachedAt = nil; cachedRevision = nil
+            cachedFilePath = nil
+        }
     }
 
     static var file: URL {
@@ -216,8 +220,8 @@ public enum AgentRoles {
     ///
     /// 每一条的依据都来自这个项目里**实际观察到的行为**，不是凭印象排座次：
     ///
-    /// - Claude Code 是唯一被放行到 sensitive 的。它是这套系统里被验证过
-    ///   最多次、成功率最高的那个，而 sensitive 任务改砸的代价最大。
+    /// - Claude Code 作为主力开发被放行到 sensitive；Codex 架构师也有
+    ///   同级审阅权限，但调度边界会阻止它参与普通实现任务。
     /// - GLM 走的是同一个 Claude Code 二进制，但额度池完全不同：实测一个月
     ///   用量比第二名高一个数量级，而且**这就是日常真正在用的那个** ——
     ///   也就是说它扛得住真实工作量，
@@ -231,24 +235,23 @@ public enum AgentRoles {
     ///   拿一个已经修好的故障继续把它按在文档岗上，是拿过期证据做决定。
     ///   不给 sensitive 只是因为样本还太少（修复后一共才跑过 1 次），
     ///   不是因为它不行 —— 等成绩攒够了再放。
-    /// - MiniMax **不是编码 agent**。`mmx` 的能力是 image / video / music /
-    ///   speech / vision / search，text 只是其中一个子命令，而且没有文件访问、
-    ///   不认识仓库。它在这套系统里能干的只有分诊这类纯文本进出的活 ——
-    ///   它真正的本事（媒体生成）这个调度器现在**够不着**。
-    /// - Codex 的额度和 ChatGPT 网页版共用，本地看不见网页那部分消耗，
-    ///   账算不准，所以不当主力，只在别人都忙时顶上。
+    /// - MiniMax 的 `mmx text` 仍然不是编码 agent；现在由 Claude Code 提供
+    ///   仓库工具外壳、MiniMax Token Plan 提供模型和额度。端到端已验证为
+    ///   MiniMax provider，因此可承担 normal/complex 编码，但不放行 sensitive。
+    /// - Codex 是控制面架构师：负责前置设计、技术处置和架构复核，不参与
+    ///   普通开发竞选。Claude 保留高危实现能力，但不再冒充架构师。
     public static func defaults() -> [AgentRole] {
         [
-            AgentRole(platform: .claude, title: "架构师", maxRisk: .sensitive,
+            AgentRole(platform: .claude, title: "主力开发", maxRisk: .sensitive,
                       prefers: [.complex],
-                      note: "唯一放行改构建配置/CI 的。额度最贵，别拿它写注释。"),
+                      note: "可处理高危实现；架构设计与复核交给 Codex。"),
             AgentRole(platform: .glm, title: "主力", maxRisk: .normal,
                       maxTier: .complex, prefers: [.standard, .complex],
                       note: "额度最富余（实测用量比第二名高一个数量级），"
                           + "也是你日常真正在用的那个。复杂活优先给它。"),
-            AgentRole(platform: .codex, title: "替补", maxRisk: .normal,
-                      prefers: [.standard],
-                      note: "额度和 ChatGPT 网页版共用，本地算不准，别当主力。"),
+            AgentRole(platform: .codex, title: "架构师", maxRisk: .sensitive,
+                      prefers: [.complex],
+                      note: "控制面架构师：负责前置设计、技术处置和架构复核。"),
             AgentRole(platform: .kimi, title: "主力", maxRisk: .normal,
                       maxTier: .complex, prefers: [.standard, .complex],
                       note: "跑的是 kimi-code/k3，编码能力够扛复杂活。"),
@@ -256,11 +259,11 @@ public enum AgentRoles {
                       maxTier: .complex, prefers: [.standard],
                       note: "qwen3.8-max，正经写代码没问题。当初那次失控重试的根因是"
                           + "审批拦住了编辑，加 --approval-mode yolo 之后已修复。"),
-            AgentRole(platform: .minimax, title: "测试与评审", maxRisk: .safe,
-                      maxTier: .standard, prefers: [.standard],
-                      note: "mmx 的本事是图片/视频/音乐/语音/图片理解/联网搜索，"
-                          + "没有仓库终端权限，不能冒充执行测试或修代码。机器负责按退出码"
-                          + "实跑测试；MiniMax 负责测试日志分析、代码/方案/项目评审和视觉验收。",
+            AgentRole(platform: .minimax, title: "开发、测试与评审", maxRisk: .normal,
+                      maxTier: .complex, prefers: [.standard, .complex],
+                      note: "编码走 Claude Code 工具外壳 + MiniMax Token Plan 模型；"
+                          + "媒体、视觉与评审仍走各自专用执行器。可承接复杂编码，"
+                          + "敏感配置继续交给架构师。",
                       reserveFraction: 0),
             AgentRole(platform: .deepseek, title: "备用", maxRisk: .safe, prefers: []),
             AgentRole(platform: .volcark, title: "主力开发", maxRisk: .normal,
@@ -268,11 +271,6 @@ public enum AgentRoles {
                       note: "OpenCode 经本地网关使用火山 Coding Plan 的 GLM 5.3。"
                           + "具备仓库读写、工具调用和复杂编程能力，专注承担独立实现；"
                           + "测试分析与评审统一交给 MiniMax。"),
-            AgentRole(platform: .openrouter, title: "临时主力开发", maxRisk: .normal,
-                      maxTier: .complex, prefers: [.standard, .complex],
-                      note: "OpenCode 使用 OpenRouter 的 Ox Alpha 免费预览。"
-                          + "可接 Claude/Kimi 的复杂编码续作；预览期额度和可用性会变化，"
-                          + "敏感配置仍由架构师处理。"),
             AgentRole(platform: .gemini, title: "备用", maxRisk: .safe, prefers: []),
         ]
     }
@@ -280,6 +278,18 @@ public enum AgentRoles {
     /// 缓存。调度每 30 秒跑一轮，每轮都读一次 iCloud 目录没有意义。
     private static var cached: [Platform: AgentRole]?
     private static var cachedAt: Date?
+    private static var cachedRevision: Int?
+    private static var cachedFilePath: String?
+
+    /// 架构任务只认角色配置，不再由各业务模块分别写死 Claude/Codex。
+    public static func architectPlatform() -> Platform {
+        let roles = all()
+        if roles[.codex]?.title.contains("架构师") == true { return .codex }
+        return roles.values
+            .filter { $0.title.contains("架构师") }
+            .sorted { $0.platform.rawValue < $1.platform.rawValue }
+            .first?.platform ?? .codex
+    }
 
     /// 这个平台上有没有**能写文件**的执行器。
     ///
@@ -291,15 +301,21 @@ public enum AgentRoles {
     }
 
     public static func all() -> [Platform: AgentRole] {
-        if let cached, let cachedAt, Date().timeIntervalSince(cachedAt) < 30 { return cached }
+        let currentPath = file.standardizedFileURL.path
+        if let cached, let cachedAt, cachedFilePath == currentPath,
+           Date().timeIntervalSince(cachedAt) < 30 { return cached }
         var out = Dictionary(defaults().map { ($0.platform, $0) }, uniquingKeysWith: { a, _ in a })
         // **逐条解码，坏的跳过。**
         //
         // 原来是整个数组一把解：任何一条角色解不出来（手改坏了、
         // 新版本写了旧版本不认识的枚举值），整份配置**静默退回出厂默认** ——
-        // 而出厂默认里没有 dispatcherOn，控制面 Claude 随即开始接活。
+        // 而出厂默认里没有 dispatcherOn，控制面 agent 随即开始接活。
         // 一次手误换来一个悄悄改变调度行为的系统。
-        if let data = ICloudSafe.read(file),
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: file)
+        cachedRevision = snapshot.revision
+        cachedFilePath = currentPath
+        if let data = snapshot.data,
            let rows = try? JSONSerialization.jsonObject(with: data) as? [Any] {
             let dec = SnapshotCoding.decoder()
             var bad = 0
@@ -314,17 +330,15 @@ public enum AgentRoles {
                 FileHandle.standardError.write(Data(
                     "roles.json 里有 \(bad) 条解不出来，已跳过（其余照常生效）\n".utf8))
             }
+            // 旧配置里的 Ox 角色也不能把已退役端点重新发布出来。
+            out.removeValue(forKey: .openrouter)
             out = withCapabilities(out)
             cached = out; cachedAt = Date()
             return out
         }
-        if let data = ICloudSafe.read(file),
-           let saved = try? SnapshotCoding.decoder().decode([AgentRole].self, from: data) {
-            // 用户配置覆盖默认，但**不删默认里有而配置里没有的** ——
-            // 否则新增一个平台之后，老配置文件会让它一个角色都没有，
-            // 然后 role(for:) 返回 nil、风险闸门失效，静默放行。
-            for r in saved { out[r.platform] = r }
-        }
+        // Ox Alpha 的预览端点已经退役。旧 roles.json 可能仍保存着它，不能让
+        // 一条陈旧的用户配置把已经下线的平台重新发布到 Agent 看板。
+        out.removeValue(forKey: .openrouter)
         out = withCapabilities(out)
         cached = out
         cachedAt = Date()
@@ -359,7 +373,7 @@ public enum AgentRoles {
     /// 「备用」上，而代码里它早已经改成「新人」了。
     ///
     /// 只存差异之后，没动过的角色永远跟着默认走，动过的永远听你的。
-    public static func save(_ roles: [AgentRole]) throws {
+    public static func save(_ roles: [AgentRole], expectedRevision: Int? = nil) throws {
         try Paths.ensureDirectories()
         let base = Dictionary(defaults().map { ($0.platform, $0) },
                               uniquingKeysWith: { a, _ in a })
@@ -378,11 +392,15 @@ public enum AgentRoles {
         let data = try SnapshotCoding.prettyEncoder().encode(changed.sorted {
             $0.platform.rawValue < $1.platform.rawValue
         })
-        guard ICloudSafe.write(data, to: file) else {
-            throw NSError(domain: "AgentRole", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "写角色配置超时（iCloud 没响应）"])
-        }
-        cached = nil
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: file)
+        let currentPath = file.standardizedFileURL.path
+        let remembered = cachedFilePath == currentPath ? cachedRevision : nil
+        let revision = expectedRevision ?? remembered ?? snapshot.revision
+        _ = try SharedConfigJournal.commit(
+            document: document, payload: data, expectedRevision: revision,
+            compatibilityFile: file)
+        cached = nil; cachedAt = nil; cachedRevision = nil; cachedFilePath = nil
     }
 
     /// 这个平台在**本机**是不是被静音了。

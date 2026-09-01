@@ -192,7 +192,8 @@ final class ContextPackRolloutTests: XCTestCase {
             resumedAnswer: nil, resumedAsk: nil,
             mayAsk: true, askFile: askFile)
 
-        XCTAssertTrue(prompt.hasPrefix("图内节点任务"), "任务正文必须在最前")
+        XCTAssertTrue(prompt.contains("## 当前任务\n\n图内节点任务"),
+                      "任务正文必须紧跟高优先级协作契约")
         XCTAssertTrue(prompt.contains("## 接力说明"), "handoff 说明丢了")
         XCTAssertTrue(prompt.contains("a.swift"), "handoff 改动清单丢了")
         XCTAssertFalse(prompt.contains("这个仓库长什么样"),
@@ -212,6 +213,25 @@ final class ContextPackRolloutTests: XCTestCase {
             resumedAnswer: nil, resumedAsk: nil,
             mayAsk: false, askFile: nil)
         XCTAssertTrue(plainPrompt.contains("这个仓库长什么样"), "仓库地图丢了")
+    }
+
+    func testLegacyBuilderKeepsCollaborationContractAheadOfLargeTaskBody() {
+        let marker = "TASK-BODY-START"
+        let source = WorkTask(
+            id: "large-task",
+            prompt: marker + String(repeating: "超长任务正文", count: 8_000),
+            repo: repoA.path)
+
+        let prompt = LegacyContextPromptBuilder.build(
+            task: source, allTasks: [source], runnerID: "kimi.code",
+            workspacePath: repoA.path, handoff: nil,
+            resumedAnswer: nil, resumedAsk: nil,
+            mayAsk: false, askFile: nil)
+
+        let contract = try! XCTUnwrap(prompt.range(of: "【协作约定】"))
+        let body = try! XCTUnwrap(prompt.range(of: marker))
+        XCTAssertLessThan(contract.lowerBound, body.lowerBound,
+            "超长正文可能在 Runner 入口被截断；协作能力必须在正文之前交付")
     }
 
     // MARK: - manifest 兼容

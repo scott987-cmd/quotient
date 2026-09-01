@@ -298,7 +298,9 @@ final class QuotaEngineTests: XCTestCase {
             preferOfficialQuota: true
         )])
         let dash = eng.buildDashboard(
-            snapshots: [snapshot(platform: .codex, buckets: [], quotas: [official])], now: now
+            snapshots: [snapshot(platform: .codex, buckets: [], quotas: [official])],
+            now: now,
+            cooldowns: [:]
         )
         let statuses = dash.reports.first { $0.platform == .codex }?.statuses ?? []
         XCTAssertEqual(statuses.count, 1)
@@ -702,6 +704,21 @@ final class CooldownTests: XCTestCase {
             + "To continue now, purchase extra usage or upgrade your plan")
         XCTAssertEqual(cause, .quotaExhausted)
         XCTAssertFalse(cause!.needsHumanFix)
+    }
+
+    func testClaudeWeeklyLimitIsQuotaExhaustionAndParsesResetClock() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 8, day: 29, hour: 0, minute: 42)))
+        let message = "You've hit your weekly limit · resets 7am (Asia/Shanghai)"
+
+        XCTAssertEqual(CooldownLedger.classify(message), .quotaExhausted)
+        let reset = try XCTUnwrap(CooldownLedger.parseResetTime(message, now: now))
+        let expected = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 8, day: 29, hour: 7)))
+        XCTAssertEqual(reset, expected)
     }
 
     /// 分类顺序有讲究：永久性故障的文本里也常带环境类关键词，
@@ -1889,10 +1906,11 @@ final class AgentRoleTests: XCTestCase {
         XCTAssertLessThan(TaskProfile.Risk.normal, .sensitive)
     }
 
-    /// 默认里只有 Claude 能接高危活。
-    func testOnlyClaudeTakesSensitiveWorkByDefault() {
+    /// Claude 能实现高危改动；Codex 架构师具备同级审阅权限。
+    func testClaudeAndCodexArchitectHaveSensitiveClearanceByDefault() {
         XCTAssertTrue(AgentRoles.accepts(.sensitive, platform: .claude))
-        for p: Platform in [.qwen, .kimi, .glm, .codex, .minimax] {
+        XCTAssertTrue(AgentRoles.accepts(.sensitive, platform: .codex))
+        for p: Platform in [.qwen, .kimi, .glm, .minimax] {
             XCTAssertFalse(AgentRoles.accepts(.sensitive, platform: p),
                            "\(p.rawValue) 不该被放行去改构建配置")
         }
@@ -1909,9 +1927,10 @@ final class AgentRoleTests: XCTestCase {
                        "修复后样本还太少，先不放开高危")
     }
 
-    /// MiniMax 不是编码 agent —— mmx 没有文件访问。
-    func testMiniMaxStaysOutOfCodeChanges() {
-        XCTAssertFalse(AgentRoles.accepts(.normal, platform: .minimax))
+    /// MiniMax 编码走 Claude Code 工具外壳；只放行到常规风险。
+    func testMiniMaxCodeTakesNormalButNotSensitiveChanges() {
+        XCTAssertTrue(AgentRoles.accepts(.normal, platform: .minimax))
+        XCTAssertFalse(AgentRoles.accepts(.sensitive, platform: .minimax))
     }
 
     /// 用户改过的配置要覆盖默认。
@@ -1929,6 +1948,14 @@ final class AgentRoleTests: XCTestCase {
         XCTAssertTrue(AgentRoles.accepts(.sensitive, platform: .claude),
                       "只配了 qwen，claude 的默认角色就没了")
         XCTAssertFalse(AgentRoles.accepts(.sensitive, platform: .kimi))
+    }
+
+    func testRetiredOxRoleCannotBeRepublishedByOldConfig() throws {
+        try AgentRoles.save([
+            AgentRole(platform: .openrouter, title: "旧 Ox", maxRisk: .normal)
+        ])
+        XCTAssertNil(AgentRoles.all()[.openrouter])
+        XCTAssertFalse(AgentRoles.hasEditingRunner(.openrouter))
     }
 
     /// 手填的 maxTier 要能破「永远证明不了自己」那个死循环。
@@ -3384,6 +3411,33 @@ final class GraphWorktreeTests: XCTestCase {
         XCTAssertEqual(w.branch, "agent/glm/solo")
     }
 
+    func testPlainTaskStartsFromTheExplicitHandoffBase() throws {
+        let r = try repo()
+        defer { try? FileManager.default.removeItem(atPath: r) }
+        _ = GitWorkspace.git(["checkout", "-qb", "handoff-source"], in: r)
+        try Data("previous owner".utf8).write(to: URL(fileURLWithPath: r)
+            .appendingPathComponent("handoff.txt"))
+        _ = GitWorkspace.git(["add", "-A"], in: r)
+        _ = GitWorkspace.git(["commit", "-qm", "handoff checkpoint"], in: r)
+        let base = GitWorkspace.headSHA(in: r)!
+        _ = GitWorkspace.git(["checkout", "-q", "main"], in: r)
+
+        let w = try GitWorkspace.prepare(
+            repo: r, taskID: "takeover", platform: .volcark, base: base)
+
+        XCTAssertEqual(GitWorkspace.headSHA(in: w.path), base,
+                       "接手工作区必须站在交接提交上，不能从 main 重做")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: w.path).appendingPathComponent("handoff.txt").path))
+    }
+
+    func testFailedTakeoverPreservesInheritedCommitsEvenWithoutNewFiles() {
+        XCTAssertTrue(GitWorkspace.shouldPreserveFailedBranch(
+            touchedFiles: 0, commitsAheadOfMain: 3, handoffCommit: "abc123"))
+        XCTAssertFalse(GitWorkspace.shouldPreserveFailedBranch(
+            touchedFiles: 0, commitsAheadOfMain: 0, handoffCommit: nil))
+    }
+
     /// **cleanup 的中心防线**：图没跑完就不许删。
     /// 调用点有五处，在每处都记得判断不现实，漏一处就是静默的数据丢失。
     func testCleanupRefusesToRemoveAnUnfinishedGraphWorktree() throws {
@@ -3537,8 +3591,8 @@ final class MentionsRiskyPathTests: XCTestCase {
         XCTAssertTrue(GitWorkspace.mentionsRiskyPath("动 Tools/gen.py"))
     }
 
-    /// **不能宁可错杀。** 普通任务被误判成高危会走一遍多余的拆解，
-    /// 每次都白烧一次指挥的额度，而且拆出来的图更容易出错。
+    /// **不能宁可错杀。** 普通任务被误判成高危会走一遍多余的放行流程；
+    /// 风险识别本身仍要精确，但不再触发拆图。
     func testOrdinaryPromptsAreNotFlagged() {
         XCTAssertFalse(GitWorkspace.mentionsRiskyPath("给 Format.swift 加一句注释"))
         XCTAssertFalse(GitWorkspace.mentionsRiskyPath("修一下 README.md 的错别字"))
@@ -3552,13 +3606,13 @@ final class MentionsRiskyPathTests: XCTestCase {
         XCTAssertTrue(GitWorkspace.mentionsRiskyPath("改 deploy.sh。然后跑一遍"))
     }
 
-    /// 触发条件要真的把它接上 —— 否则上面那些判断只是摆设。
-    func testDecomposerTriggersOnRiskyPathEvenWhenClassifierSaysSafe() {
+    /// 风险识别仍供放行门使用，但不能再把同一交付拆成另一个任务。
+    func testRiskyPathDoesNotSplitOwnerSession() {
         var t = WorkTask(id: "x", prompt: "在 build-app.sh 末尾加一行注释", repo: "/r")
         t.profile = TaskProfile(tier: .trivial, risk: .safe, estimatedMinutes: 1,
                                 isSelfContained: true, rationale: "只是注释")
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(t),
-                      "分诊说低危，但文件名摆在那儿 —— 必须拆")
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(t),
+                       "风险要被识别并放行，但原 Owner 与会话必须保持")
     }
 }
 
@@ -4187,7 +4241,8 @@ final class GraphSessionTests: XCTestCase {
         // `--resume <sessionId>  Resume a persisted session by sessionId (sess_...)`
         // ——实际读过它的帮助才加进来的,不是想当然(2026-08-22)。
         for r in RunnerRegistry.all
-        where !(r is ClaudeRunner) && !(r is QwenRunner) && !(r is ZcodeRunner) {
+        where !(r is ClaudeRunner) && !(r is MiniMaxCodeRunner)
+            && !(r is QwenRunner) && !(r is ZcodeRunner) {
             let a = r.command(prompt: "p", cwd: "/tmp", session: .resume("U1")).args
             XCTAssertFalse(a.contains("U1"), "\(r.binaryName) 不该收到会话 id")
             XCTAssertFalse(a.contains("--resume"), "\(r.binaryName) 不该收到 --resume")
@@ -4499,14 +4554,9 @@ final class DecomposeTriggerTests: XCTestCase {
         return t
     }
 
-    /// **实测漏掉的那一类。**
-    ///
-    /// 一个「第一步…第二步…第三步…」写得清清楚楚的任务被分诊判成「常规」，
-    /// 理由是「指令明确、无需新设计」—— 那是在判**难度**，
-    /// 而这个任务的特征是**步数**。三步塞进一次执行，
-    /// 接力、会话延续、产物传递全都用不上。
-    func testExplicitStepsTriggerDecomposition() {
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(
+    /// 明确步骤留作同一 Agent 的内部里程碑，避免步骤间反复交接。
+    func testExplicitStepsDoNotTriggerDecomposition() {
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(
             task("第一步，加命令。第二步，补测试。第三步，改文档。")))
     }
 
@@ -4540,16 +4590,14 @@ final class DecomposeTriggerTests: XCTestCase {
             task("加一句注释", tier: .trivial, risk: .safe, minutes: 3)))
     }
 
-    /// **档次和风险也不再单独触发拆图。** 只有「一次执行真的装不下」才拆：
-    /// 碰高危路径（那一步要单独放行）、跨能力（生图执行器改不了代码）。
+    /// **档次和风险也不再单独触发拆图。** 只有跨能力、一个执行器确实
+    /// 装不下时才拆；高危路径在原任务的隔离分支内走放行门。
     func testTierAndRiskAloneDoNotTrigger() {
         XCTAssertFalse(TaskDecomposer.shouldDecompose(task("重构", tier: .complex)),
                        "复杂只是难，不是装不下")
-        // 「改配置」本身不碰具体的高危路径名，所以不该拆；
-        // 真碰到 build-app.sh 那种路径的，由 mentionsRiskyPath 兜住。
-        XCTAssertTrue(TaskDecomposer.shouldDecompose(
+        XCTAssertFalse(TaskDecomposer.shouldDecompose(
             task("改 build-app.sh 加一步测试", risk: .sensitive)),
-            "碰高危路径仍然要拆出来单独放行")
+            "碰高危路径仍保持原任务，只增加放行门")
     }
 }
 

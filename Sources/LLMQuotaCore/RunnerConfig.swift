@@ -22,6 +22,7 @@ public struct RunnerConfig: Codable, Sendable {
 }
 
 public enum RunnerConfigStore {
+    private static let document = "runners"
     static var file: URL {
         Paths.iCloudConfigDir?.appendingPathComponent("runners.json")
             ?? Paths.appSupport.appendingPathComponent("runners.json")
@@ -31,13 +32,21 @@ public enum RunnerConfigStore {
     /// 每次派发都去碰一次 iCloud 目录没有意义。
     private static var cached: RunnerConfig?
     private static var cachedAt: Date?
+    private static var cachedRevision: Int?
+    private static var cachedFilePath: String?
 
     public static func load() -> RunnerConfig {
-        if let cached, let cachedAt, Date().timeIntervalSince(cachedAt) < 30 {
+        let currentPath = file.standardizedFileURL.path
+        if let cached, let cachedAt, cachedFilePath == currentPath,
+           Date().timeIntervalSince(cachedAt) < 30 {
             return cached
         }
         let cfg: RunnerConfig
-        if let data = try? Data(contentsOf: file),
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: file)
+        cachedRevision = snapshot.revision
+        cachedFilePath = currentPath
+        if let data = snapshot.data,
            let c = try? SnapshotCoding.decoder().decode(RunnerConfig.self, from: data) {
             cfg = c
         } else {
@@ -48,26 +57,34 @@ public enum RunnerConfigStore {
         return cfg
     }
 
-    public static func save(_ cfg: RunnerConfig) throws {
+    public static func save(_ cfg: RunnerConfig, expectedRevision: Int? = nil) throws {
         try Paths.ensureDirectories()
         let data = try SnapshotCoding.prettyEncoder().encode(cfg)
-        guard ICloudSafe.write(data, to: file) else {
-            throw NSError(domain: "RunnerConfig", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "写运行配置超时（iCloud 没响应）"])
-        }
+        let currentPath = file.standardizedFileURL.path
+        let remembered = cachedFilePath == currentPath ? cachedRevision : nil
+        let revision = expectedRevision ?? remembered ?? SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: file).revision
+        let committed = try SharedConfigJournal.commit(
+            document: document, payload: data, expectedRevision: revision,
+            compatibilityFile: file)
         cached = cfg
         cachedAt = Date()
+        cachedRevision = committed
+        cachedFilePath = currentPath
     }
 
     @discardableResult
     public static func setModel(_ model: String?, for platform: Platform) throws -> RunnerConfig {
-        var cfg = load()
+        let snapshot = SharedConfigJournal.snapshot(document: document, compatibilityFile: file)
+        var cfg = snapshot.data.flatMap {
+            try? SnapshotCoding.decoder().decode(RunnerConfig.self, from: $0)
+        } ?? RunnerConfig()
         if let model, !model.isEmpty {
             cfg.models[platform.rawValue] = model
         } else {
             cfg.models.removeValue(forKey: platform.rawValue)
         }
-        try save(cfg)
+        try save(cfg, expectedRevision: snapshot.revision)
         return cfg
     }
 

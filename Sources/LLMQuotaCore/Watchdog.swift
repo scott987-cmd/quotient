@@ -31,6 +31,7 @@ public enum Watchdog {
     private static let lock = NSLock()
     private static var inFlight: Set<String> = []
     private static var skipped: [String: Int] = [:]
+    private static var operationGenerations: [String: UUID] = [:]
 
     /// 被跳过的次数，按 key。给 doctor 用 —— 「一直在跳过」本身就是要报的故障。
     public static func skipCounts() -> [String: Int] {
@@ -40,7 +41,7 @@ public enum Watchdog {
 
     public static func resetForTesting() {
         lock.lock(); defer { lock.unlock() }
-        inFlight.removeAll(); skipped.removeAll()
+        inFlight.removeAll(); skipped.removeAll(); operationGenerations.removeAll()
     }
 
     /// 结果三态。**别把「超时」和「上一次还卡着」合并成一个 nil** ——
@@ -90,6 +91,51 @@ public enum Watchdog {
         return box.value.map { Outcome.done($0) } ?? .timedOut
     }
 
+    /// 两阶段看门狗：后台只计算 `prepare`，真正的状态/视图提交在确认本次
+    /// operation generation 仍有效后执行。调用方超时会立刻废弃 generation；
+    /// 旧线程日后恢复，只能丢掉结果，不能幽灵回写。
+    @discardableResult
+    public static func runLatest<T>(
+        _ key: String,
+        timeout: TimeInterval = 8,
+        prepare: @escaping () -> T,
+        commit: @escaping (T) -> Void
+    ) -> Outcome<T> {
+        lock.lock()
+        if inFlight.contains(key) {
+            skipped[key, default: 0] += 1
+            lock.unlock()
+            return .skipped
+        }
+        let generation = UUID()
+        inFlight.insert(key)
+        operationGenerations[key] = generation
+        lock.unlock()
+
+        let sem = DispatchSemaphore(value: 0)
+        let box = Box<T>()
+        DispatchQueue.global(qos: .utility).async {
+            let value = prepare()
+            lock.lock()
+            let current = operationGenerations[key] == generation
+            if current { operationGenerations.removeValue(forKey: key) }
+            inFlight.remove(key)
+            lock.unlock()
+            if current { commit(value) }
+            box.value = value
+            sem.signal()
+        }
+        if sem.wait(timeout: .now() + timeout) == .timedOut {
+            lock.lock()
+            if operationGenerations[key] == generation {
+                operationGenerations.removeValue(forKey: key)
+            }
+            lock.unlock()
+            return .timedOut
+        }
+        return box.value.map { Outcome.done($0) } ?? .timedOut
+    }
+
     private final class Box<T>: @unchecked Sendable {
         var value: T?
     }
@@ -119,6 +165,7 @@ public enum ICloudSafe {
     ///   那个线程可能几小时后才回来，甚至永远不回来，不能当成功。
     @discardableResult
     public static func write(_ data: Data, to url: URL, timeout: TimeInterval = 8) -> Bool {
+        guard PublicationGeneration.allowsPublication() else { return false }
         guard isICloud(url) else {
             return (try? data.write(to: url, options: .atomic)) != nil
         }

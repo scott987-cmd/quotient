@@ -76,12 +76,18 @@ public enum TaskKind {
     public static func isReview(_ prompt: String) -> Bool {
         prompt.hasPrefix("【评审") || prompt.hasPrefix("【审查")
             || prompt.hasPrefix("【看效果】") || isArchitectReview(prompt)
-            || isTesting(prompt)
+            || isTechnicalDisposition(prompt) || isTesting(prompt)
     }
 
     /// MiniMax 给出负面主观判断后，由本机架构师做的二次复核。
     public static func isArchitectReview(_ prompt: String) -> Bool {
         prompt.hasPrefix("【架构复核】")
+    }
+
+    /// 高危路径的技术复核。它和负面结论复核一样由配置中的架构师承担，
+    /// 但只判断隔离分支能否放行，不接管原实现任务。
+    public static func isTechnicalDisposition(_ prompt: String) -> Bool {
+        prompt.hasPrefix(TechnicalDisposition.promptPrefix)
     }
 
     /// 机器执行验证、MiniMax 分析日志和覆盖缺口的测试任务。
@@ -147,6 +153,65 @@ public enum TaskKind {
                 && kind(t.prompt)
                 && boundBranch(t.prompt) == branch
         }
+    }
+
+    /// 调度器自动附着在主任务上的支撑事件，不是用户需要独立跟踪的工作项。
+    ///
+    /// 它们仍完整保存在任务日志和协作页里；这里只给“当前任务”看板一个统一
+    /// 判据，避免合入评审、视觉验收、架构处置被平铺成六七张普通任务卡。
+    /// 只认机器写入的 origin，不能按提示词里的“评审”二字过滤，否则用户主动
+    /// 创建的一项独立评审也会被藏掉。
+    public static func isSupportingTask(_ task: WorkTask) -> Bool {
+        guard let origin = task.origin else { return false }
+        let exact = [
+            "merge-review", "visual-quality-review", "post-land-review",
+            "stale-branch", "evidence-gate", "verify-repair", "milestone-eyes",
+        ]
+        if exact.contains(origin) { return true }
+        let prefixes = [
+            "architect-review:", "architect-review-batch:",
+            "merge-review-escalation:", "technical-disposition:",
+            "quality-architecture-review:", "post-land-repair:",
+            "milestone-remediation:",
+        ]
+        return prefixes.contains { origin.hasPrefix($0) }
+    }
+
+    /// 已明确冻结、只为审计保留的旧任务不属于“当前可执行工作”。
+    ///
+    /// paused 本身不能作为判据：正在等架构决策的主任务仍应让用户看见。
+    /// 这里只收纳系统写入的冻结/失效说明，原始记录一条不删。
+    public static func isFrozenArchive(_ task: WorkTask) -> Bool {
+        guard task.pausedAt != nil, let note = task.note else { return false }
+        return note.contains("冻结并保留")
+            || note.contains("本轮停止美术")
+            || note.contains("旧 Owner 分支派生任务已失效")
+    }
+
+    /// 自动派生任务所依附的来源已经失效时，给出结构化原因。
+    ///
+    /// 只看目标分支“还存在”不够：冻结任务会保留分支供审计，Owner 交接也会
+    /// 保留旧分支。继续跑/合这些评审正是旧 MiniMax 结论反复回到看板的原因。
+    public static func obsoleteSupportingReason(
+        _ task: WorkTask, among tasks: [WorkTask]
+    ) -> String? {
+        guard isSupportingTask(task), let target = boundBranch(task.prompt) else { return nil }
+        let sourceID = String(target.split(separator: "/").last ?? "")
+        guard !sourceID.isEmpty,
+              let source = tasks.first(where: { $0.id == sourceID }) else { return nil }
+        if source.discardedAt != nil { return "来源任务 \(sourceID) 已丢弃" }
+        if isFrozenArchive(source) { return "来源任务 \(sourceID) 已冻结归档" }
+        // 正主已经进 main 后，未落地的合入评审只是一张旧提交的过程票。
+        // 再把它合进主线既不能改变已经完成的决策，还会让“为何没合”长期
+        // 挂着一条评审分支，外面看起来像主任务仍未交付。报告和结论仍完整
+        // 保留在任务/协作审计里，代码分支不再参与待审与落地。
+        if source.landedAt != nil, task.origin == "merge-review" {
+            return "来源任务 \(sourceID) 已合入 main，过程评审已完成使命"
+        }
+        if let current = source.branch, !current.isEmpty, current != target {
+            return "来源任务 \(sourceID) 已交接到 \(current)"
+        }
+        return nil
     }
 
     /// 普通编码任务 —— 上面几类都不是。

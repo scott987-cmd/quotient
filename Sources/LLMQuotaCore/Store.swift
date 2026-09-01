@@ -242,15 +242,17 @@ public enum SnapshotStore {
 // MARK: - Plans config store
 
 public enum PlansStore {
+    private static let document = "plans"
+    private static var loadedRevision: Int?
+    private static var loadedRevisionPath: String?
     /// 配置的权威副本在 iCloud（可用时）。
     ///
     /// 但菜单栏 App 读不了 iCloud（TCC 限制），所以沿用快照那套：
     /// **iCloud 是权威，本地是镜像**，CLI 每次采集时把 iCloud 同步到本地，
     /// App 只读本地。
     ///
-    /// 冲突处理是最后写入者胜。配置是人手工改的、频率极低，
-    /// 而且不会两台机器同时改，这个取舍可以接受 —— 换成真正的合并
-    /// 需要引入版本向量，为一个几乎不发生的场景不值得。
+    /// plans.json 只保留给旧客户端；新客户端以不可变版本事件为权威，修改时
+    /// 带上读取到的 revision，跨机并发修改会显式冲突，不能最后写入者静默覆盖。
     static var canonicalFile: URL {
         Paths.iCloudConfigDir?.appendingPathComponent("plans.json") ?? Paths.plansFile
     }
@@ -259,23 +261,32 @@ public enum PlansStore {
     /// 之前 `llmq plan` 打印的是写死的本地路径，而它可能读的是 iCloud 那份，
     /// 也可能两份都读不到用了模板。路径印错等于把人往错方向带。
     public static func loadedFrom() -> URL? {
-        for url in [canonicalFile, Paths.plansFile] {
-            if let data = try? Data(contentsOf: url),
-               (try? SnapshotCoding.decoder().decode(PlansConfig.self, from: data)) != nil {
-                return url
-            }
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: canonicalFile)
+        loadedRevision = snapshot.revision; loadedRevisionPath = canonicalFile.path
+        if let data = snapshot.data,
+           (try? SnapshotCoding.decoder().decode(PlansConfig.self, from: data)) != nil {
+            return canonicalFile
+        }
+        if let data = ICloudSafe.read(Paths.plansFile),
+           (try? SnapshotCoding.decoder().decode(PlansConfig.self, from: data)) != nil {
+            return Paths.plansFile
         }
         return nil
     }
 
     public static func load() -> PlansConfig {
         let dec = SnapshotCoding.decoder()
-        // 优先读 iCloud 权威副本；读不到（App 无权限 / 没开 iCloud）就退回本地镜像。
-        for url in [canonicalFile, Paths.plansFile] {
-            if let data = try? Data(contentsOf: url),
-               let cfg = try? dec.decode(PlansConfig.self, from: data) {
-                return reconcileWindows(cfg)
-            }
+        // 版本账是权威；plans.json 只是旧二进制兼容视图，本地文件是 UI 镜像。
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: canonicalFile)
+        loadedRevision = snapshot.revision; loadedRevisionPath = canonicalFile.path
+        if let data = snapshot.data, let cfg = try? dec.decode(PlansConfig.self, from: data) {
+            return reconcileWindows(cfg)
+        }
+        if let data = ICloudSafe.read(Paths.plansFile),
+           let cfg = try? dec.decode(PlansConfig.self, from: data) {
+            return reconcileWindows(cfg)
         }
         return PlansConfig.template()
     }
@@ -332,12 +343,12 @@ public enum PlansStore {
         return out
     }
 
-    public static func save(_ config: PlansConfig, force: Bool = false) throws {
+    public static func save(_ config: PlansConfig, force: Bool = false,
+                            expectedRevision: Int? = nil) throws {
         try Paths.ensureDirectories()
         let data = try SnapshotCoding.prettyEncoder().encode(config)
-        _ = ICloudSafe.write(data, to: Paths.plansFile)   // 本地镜像
-
-        guard canonicalFile != Paths.plansFile else { return }
+        let snapshot = SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: canonicalFile)
 
         // 第二道保险：不许用一份**一个上限都没有**的配置，
         // 去盖掉一份填过上限的。
@@ -346,7 +357,7 @@ public enum PlansStore {
         // 而「空配置」几乎总是模板或解码失败的产物，不是本意。
         // 两者相撞时按「有内容的赢」处理，比按「后写的赢」安全得多。
         if !force, config.filledLimitCount == 0,
-           let old = try? Data(contentsOf: canonicalFile),
+           let old = snapshot.data,
            let prev = try? SnapshotCoding.decoder().decode(PlansConfig.self, from: old),
            prev.filledLimitCount > 0 {
             return
@@ -354,18 +365,27 @@ public enum PlansStore {
 
         // 覆盖前留一份。上一次真丢了之后发现无处可捞 ——
         // iCloud 的版本历史命令行读不到，Time Machine 也未必开着。
-        if let old = try? Data(contentsOf: canonicalFile) {
+        if let old = snapshot.data {
             ICloudSafe.write(old, to: canonicalFile.deletingLastPathComponent()
                 .appendingPathComponent("plans.backup.json"))
         }
-        ICloudSafe.write(data, to: canonicalFile)     // iCloud 权威副本
+        let expected = expectedRevision
+            ?? (loadedRevisionPath == canonicalFile.path ? loadedRevision : nil)
+            ?? snapshot.revision
+        let committed = try SharedConfigJournal.commit(
+            document: document, payload: data,
+            expectedRevision: expected,
+            compatibilityFile: canonicalFile)
+        loadedRevision = committed; loadedRevisionPath = canonicalFile.path
+        _ = ICloudSafe.write(data, to: Paths.plansFile)   // 菜单栏本地镜像
     }
 
     /// 把 iCloud 上的配置同步到本地镜像，供菜单栏 App 读取。
     @discardableResult
     public static func mirrorFromICloud() -> Bool {
         guard canonicalFile != Paths.plansFile,
-              let data = try? Data(contentsOf: canonicalFile),
+              let data = SharedConfigJournal.snapshot(
+                document: document, compatibilityFile: canonicalFile).data,
               (try? SnapshotCoding.decoder().decode(PlansConfig.self, from: data)) != nil
         else { return false }
         return ICloudSafe.write(data, to: Paths.plansFile)
@@ -380,6 +400,8 @@ public enum PlansStore {
     /// 就会走上覆盖分支。
     static func canonicalPresent() -> Bool {
         guard canonicalFile != Paths.plansFile else { return false }
+        if SharedConfigJournal.snapshot(
+            document: document, compatibilityFile: canonicalFile).data != nil { return true }
         let fm = FileManager.default
         if fm.fileExists(atPath: canonicalFile.path) { return true }
         let placeholder = canonicalFile.deletingLastPathComponent()
@@ -427,7 +449,7 @@ public enum PlansStore {
 public enum LLMQuota {
     /// 采集本机数据并写出快照。
     @discardableResult
-    public static func collect(now: Date = Date()) throws -> CollectResult {
+    public static func collect(now: Date = Date(), publishViews: Bool = true) throws -> CollectResult {
         try PlansStore.ensureExists()
 
         // 覆盖之前先看看上一份是谁写的。菜单栏 App 和 llmq 是两个独立二进制、
@@ -459,7 +481,9 @@ public enum LLMQuota {
         }.valueOr(0)
         Watchdog.run("plans.mirror", timeout: 8) { PlansStore.mirrorFromICloud() }
         let dash = dashboard(now: now)
-        Watchdog.run("publish.dashboard", timeout: 8) { Inbox.publishDashboard(dash) }
+        if publishViews {
+            Watchdog.run("publish.dashboard", timeout: 8) { Inbox.publishDashboard(dash) }
+        }
         // 同一份任务，另外再按机器单独发一份。
         //
         // `dashboard.json` 在 iCloud 上**只有一份，每台机器都往里写**，
@@ -470,11 +494,15 @@ public enum LLMQuota {
         //
         // 上面那行**不能删**：老版本的手机只认 `dashboard.tasks`，
         // 删了它们会一条任务都看不到。
-        Watchdog.run("publish.taskboard", timeout: 8) { TaskBoardStore.publish(dash) }
+        if publishViews {
+            Watchdog.run("publish.taskboard", timeout: 8) { TaskBoardStore.publish(dash) }
+        }
         // 清理只在 Mac 侧做（手机只读）。它会先读再删，读不动的一律留着。
-        Watchdog.run("taskboard.prune", timeout: 12) { TaskBoardStore.prune(now: now) }
-        Watchdog.run("publish.repos", timeout: 8) { Inbox.publishRepos() }
-        Watchdog.run("presence.publish", timeout: 8) { ClusterPresenceStore.publish() }
+        if publishViews {
+            Watchdog.run("taskboard.prune", timeout: 12) { TaskBoardStore.prune(now: now) }
+            Watchdog.run("publish.repos", timeout: 8) { Inbox.publishRepos() }
+            Watchdog.run("presence.publish", timeout: 8) { ClusterPresenceStore.publish() }
+        }
         // 留一份机器可读的状态,给菜单栏 App 读(它不再自己采集)。
         SnapshotStore.writeCollectStatus(SnapshotStore.CollectStatus(
             at: Date(),

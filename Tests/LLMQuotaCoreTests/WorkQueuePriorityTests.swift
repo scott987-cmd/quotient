@@ -64,6 +64,24 @@ final class WorkQueuePriorityTests: XCTestCase {
         XCTAssertEqual(TaskKind.boundBranch(prompt), "agent/kimi/x")
     }
 
+    func testContextWrappedVisualTaskStillUsesVisionInsteadOfMediaDSL() {
+        let dir = Review.evidenceDir.path
+        let prompt = """
+        ## 长任务进度与续期
+        这是调度器注入的前置上下文。
+
+        【看效果】分支 agent/kimi/x 提交 abc123 的视觉质量是否达标。
+        文件（都在 \(dir) 下）：
+          - match.mov
+        """
+
+        XCTAssertTrue(MiniMaxMediaRunner.isVisualReviewPrompt(prompt))
+        let command = MiniMaxMediaRunner().command(prompt: prompt, cwd: "/tmp")
+        XCTAssertTrue(command.args.joined(separator: " ").contains("vision describe"))
+        XCTAssertFalse(command.args[1].contains("注意图片关键字是 IMG"),
+                       "视觉验收不能因 ContextPack 前缀掉进媒体生成 DSL")
+    }
+
     func testMobileEvidenceVideoUsesSmallPlayableContainer() {
         XCTAssertEqual(Review.mobileVideoName(
             prefix: "repo-branch__", sourceName: "gameplay.MOV"),
@@ -115,6 +133,24 @@ final class WorkQueuePriorityTests: XCTestCase {
                 "docs/evidence/v1/face.png",
                 "docs/evidence/v1/old-match.mov",
             ])
+    }
+
+    func testCurrentRevisionEvidenceCannotBeDisplacedByHistoricalKeywordMatch() {
+        let current = [
+            "docs/evidence/v21/22-fp-full-HP-100-green-in-game.png",
+            "docs/evidence/v21/30-fp-low-HP-30-red-in-game.png",
+        ]
+        let files = current + [
+            "docs/evidence/v12/grip-idle-hands-closeup.png",
+            "docs/evidence/v12/grip-fire-hands-closeup.png",
+            "docs/evidence/v12/grip-reload-hands-closeup.png",
+            "docs/evidence/v12/grip-reload-end-hands-closeup.png",
+        ]
+        let selected = Review.prioritizedEvidence(
+            files, context: "继续修复握枪并核对 HUD",
+            preferredFiles: Set(current), imageLimit: 4, videoLimit: 0)
+        XCTAssertEqual(Array(selected.prefix(2)), current,
+                       "当前 HEAD 的 HUD 证据不能再被旧握枪近景挤出验收包")
     }
 
     func testEvidenceCacheKeyChangesWhenBranchHeadChanges() {

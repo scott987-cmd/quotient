@@ -678,6 +678,7 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
     /// 短标题：优先 `stepTitle`，没有就取 prompt 的第一行，再截到 80 字符。
     public var title: String
     public var state: WorkTask.State
+    public var waitReason: WorkTask.WaitReason?
     /// 还没派出去的时候没有。
     public var platform: Platform?
     /// 哪台机器在跑它。
@@ -704,6 +705,7 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         id: String,
         title: String,
         state: WorkTask.State,
+        waitReason: WorkTask.WaitReason? = nil,
         platform: Platform? = nil,
         machineName: String,
         startedAt: Date? = nil,
@@ -724,6 +726,7 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         self.id = id
         self.title = title
         self.state = state
+        self.waitReason = waitReason
         self.platform = platform
         self.machineName = machineName
         self.startedAt = startedAt
@@ -756,6 +759,7 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         // 比整份看板解不出来强。
         state = (try c.decodeIfPresent(String.self, forKey: .state))
             .flatMap(WorkTask.State.init(rawValue:)) ?? .queued
+        waitReason = try c.decodeIfPresent(WorkTask.WaitReason.self, forKey: .waitReason)
         platform = try c.decodeIfPresent(Platform.self, forKey: .platform)
         machineName = try c.decodeIfPresent(String.self, forKey: .machineName) ?? ""
         startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)

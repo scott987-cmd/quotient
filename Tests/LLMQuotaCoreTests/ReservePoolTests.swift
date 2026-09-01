@@ -74,6 +74,28 @@ final class CooldownClassifyTests: XCTestCase {
         XCTAssertNil(CooldownLedger.classify("超时被终止"))
     }
 
+    /// 现场复刻：Codex 的上下文里带着旧 Kimi 提交标题，标题原样引用了
+    /// “quota refreshed / purchase extra usage”；本次真正的失败只是请求断流。
+    /// 失败分类只能看终端失败摘要，不能让历史上下文替本次平台报额度耗尽。
+    func testHistoricalQuotaTextDoesNotTurnTransportFailureIntoQuotaExhaustion() {
+        let stdout = """
+        历史提交：wip(kimi): Your quota will be refreshed in the next cycle.
+        To continue now, purchase extra usage or upgrade your plan.
+        """
+        let stderr = """
+        sending request for url (https://chatgpt.com/backend-api/codex/responses)
+        ERROR: stream disconnected before completion: error sending request
+        """
+
+        let failure = FailureClassifier.classify(
+            exitCode: 1, stdout: stdout, stderr: stderr, timedOut: false)
+        guard case .platformUnavailable = failure else {
+            return XCTFail("网络断流应短暂切走平台，不是额度耗尽：\(String(describing: failure))")
+        }
+        XCTAssertEqual(CooldownLedger.classify(failure?.describe ?? ""),
+                       .environmentBroken)
+    }
+
     /// 服务端真说打满了，还是要认出来。
     func testRealServerRejectionIsStillCaught() {
         XCTAssertEqual(CooldownLedger.classify(
@@ -174,6 +196,64 @@ extension CooldownClassifyTests {
                                        knownResetAt: reset)
         XCTAssertEqual(cd.until.timeIntervalSince1970, reset.timeIntervalSince1970,
                        accuracy: 1, "周窗真的要等一周，别用 5 小时兜底盖掉")
+    }
+
+    func testKimiSevenDayExhaustionUsesConfiguredWeeklyReset() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-weekly-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+
+        let now = Date(timeIntervalSince1970: 1_787_887_800) // 2026-08-28 03:30Z
+        let reset = Date(timeIntervalSince1970: 1_787_899_620) // 2026-08-28 06:47Z
+        let config = PlansConfig(plans: [PlatformPlan(
+            platform: .kimi, planName: "Kimi", limits: [QuotaLimit(
+                id: "weekly", label: "每周", windowMinutes: 10_080,
+                kind: .periodic, metric: .billableTokens, anchor: reset)])])
+        try PlansStore.save(config, force: true)
+
+        let cd = CooldownLedger.record(
+            platform: .kimi, cause: .quotaExhausted,
+            detail: "Please try again when the current 7-day window ends.", now: now)
+        XCTAssertEqual(cd.until, reset,
+                       "明确说 7-day window 时必须等配置中的周窗口结束，不能只冻 5 小时")
+    }
+
+    func testLegacyFiveHourCooldownStaysExhaustedUntilItsWeeklyWindowEnds() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-legacy-weekly-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+
+        let now = Date(timeIntervalSince1970: 1_787_887_800)
+        let reset = Date(timeIntervalSince1970: 1_787_899_620)
+        let config = PlansConfig(plans: [PlatformPlan(
+            platform: .kimi, planName: "Kimi", limits: [QuotaLimit(
+                id: "weekly", label: "每周", windowMinutes: 10_080,
+                kind: .periodic, metric: .billableTokens, anchor: reset)])])
+        let legacy = Cooldown(
+            platform: .kimi, cause: .quotaExhausted,
+            since: now.addingTimeInterval(-6 * 3600),
+            until: now.addingTimeInterval(-3600), strikes: 4,
+            detail: "current 7-day window ends")
+        try Paths.ensureDirectories()
+        let data = try SnapshotCoding.prettyEncoder().encode([legacy])
+        ICloudSafe.write(data, to: CooldownLedger.file)
+
+        let active = CooldownLedger.active(now: now, config: config)[.kimi]
+        XCTAssertEqual(active?.until, reset,
+                       "旧版错误写下的 5 小时截止时间不能让周额度提前显示恢复")
+        XCTAssertTrue(CooldownLedger.active(
+            now: reset.addingTimeInterval(1), config: config).isEmpty,
+            "跨过周窗口后必须真的解冻，不能把旧错误永久续到下一周")
     }
 
     /// 日志行是整个 JSON，要抠出服务端那句话，不是取头 200 字符。

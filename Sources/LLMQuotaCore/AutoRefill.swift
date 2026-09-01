@@ -40,6 +40,16 @@ public enum AutoRefill {
         public var note: String
     }
 
+    /// 自动续活使用明确的项目协调节点，不再把同步目录里的 LWW 时间戳当跨机锁。
+    public static func isDesignatedCoordinator(
+        repo: RepoAlias, machineID: String = Paths.machineID()
+    ) -> Bool {
+        guard let coordinator = repo.coordinatorMachineID, !coordinator.isEmpty else {
+            return false
+        }
+        return coordinator == machineID
+    }
+
     /// 这个仓库现在是不是真闲。
     ///
     /// 三样都得空:没有在排/在跑的活、没有等落地的产出、没有等人拍板的。
@@ -102,8 +112,9 @@ public enum AutoRefill {
             .compactMap(\.createdAt).max()
     }
 
-    /// 续活的跨机认领。写进同步目录(config,双向同步),别的机器读得到。
-    /// 文件里存认领时间;新鲜(< minInterval)就算别人占着。
+    /// 明确协调节点内部的二次防重。跨机唯一写者由 RepoAlias 中的
+    /// coordinatorMachineID 保证；这里阻止同一协调节点的多个进程重复派活。
+    /// 文件里存认领时间；新鲜(< minInterval)就算已有进程占着。
     /// 用 machineID 标认领者，供审计看是谁抢到；新鲜认领连本机自己也挡。
     /// 幂等由 `lastRefillAt` 和任务账本负责，不能靠“自己不挡自己”——两个
     /// 前台进程会在同一秒都读到空队列，各派一份完全相同的任务。
@@ -136,12 +147,11 @@ public enum AutoRefill {
             return false
         }
         let payload: [String: Any] = ["repo": repo, "by": me, "at": iso.string(from: now)]
-        guard let out = try? JSONSerialization.data(withJSONObject: payload) else { return true }
+        guard let out = try? JSONSerialization.data(withJSONObject: payload) else { return false }
         // 走 ICloudSafe:claim 落在同步目录,裸原子写会在 iCloud 卡死时永久阻塞
-        // (仓库铁律,ICloudWriteGuardTests 守着)。写失败不拦补活 —— 顶多退回到
-        // 「各机各判两小时」的旧行为,不会更糟。
-        _ = ICloudSafe.write(out, to: f)
-        return true
+        // (仓库铁律,ICloudWriteGuardTests 守着)。写失败必须关闭自动补活；否则
+        // 同机的两个调度进程都会把“没有防重事实”当成成功，立即重复烧额度。
+        return ICloudSafe.write(out, to: f)
     }
 
     /// 主线里的一块。
@@ -321,16 +331,15 @@ public enum AutoRefill {
             return Outcome(repo: repo, enqueued: false,
                            note: "PLAN.md 没有「续活主线」或主线全部已完成 —— 等老板给下一段")
         }
-        // **跨机抢占,先到先得。**
+        // **协调节点内的第二道防重。**
         //
         // 2026-08-23 复审(第三轮)逮到:lastRefillAt 读的是 tasks.jsonl,
         // 而它是**机器本地、不同步**的 —— 两台机器各算各的「两小时」,
         // 会同时给同一仓库补活,两个 agent 各挑「下一块」大概率撞车,
         // 重复产出、白烧额度、落地冲突。RepoLease 也只看本地 running,拦不住。
         //
-        // 修法:补活前往**同步**目录写一个带时间戳的 claim,先到先得。
-        // 别的机器同一轮看到新鲜 claim 就让开。这道闸落在同步且能被对端
-        // 读到的地方,不像 tasks.jsonl 是各存各的。
+        // 跨机只允许 RepoAlias.coordinatorMachineID 指定的机器补活；通过这道
+        // 校验后，再用同步 claim 阻止协调节点自己的并发前台重复入队。
         guard claimRefill(repo: repo, now: now) else {
             return Outcome(repo: repo, enqueued: false,
                            note: "另一台机器刚认领了这个仓库的续活,让开")
@@ -340,6 +349,8 @@ public enum AutoRefill {
                 prompt: prompt(repoName: alias, goal: goal, item: item),
                 repo: repo, classify: true, split: false, force: true,
                 origin: "auto-refill",
+                idempotencyKey: "auto-refill:\(repo):\(item.index):\(item.text)",
+                source: "auto-refill",
                 preferredPlatform: RepoExecutionPolicy.implementationOwner(
                     for: repo, prompt: prompt(repoName: alias, goal: goal, item: item)))
             if case .single = r {
