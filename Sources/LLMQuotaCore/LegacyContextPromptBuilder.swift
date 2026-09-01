@@ -20,7 +20,11 @@ public enum LegacyContextPromptBuilder {
         var effectivePrompt = CollaborationStore.contract(
             project: task.repo, taskID: task.id, graphID: task.graphID,
             runnerID: runnerID)
-            + "\n\n---\n## 当前任务\n\n"
+        if let smart = SmartConsultationPolicy.instruction(
+            task: task, runnerID: runnerID, events: CollaborationStore.all()) {
+            effectivePrompt += smart.clause
+        }
+        effectivePrompt += "\n\n---\n## 当前任务\n\n"
             + VisualQualityGate.compactRemediationPrompt(task.prompt)
             + (handoff?.briefing() ?? "")
         // 仓库地图：每个任务都是全新 worktree，agent 一律从零认路。

@@ -257,6 +257,7 @@ public enum ContextPackBuilder {
     }
 
     private static func renderContracts(request: Request) -> Contracts {
+        let events = request.events ?? CollaborationStore.all()
         let evidence = EvidenceGate.inlineClause(repoPath: request.task.repo,
                                                  prompt: request.task.prompt)
         var content = evidence
@@ -266,6 +267,12 @@ public enum ContextPackBuilder {
                 graphID: request.task.graphID, runnerID: request.runnerID)
         var ids = ["contract:progress", "contract:collaboration"]
         if !evidence.isEmpty { ids.insert("contract:evidence", at: 0) }
+        if let smart = SmartConsultationPolicy.instruction(
+            task: request.task, runnerID: request.runnerID,
+            events: events, tier: request.tier) {
+            content += smart.clause
+            ids.append("contract:smart-consultation")
+        }
         if request.mayAsk, let askFile = request.askFile, !askFile.isEmpty {
             content += AskContract.clause(askFile: askFile)
             ids.append("contract:ask")
