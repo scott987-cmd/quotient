@@ -158,6 +158,50 @@ extension CooldownClassifyTests {
 }
 
 extension CooldownClassifyTests {
+    func testCooldownIsScopedByRunnerAndCapability() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-runner-scope-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+
+        CooldownLedger.record(
+            platform: .minimax, runnerID: "minimax.review", capability: "review",
+            cause: .authFailed, detail: "review auth failed")
+        CooldownLedger.record(
+            platform: .minimax, runnerID: "minimax.media", capability: "media",
+            cause: .environmentBroken, detail: "media environment failed")
+
+        CooldownLedger.clear(
+            .minimax, runnerID: "minimax.review", capability: "review")
+
+        XCTAssertNil(CooldownLedger.active(
+            platform: .minimax, runnerID: "minimax.review", capability: "review"))
+        XCTAssertNotNil(CooldownLedger.active(
+            platform: .minimax, runnerID: "minimax.media", capability: "media"),
+            "一个 Runner 恢复不能清掉同平台另一个能力的故障")
+    }
+
+    func testLegacyPlatformCooldownStillDecodes() throws {
+        let old: [String: Any] = [
+            "platform": "qwen",
+            "cause": "quotaExhausted",
+            "since": "2026-09-01T00:00:00Z",
+            "until": "2026-09-01T01:00:00Z",
+            "strikes": 1,
+            "detail": "legacy",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: old)
+        let decoded = try SnapshotCoding.decoder().decode(Cooldown.self, from: data)
+
+        XCTAssertNil(decoded.runnerID)
+        XCTAssertNil(decoded.capability)
+        XCTAssertEqual(decoded.platform, .qwen)
+    }
+
     /// 额度用尽不做指数退避 —— 它有确定的恢复时刻。
     func testQuotaExhaustionDoesNotBackOffForDays() {
         let sandbox = FileManager.default.temporaryDirectory

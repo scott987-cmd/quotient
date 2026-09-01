@@ -1015,7 +1015,6 @@ public struct WorkScheduler: Sendable {
         var rejected: [Rejection] = []
         var dispatcherPlatform: Platform?
         var candidates: [(Pick, Double)] = []
-        let cooling = CooldownLedger.active(now: now)
 
         let isMediaTask = TaskKind.isMedia(task?.prompt ?? "")
         let isReviewTask = TaskKind.isReview(task?.prompt ?? "")
@@ -1118,7 +1117,10 @@ public struct WorkScheduler: Sendable {
             }
             // 冷却优先于一切判断：撞过的墙不再撞。
             // 这是唯一对「上限数值查不到」的平台也有效的避让手段。
-            if let cd = cooling[p] {
+            let runnerCapability = PlatformHealth.capability(for: runner).rawValue
+            if let cd = CooldownLedger.active(
+                platform: p, runnerID: runner.runnerID,
+                capability: runnerCapability, now: now) {
                 rejected.append(Rejection(
                     platform: p,
                     reason: "\(cd.cause.displayName)，\(Format.duration(cd.remaining))后重试"
@@ -1171,7 +1173,7 @@ public struct WorkScheduler: Sendable {
             // 跑不了文本任务。不排除的话，「今天生了 3 张图」就会把
             // 整个平台拦在场外，而它还是本机的分诊器。
             if let bad = report.statuses.first(where: {
-                $0.health == .exhausted && !$0.advisory
+                $0.isFresh(now: now) && $0.health == .exhausted && !$0.advisory
             }) {
                 rejected.append(Rejection(
                     platform: p,

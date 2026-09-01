@@ -281,10 +281,13 @@ func cmdReport(json: Bool) throws {
 
         for s in r.statuses {
             let bar = Format.bar(s.usedFraction, width: 16)
-            let pct = s.usedFraction.map { Format.percent($0) } ?? Ansi.dim("未配上限")
+            let pct = s.usedFraction.map { Format.percent($0) } ?? Ansi.yellow("未知")
             var line = "    " + pad(s.label, 8) + colorize(s.health, bar) + "  "
                 + pad(pct, 10)
                 + pad(Format.metricValue(s.used, metric: s.metric), 14)
+            if let remaining = s.remaining {
+                line += Ansi.dim("剩 " + Format.metricValue(remaining, metric: s.metric) + " · ")
+            }
             if let reset = s.timeToReset {
                 line += Ansi.dim(Format.duration(reset) + "后重置")
             }
@@ -292,7 +295,20 @@ func cmdReport(json: Bool) throws {
 
             var note = "        " + colorize(s.health, s.health.displayName)
             note += Ansi.dim(" · " + s.sourceNote)
-            if s.isOfficial { note += Ansi.cyan(" [平台直报]") }
+            let source = switch s.sourceKind {
+            case .officialFact: "平台事实"
+            case .localEstimate: "本地估算"
+            case .unknown: "来源未知"
+            }
+            note += Ansi.cyan(" [" + source + "]")
+            if let observedAt = s.observedAt {
+                note += Ansi.dim(" · 观测于 " + Format.relative(observedAt, now: dash.generatedAt))
+            }
+            if let expiresAt = s.expiresAt {
+                note += Ansi.dim(" · " + (s.isFresh(now: dash.generatedAt)
+                    ? Format.duration(expiresAt.timeIntervalSince(dash.generatedAt)) + "后失效"
+                    : "已过期"))
+            }
             print(note)
 
             if s.byMachine.count > 1 {
@@ -1955,15 +1971,22 @@ func cmdWork(_ args: [String]) throws {
         }
 
     case "cooldowns":
-        let active = CooldownLedger.active()
+        let active = CooldownLedger.activeEntries()
         if active.isEmpty { print(Ansi.dim("没有平台处于冷却中。")); return }
-        print(Ansi.dim(pad("平台", 10) + pad("原因", 12) + pad("剩余", 12)
+        print(Ansi.dim(pad("Runner / 能力", 28) + pad("原因", 12) + pad("剩余", 12)
             + pad("连续", 6) + "详情"))
-        for cd in active.values.sorted(by: { $0.platform.sortIndex < $1.platform.sortIndex }) {
+        for cd in active.sorted(by: {
+            $0.platform == $1.platform
+                ? ($0.runnerID ?? "") < ($1.runnerID ?? "")
+                : $0.platform.sortIndex < $1.platform.sortIndex
+        }) {
             let remain = cd.cause.needsHumanFix
                 ? Ansi.red("需人工处理")
                 : Format.duration(cd.remaining)
-            print(pad(cd.platform.displayName, 10) + pad(cd.cause.displayName, 12)
+            let owner = cd.runnerID.map {
+                $0 + (cd.capability.map { " / " + $0 } ?? "")
+            } ?? (cd.platform.displayName + " / legacy")
+            print(pad(owner, 28) + pad(cd.cause.displayName, 12)
                 + pad(remain, 12) + pad("\(cd.strikes)", 6)
                 + String(cd.detail.prefix(60)).replacingOccurrences(of: "\n", with: " "))
         }
@@ -2165,100 +2188,28 @@ func cmdWork(_ args: [String]) throws {
     }
 }
 
-/// 用最小的 prompt 试每个平台，只为回答「这个平台现在能不能用」。
+/// 零成本读取本机 Runner 配置。
 ///
-/// 存在的理由：判断认证问题不该靠跑一个完整任务 —— 那要几十秒到十分钟，
-/// 还会真的改代码。而且调度器把任务派给一个认证坏掉的平台时，
-/// 已经白建了 worktree、白占了时间。探针几秒就能给出答案。
+/// 这里故意不再构造 Runner 命令：通用文本 prompt 会误判媒体/评审能力，
+/// 还会烧模型 token、调用工具甚至写文件。远端是否可用只能由近期真实任务
+/// 的被动事实确认；仅仅发现二进制时明确记为“未知”。
 func probePlatforms() throws {
-    let probeDir = NSTemporaryDirectory() + "llmq-probe"
-    try? FileManager.default.createDirectory(
-        atPath: probeDir, withIntermediateDirectories: true)
-    // **探针目录必须是个 git 仓库 —— 真活就跑在 git 仓库里。**
-    //
-    // 真实干活跑在 worktree（那当然是 git 仓库），探针却跑在一个光秃秃的
-    // 临时目录。于是 codex 这种「不在 git 仓库里就拒绝启动」的 CLI
-    // 被判成不可用 —— 探的不是它能不能干活，是它在一个**不会出现的环境**
-    // 里能不能干活。
-    //
-    // 实测（2026-08-19）：同一条命令，在 ~/dev/Maw 里正常返回「可用」，
-    // 在临时目录里报 `Not inside a trusted directory and
-    // --skip-git-repo-check was not specified.`
-    //
-    // 代价：codex 连续 **18 天**一轮没跑过，白扔一整个套餐周期的额度。
-    // 更糟的是这个失败**没有任何人看得见** —— 填活器把它记成
-    // 「空窗没活可填」（两天 249 次），坏掉的平台伪装成闲着。
-    if !GitWorkspace.isRepo(probeDir) {
-        _ = GitWorkspace.git(["init", "--initial-branch=main"], in: probeDir)
-        _ = GitWorkspace.git(["config", "user.email", "probe@llmq.local"], in: probeDir)
-        _ = GitWorkspace.git(["config", "user.name", "llmq-probe"], in: probeDir)
-    }
+    print(Ansi.bold("Runner 被动健康检查")
+        + Ansi.dim("  不调用模型、不消耗任务 token、不创建文件"))
+    print(Ansi.dim(pad("Runner", 24) + pad("能力", 10) + pad("结果", 12) + "说明"))
 
-    print(Ansi.bold("平台可用性探针") + Ansi.dim("  每个平台发一句最短的话，只看认证通不通"))
-    print(Ansi.dim(pad("平台", 10) + pad("结果", 12) + pad("耗时", 8) + "说明"))
-
-    // 结果要落盘共享 —— 见 PlatformHealth。只打在终端上的话，
-    // 别的机器（和手机）永远不知道这台机器上哪个平台坏了。
-    var health: [PlatformHealth.Entry] = []
-
-    for runner in RunnerRegistry.all {
-        guard runner.isAvailable else {
-            // **诊断不能说谎。** 原来一律报「不在 PATH 上」——而 ZCode 装了、
-            // 路径也对,缺的是 CLI 配置或凭据;照着这句去找 PATH 永远找不出问题
-            // (2026-08-23 实际耽误了一轮排查)。执行器能说清就让它说。
-            let why: String
-            if runner is ZcodeRunner, !ZcodeRunner.missingPieces().isEmpty {
-                why = ZcodeRunner.missingPieces().joined(separator: "；")
-            } else {
-                why = runner.binaryName + " 不在 PATH 上"
-            }
-            print(pad(runner.platform.displayName, 10) + pad(Ansi.dim("未安装"), 12)
-                + pad("—", 8) + why)
-            health.append(.init(platform: runner.platform.displayName,
-                                status: "未安装", detail: why, seconds: 0))
-            continue
-        }
-        let cmd = runner.command(prompt: "回复两个字：可用", cwd: probeDir)
-        let t0 = Date()
-        let r = Proc.run(cmd.launchPath, cmd.args, cwd: probeDir, env: cmd.env, timeout: 90)
-        let dt = Date().timeIntervalSince(t0)
-
-        let verdict: String
-        var detail = ""
-        if let f = FailureClassifier.classify(
-            exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, timedOut: r.timedOut) {
-            verdict = Ansi.red("不可用")
-            detail = f.describe
-            // 探测超时同理不判额度：90 秒没答上来说明它慢或者卡了，
-            // 不说明额度打满。
-            if case .timedOut = f {
-                detail += Ansi.dim("  超时，不记冷却")
-            } else if let cause = CooldownLedger.classify(f.describe) {
-                let cd = CooldownLedger.record(
-                    platform: runner.platform, cause: cause, detail: f.describe,
-                    knownResetAt: CooldownLedger.parseResetTime(f.describe))
-                detail += Ansi.dim("  →冷却 " + Format.duration(cd.remaining))
-            }
-        } else {
-            CooldownLedger.clear(runner.platform)
-            verdict = Ansi.green("可用")
-            detail = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "\n", with: " ")
-            detail = String(detail.prefix(60))
-        }
-        print(pad(runner.platform.displayName, 10) + pad(verdict, 12)
-            + pad(String(format: "%.0fs", dt), 8) + detail)
-        health.append(.init(
-            platform: runner.platform.displayName,
-            status: verdict.contains("不可用") ? "不可用" : "可用",
-            detail: Ansi.strip(detail), seconds: dt))
+    let health = PlatformHealth.passiveEntries(runners: RunnerRegistry.all)
+    for entry in health {
+        let verdict = entry.state == .unavailable
+            ? Ansi.dim("未安装") : Ansi.yellow("未知")
+        print(pad(entry.runnerID, 24)
+            + pad(entry.capability.rawValue, 10)
+            + pad(verdict, 12) + entry.detail)
     }
     PlatformHealth.record(health)
-    print(Ansi.dim("  结果已记入共享目录，别的机器和 brief 都看得到"))
+    print(Ansi.dim("  本地配置事实已记入共享目录；未知不会冒充可用"))
     print()
-    print(Ansi.dim("在你自己的终端里跑这个命令，和从别的进程里跑，结果可能不一样 ——"))
-    print(Ansi.dim("凭据存在 Keychain 里，访问权限按调用方的代码签名授权。"))
-    print(Ansi.dim("这一点对后面装 launchd 常驻很关键：那也是个没有你终端上下文的进程。"))
+    print(Ansi.dim("远端健康由真实任务结果被动更新；本检查不会改冷却账本。"))
 }
 
 enum RunOutcome {
@@ -3491,8 +3442,13 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 case .permanentlyUnsupported: task.terminalFailureKind = .platformUnavailable
                 }
                 let cd = CooldownLedger.record(
-                    platform: pick.platform, cause: cause, detail: failure.describe,
+                    platform: pick.platform, runnerID: pick.runner.runnerID,
+                    capability: PlatformHealth.capability(for: pick.runner).rawValue,
+                    cause: cause, detail: failure.describe,
                     knownResetAt: resetAt)
+                PlatformHealth.recordObservation(
+                    runner: pick.runner, state: .unavailable,
+                    detail: failure.describe, expiresAt: cd.until)
                 task.retryNotBefore = cause == .quotaExhausted ? cd.until : nil
                 print(Ansi.yellow("  已记入冷却：" + cd.cause.displayName
                     + "，" + Format.duration(cd.remaining) + "内不再派给它"))
@@ -3503,7 +3459,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     taskTitle: task.prompt))
             } else if case .timedOut = failure {
                 let cd = CooldownLedger.record(
-                    platform: pick.platform, cause: .environmentBroken, detail: "超时")
+                    platform: pick.platform, runnerID: pick.runner.runnerID,
+                    capability: PlatformHealth.capability(for: pick.runner).rawValue,
+                    cause: .environmentBroken, detail: "超时")
                 print(Ansi.yellow("  已记入冷却：超时，"
                     + Format.duration(cd.remaining) + "内不再派给它"))
             }
@@ -3833,7 +3791,14 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             }
         }
         // 跑通了就把这个平台的冷却清掉，连续失败计数归零。
-        if task.state == .done { CooldownLedger.clear(pick.platform) }
+        if task.state == .done {
+            CooldownLedger.clear(
+                pick.platform, runnerID: pick.runner.runnerID,
+                capability: PlatformHealth.capability(for: pick.runner).rawValue)
+            PlatformHealth.recordObservation(
+                runner: pick.runner, state: .available,
+                detail: "真实任务成功")
+        }
 
         switch task.state {
         case .done:

@@ -306,6 +306,94 @@ final class QuotaEngineTests: XCTestCase {
         XCTAssertEqual(statuses.count, 1)
         XCTAssertTrue(statuses[0].isOfficial)
         XCTAssertEqual(statuses[0].usedFraction ?? 0, 0.42, accuracy: 0.001)
+        XCTAssertEqual(statuses[0].sourceKind, .officialFact)
+        XCTAssertEqual(statuses[0].observedAt, now)
+        XCTAssertEqual(statuses[0].remaining ?? -1, 58, accuracy: 0.001)
+        XCTAssertTrue(statuses[0].isFresh(now: now))
+    }
+
+    /// 冷却是调度事实，不是官方额度；不能伪造一条 100/100 的额度记录。
+    func testCooldownRemainsSeparateFromQuotaFacts() throws {
+        let now = Date()
+        let plan = PlatformPlan(
+            platform: .qwen, planName: "Qwen",
+            limits: [QuotaLimit(id: "weekly", label: "每周", windowMinutes: 10080,
+                                kind: .periodic, metric: .requests)],
+            preferOfficialQuota: false)
+        let cooldown = Cooldown(
+            platform: .qwen, runnerID: "qwen.code", capability: "code",
+            cause: .quotaExhausted, since: now,
+            until: now.addingTimeInterval(3600), strikes: 1, detail: "429 quota exhausted")
+
+        let dash = QuotaEngine(config: PlansConfig(plans: [plan])).buildDashboard(
+            snapshots: [snapshot(platform: .qwen, buckets: [])], now: now,
+            cooldowns: [.qwen: cooldown])
+        let report = try XCTUnwrap(dash.reports.first)
+
+        XCTAssertFalse(report.statuses.contains { $0.limitID == "learned-429" })
+        XCTAssertEqual(report.cooldownUntil, cooldown.until)
+        XCTAssertEqual(report.statuses.first?.sourceKind, .localEstimate)
+        XCTAssertNil(report.statuses.first?.remaining,
+                     "未知上限不能显示成还有 100%")
+    }
+
+    func testMobileFeedSeparatesFactsEstimatesUnknownAndCooldown() {
+        let now = Date()
+        let official = OfficialQuota(
+            id: "short", label: "5 小时", usedPercent: 40, windowMinutes: 300,
+            resetsAt: now.addingTimeInterval(3600), observedAt: now)
+        let plan = PlatformPlan(
+            platform: .qwen, planName: "Qwen",
+            limits: [
+                QuotaLimit(id: "short", label: "5 小时", windowMinutes: 300,
+                           kind: .periodic, metric: .requests, limit: 100),
+                QuotaLimit(id: "weekly", label: "每周", windowMinutes: 10080,
+                           kind: .periodic, metric: .requests, limit: 500),
+                QuotaLimit(id: "monthly", label: "每月", windowMinutes: 43200,
+                           kind: .periodic, metric: .requests),
+            ], preferOfficialQuota: true)
+        let cooldown = Cooldown(
+            platform: .qwen, runnerID: "qwen.code", capability: "code",
+            cause: .quotaExhausted, since: now,
+            until: now.addingTimeInterval(1800), strikes: 1, detail: "429")
+        let dashboard = QuotaEngine(config: PlansConfig(plans: [plan])).buildDashboard(
+            snapshots: [snapshot(platform: .qwen, buckets: [], quotas: [official])],
+            now: now, tasks: [], cooldowns: [.qwen: cooldown])
+
+        let page = ViewFeed.boardPage(dashboard: dashboard, now: now)
+        let titles = Set(page.sections.compactMap(\.title))
+
+        XCTAssertTrue(titles.contains("额度事实"))
+        XCTAssertTrue(titles.contains("额度估算"))
+        XCTAssertTrue(titles.contains("额度未知"))
+        XCTAssertTrue(titles.contains("调度冷却"))
+        XCTAssertFalse(titles.contains("额度窗口"), "四种语义不能再混回同一个标题")
+        let meterLabels = page.sections.flatMap { $0.meters ?? [] }.map(\.label)
+        XCTAssertFalse(meterLabels.contains { $0.contains("每月") },
+                       "未知额度不能用 0% 仪表伪装成充裕")
+    }
+
+    func testLegacyQuotaStatusWithoutStageEFieldsStillDecodes() throws {
+        let status = QuotaStatus(
+            platform: .qwen, planName: "Qwen", limitID: "w", label: "每周",
+            metric: .requests, kind: .periodic, used: 10, limit: 100,
+            usedFraction: 0.1, windowStart: Date(),
+            resetsAt: Date().addingTimeInterval(3600), windowElapsedFraction: 0.2,
+            projectedUsedFraction: 0.5, projectedWaste: nil,
+            health: .healthy, isOfficial: false, sourceNote: "旧版")
+        let encoded = try SnapshotCoding.encoder().encode(status)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "sourceKind")
+        object.removeValue(forKey: "observedAt")
+        object.removeValue(forKey: "expiresAt")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try SnapshotCoding.decoder().decode(QuotaStatus.self, from: legacy)
+
+        XCTAssertEqual(decoded.sourceKind, .localEstimate)
+        XCTAssertNotNil(decoded.observedAt)
+        XCTAssertNotNil(decoded.expiresAt)
     }
 
     /// 窗口早就滚过去的旧观测不能当成当前额度。

@@ -404,6 +404,13 @@ public enum QuotaHealth: String, Codable, Sendable {
     }
 }
 
+/// 额度数字的来源层。冷却和健康探测不属于额度数字，分别留在各自字段。
+public enum QuotaSourceKind: String, Codable, Sendable {
+    case officialFact
+    case localEstimate
+    case unknown
+}
+
 /// 某个平台某条额度在当前时刻的完整状态。这是给 UI 的最终产物。
 public struct QuotaStatus: Codable, Sendable, Identifiable {
     public var platform: Platform
@@ -445,6 +452,11 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
     /// 会因为「今天生了 3 张图」把整个平台冻住 —— 而它还是本机的分诊器。
     public var advisory: Bool = false
     public var sourceNote: String
+    public var sourceKind: QuotaSourceKind
+    /// 这条数字实际在什么时候被看到或计算。
+    public var observedAt: Date?
+    /// 超过此时刻后只能展示为过期事实，不能再参与“可调度”判断。
+    public var expiresAt: Date?
     /// 各机器的用量拆分，用于"哪台电脑在吃额度"。
     public var byMachine: [String: Double]
 
@@ -453,6 +465,17 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
     public var timeToReset: TimeInterval? {
         guard let resetsAt else { return nil }
         return max(0, resetsAt.timeIntervalSinceNow)
+    }
+
+    /// 原始计量单位下的剩余量。没有上限就明确未知，不返回伪造的 100%。
+    public var remaining: Double? {
+        guard let limit else { return nil }
+        return max(0, limit - used)
+    }
+
+    public func isFresh(now: Date = Date()) -> Bool {
+        guard let expiresAt else { return false }
+        return now <= expiresAt
     }
 
     public init(
@@ -475,7 +498,10 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
         sourceNote: String,
         byMachine: [String: Double] = [:],
         observedFloor: Double? = nil,
-        advisory: Bool = false
+        advisory: Bool = false,
+        sourceKind: QuotaSourceKind? = nil,
+        observedAt: Date? = nil,
+        expiresAt: Date? = nil
     ) {
         self.advisory = advisory
         self.observedFloor = observedFloor
@@ -496,7 +522,46 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
         self.health = health
         self.isOfficial = isOfficial
         self.sourceNote = sourceNote
+        self.sourceKind = sourceKind ?? (isOfficial ? .officialFact : .localEstimate)
+        self.observedAt = observedAt ?? windowStart
+        self.expiresAt = expiresAt ?? resetsAt
         self.byMachine = byMachine
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case platform, planName, limitID, label, metric, kind, used, limit, usedFraction
+        case windowStart, resetsAt, windowElapsedFraction, projectedUsedFraction
+        case projectedWaste, observedFloor, health, isOfficial, advisory, sourceNote
+        case sourceKind, observedAt, expiresAt, byMachine
+    }
+
+    /// 看板记录会由不同版本的 Mac 互相读取；所有新增字段都必须显式降级。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        platform = try c.decode(Platform.self, forKey: .platform)
+        planName = try c.decode(String.self, forKey: .planName)
+        limitID = try c.decode(String.self, forKey: .limitID)
+        label = try c.decode(String.self, forKey: .label)
+        metric = try c.decode(QuotaMetric.self, forKey: .metric)
+        kind = try c.decode(WindowKind.self, forKey: .kind)
+        used = try c.decode(Double.self, forKey: .used)
+        limit = try c.decodeIfPresent(Double.self, forKey: .limit)
+        usedFraction = try c.decodeIfPresent(Double.self, forKey: .usedFraction)
+        windowStart = try c.decode(Date.self, forKey: .windowStart)
+        resetsAt = try c.decodeIfPresent(Date.self, forKey: .resetsAt)
+        windowElapsedFraction = try c.decode(Double.self, forKey: .windowElapsedFraction)
+        projectedUsedFraction = try c.decodeIfPresent(Double.self, forKey: .projectedUsedFraction)
+        projectedWaste = try c.decodeIfPresent(Double.self, forKey: .projectedWaste)
+        observedFloor = try c.decodeIfPresent(Double.self, forKey: .observedFloor)
+        health = try c.decode(QuotaHealth.self, forKey: .health)
+        isOfficial = try c.decode(Bool.self, forKey: .isOfficial)
+        advisory = try c.decodeIfPresent(Bool.self, forKey: .advisory) ?? false
+        sourceNote = try c.decodeIfPresent(String.self, forKey: .sourceNote) ?? "来源未知"
+        sourceKind = try c.decodeIfPresent(QuotaSourceKind.self, forKey: .sourceKind)
+            ?? (isOfficial ? .officialFact : .localEstimate)
+        observedAt = try c.decodeIfPresent(Date.self, forKey: .observedAt) ?? windowStart
+        expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt) ?? resetsAt
+        byMachine = try c.decodeIfPresent([String: Double].self, forKey: .byMachine) ?? [:]
     }
 }
 

@@ -397,7 +397,8 @@ extension ViewFeed {
         let leaking = dashboard.reports
             .flatMap { r in r.statuses.map { (r.platform, $0) } }
             .filter { _, s in
-                guard let f = s.usedFraction, let reset = s.resetsAt else { return false }
+                guard s.isFresh(now: now),
+                      let f = s.usedFraction, let reset = s.resetsAt else { return false }
                 return f < 0.5 && reset.timeIntervalSince(now) < 12 * 3600
             }
             .sorted { a, b in
@@ -489,7 +490,7 @@ extension ViewFeed {
                 }))
         }
 
-        // 额度窗口，按「最该看」排：已用尽 > 快过期还空着 > 其余
+        // 额度事实、估算、未知和冷却是四层不同的东西，不能再塞进一组仪表。
         let all = dashboard.reports.flatMap { r in r.statuses.map { (r.platform, $0) } }
         let ranked = all.sorted { a, b in
             func rank(_ s: QuotaStatus) -> Int {
@@ -501,18 +502,76 @@ extension ViewFeed {
             if rank(a.1) != rank(b.1) { return rank(a.1) < rank(b.1) }
             return (a.1.resetsAt ?? .distantFuture) < (b.1.resetsAt ?? .distantFuture)
         }
-        if !ranked.isEmpty {
+
+        func meters(_ rows: [(Platform, QuotaStatus)]) -> [Meter] {
+            rows.prefix(10).compactMap { platform, s in
+                guard s.isFresh(now: now), let fraction = s.usedFraction else { return nil }
+                var detail: [String] = []
+                if let remaining = s.remaining {
+                    detail.append("剩 " + Format.compact(remaining))
+                }
+                if let observedAt = s.observedAt {
+                    detail.append("观测于 " + Format.relative(observedAt, now: now))
+                }
+                if let reset = s.resetsAt {
+                    detail.append(Format.duration(reset.timeIntervalSince(now)) + "后重置")
+                }
+                if let expiry = s.expiresAt, expiry != s.resetsAt {
+                    detail.append(Format.duration(expiry.timeIntervalSince(now)) + "后失效")
+                }
+                return Meter(
+                    label: platform.displayName + " · " + s.label,
+                    fraction: fraction,
+                    tone: s.health == .exhausted ? .danger
+                        : (s.health == .wasting || s.health == .atRisk ? .warn : .good),
+                    right: detail.isEmpty ? nil : detail.joined(separator: " · "))
+            }
+        }
+
+        let facts = meters(ranked.filter { $0.1.sourceKind == .officialFact })
+        if !facts.isEmpty {
             sections.append(Section(
-                kind: "meters", title: "额度窗口", note: "按「最该看」排序",
-                meters: ranked.prefix(10).map { platform, s in
-                    Meter(label: platform.displayName + " · " + s.label,
-                          fraction: s.usedFraction ?? 0,
-                          tone: s.health == .exhausted ? .danger
-                              : (s.health == .wasting ? .warn
-                                 : (s.health == .atRisk ? .warn : .good)),
-                          right: s.resetsAt.map {
-                              Format.duration($0.timeIntervalSince(now)) + "后重置" })
+                kind: "meters", title: "额度事实",
+                note: "平台直接回报；每条都带观测时间和失效时间",
+                meters: facts))
+        }
+
+        let estimates = meters(ranked.filter { $0.1.sourceKind == .localEstimate })
+        if !estimates.isEmpty {
+            sections.append(Section(
+                kind: "meters", title: "额度估算",
+                note: "由本地日志和已配置上限推算，不冒充平台事实",
+                meters: estimates))
+        }
+
+        let unknown = ranked.filter {
+            !$0.1.isFresh(now: now) || $0.1.usedFraction == nil
+        }
+        if !unknown.isEmpty {
+            sections.append(Section(
+                kind: "facts", title: "额度未知",
+                note: "未知不会按 0% 或可用展示",
+                facts: unknown.prefix(10).map { platform, s in
+                    Fact(
+                        key: platform.displayName + " · " + s.label,
+                        value: s.isFresh(now: now) ? s.sourceNote : "数据已过期",
+                        tone: .warn)
                 }))
+        }
+
+        let cooldowns = dashboard.reports.compactMap { report -> Fact? in
+            guard let until = report.cooldownUntil, until > now else { return nil }
+            return Fact(
+                key: report.platform.displayName,
+                value: (report.cooldownReason ?? "冷却中") + " · "
+                    + Format.duration(until.timeIntervalSince(now)) + "后重试",
+                tone: .warn)
+        }
+        if !cooldowns.isEmpty {
+            sections.append(Section(
+                kind: "facts", title: "调度冷却",
+                note: "服务拒绝/认证/环境事实；不伪造成额度百分比",
+                facts: cooldowns))
         }
 
         // 任务吞吐

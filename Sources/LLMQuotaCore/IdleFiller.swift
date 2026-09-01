@@ -68,6 +68,8 @@ public enum IdleFiller {
             if AgentRoles.isDispatcher(r.platform) { continue }
 
             for s in r.statuses {
+                // 过期或没有剩余比例的额度不能冒充“0% 已用、很充裕”。
+                guard s.isFresh(now: now), s.usedFraction != nil else { continue }
                 guard let resets = s.resetsAt else {
                     // **没有重置时间 ≠ 没有浪费。**
                     //
@@ -88,11 +90,8 @@ public enum IdleFiller {
                 }
                 let remaining = resets.timeIntervalSince(now)
                 guard remaining > 0, remaining <= Policy.fillWithin else { continue }
-                let used = s.usedFraction ?? 0
+                guard let used = s.usedFraction else { continue }
                 guard used < Policy.idleBelow else { continue }
-                // 没配上限时 usedFraction 可能是 nil / 0 —— 那种情况下
-                // 「用了多少」本来就说不准，但「窗口快过期」是确定的，
-                // 仍然值得填：最坏情况是多干一个活。
                 out.append(Opportunity(
                     platform: r.platform,
                     windowLabel: s.label,

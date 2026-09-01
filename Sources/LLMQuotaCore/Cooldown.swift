@@ -42,12 +42,44 @@ public struct Cooldown: Codable, Sendable {
     }
 
     public var platform: Platform
+    /// nil 表示旧版平台级记录。新记录必须尽量落到具体 Runner + 能力。
+    public var runnerID: String? = nil
+    public var capability: String? = nil
     public var cause: Cause
     public var since: Date
     public var until: Date
     /// 连续失败次数。用来做指数退避 —— 一直失败的平台没必要每 15 分钟试一次。
     public var strikes: Int
     public var detail: String
+
+    public init(platform: Platform, runnerID: String? = nil,
+                capability: String? = nil, cause: Cause,
+                since: Date, until: Date, strikes: Int, detail: String) {
+        self.platform = platform
+        self.runnerID = runnerID
+        self.capability = capability
+        self.cause = cause
+        self.since = since
+        self.until = until
+        self.strikes = strikes
+        self.detail = detail
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case platform, runnerID, capability, cause, since, until, strikes, detail
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        platform = try c.decode(Platform.self, forKey: .platform)
+        runnerID = try c.decodeIfPresent(String.self, forKey: .runnerID)
+        capability = try c.decodeIfPresent(String.self, forKey: .capability)
+        cause = try c.decode(Cause.self, forKey: .cause)
+        since = try c.decode(Date.self, forKey: .since)
+        until = try c.decode(Date.self, forKey: .until)
+        strikes = try c.decodeIfPresent(Int.self, forKey: .strikes) ?? 1
+        detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
+    }
 
     /// 冷却是否尚未过期。`CooldownLedger.active()` 用它过滤掉已过期的条目；
     /// `record()` 用它判断上一次失败是否还在冷却期内 -- 在期内则算连续失败，
@@ -82,18 +114,37 @@ public enum CooldownLedger {
     /// 文件在 iCloud 配置目录下（跨机器同步），读不到或解析失败时返回空字典 --
     /// 首次运行或文件损坏时不阻塞调度，只是没有冷却保护而已。
     /// `active()`、`record()`、`resume()`、`clear()` 都先调它拿到当前账本再改。
-    public static func load() -> [Platform: Cooldown] {
+    public static func loadEntries() -> [Cooldown] {
         // `file` 可能在 iCloud 上。这一行卡死过整个菜单栏 App。
         guard let data = ICloudSafe.read(file),
               let list = try? SnapshotCoding.decoder().decode([Cooldown].self, from: data)
-        else { return [:] }
-        return Dictionary(uniqueKeysWithValues: list.map { ($0.platform, $0) })
+        else { return [] }
+        return list
     }
 
-    static func save(_ map: [Platform: Cooldown]) {
+    /// 旧消费端仍按平台看冷却时，选该平台当前最晚结束的一条；不再用
+    /// `Dictionary(uniqueKeysWithValues:)`，否则同平台两个 Runner 会直接崩溃。
+    public static func load() -> [Platform: Cooldown] {
+        var out: [Platform: Cooldown] = [:]
+        for item in loadEntries() {
+            if let current = out[item.platform], current.until >= item.until { continue }
+            out[item.platform] = item
+        }
+        return out
+    }
+
+    static func save(_ entries: [Cooldown]) {
         try? Paths.ensureDirectories()
         guard let data = try? SnapshotCoding.prettyEncoder()
-            .encode(map.values.sorted { $0.platform.sortIndex < $1.platform.sortIndex })
+            .encode(entries.sorted {
+                if $0.platform != $1.platform {
+                    return $0.platform.sortIndex < $1.platform.sortIndex
+                }
+                if ($0.runnerID ?? "") != ($1.runnerID ?? "") {
+                    return ($0.runnerID ?? "") < ($1.runnerID ?? "")
+                }
+                return ($0.capability ?? "") < ($1.capability ?? "")
+            })
         else { return }
         // 这一行卡死过 worker：跑完任务记冷却时写 iCloud，永久阻塞。
         ICloudSafe.write(data, to: file)
@@ -108,22 +159,48 @@ public enum CooldownLedger {
     /// - `llmq work cooldowns` 拿它给用户列出当前冷却表。
     public static func active(now: Date = Date(), config: PlansConfig? = nil)
         -> [Platform: Cooldown] {
-        var map = load()
+        var out: [Platform: Cooldown] = [:]
+        for item in activeEntries(now: now, config: config) {
+            if let current = out[item.platform], current.until >= item.until { continue }
+            out[item.platform] = item
+        }
+        return out
+    }
+
+    /// 完整的 Runner 级冷却，不折叠同平台记录。
+    public static func activeEntries(now: Date = Date(), config: PlansConfig? = nil)
+        -> [Cooldown] {
+        var entries = loadEntries()
         let plans = config ?? PlansStore.load()
 
         // 旧记录里 Kimi 明说的是「current 7-day window ends」，但没有给绝对
         // 时间。旧版一律只冻 5 小时，于是周额度还没恢复，看板却提前撤掉
         // “已用尽”。只修复仍属于当前周窗的这类记录；跨过窗口后绝不续冻。
-        for (platform, cooldown) in map
-        where cooldown.cause == .quotaExhausted && !cooldown.isActive(now: now) {
+        for index in entries.indices {
+            let cooldown = entries[index]
+            let platform = cooldown.platform
+            guard cooldown.cause == .quotaExhausted,
+                  !cooldown.isActive(now: now) else { continue }
             guard let window = configuredQuotaWindow(
                 platform: platform, detail: cooldown.detail, config: plans, now: now),
                   cooldown.since >= window.start, cooldown.since < window.end else { continue }
             var repaired = cooldown
             repaired.until = window.end
-            map[platform] = repaired
+            entries[index] = repaired
         }
-        return map.filter { $0.value.isActive(now: now) }
+        return entries.filter { $0.isActive(now: now) }
+    }
+
+    /// 只查询指定执行器能力。旧版没有 Runner 维度的记录仍作为平台兜底，
+    /// 但绝不会拿同平台另一个 Runner 的故障来挡当前候选。
+    public static func active(platform: Platform, runnerID: String, capability: String,
+                              now: Date = Date(), config: PlansConfig? = nil) -> Cooldown? {
+        let entries = activeEntries(now: now, config: config)
+        return entries.first {
+            $0.platform == platform && $0.runnerID == runnerID && $0.capability == capability
+        } ?? entries.first {
+            $0.platform == platform && $0.runnerID == nil && $0.capability == nil
+        }
     }
 
     /// 只从平台明确说出的窗口类型推断重置时刻。没有窗口提示仍走 5 小时
@@ -146,18 +223,22 @@ public enum CooldownLedger {
 
     /// 记一次失败，返回这次定下的冷却。
     ///
-    /// 由 `runOneTask()` 和 `probePlatforms()` 在 `classify()` 判定属于平台侧问题后调用。
+    /// 由真实任务或持久日志在 `classify()` 判定属于平台侧问题后调用。
     /// 连续失败（上一次冷却未过期或原因相同）则 strikes 递增、退避梯度加长；
     /// 中间恢复过则 strikes 归 1。平台报了确切的重置时间就直接采信，比退避猜得准。
     /// 永久性故障（`needsHumanFix`）直接冷却 30 天，等人工处理后用 `resume()` 解除。
     @discardableResult
     public static func record(
-        platform: Platform, cause: Cooldown.Cause, detail: String,
+        platform: Platform, runnerID: String? = nil, capability: String? = nil,
+        cause: Cooldown.Cause, detail: String,
         knownResetAt: Date? = nil, now: Date = Date()
     ) -> Cooldown {
-        var map = load()
+        var entries = loadEntries()
         // 上一次的记录还没过期就算连续失败；已经过期说明中间恢复过，重新计数。
-        let prior = map[platform]
+        let priorIndex = entries.firstIndex {
+            $0.platform == platform && $0.runnerID == runnerID && $0.capability == capability
+        }
+        let prior = priorIndex.map { entries[$0] }
         let strikes = (prior?.isActive(now: now) == true || prior?.cause == cause)
             ? min((prior?.strikes ?? 0) + 1, backoff.count) : 1
 
@@ -192,11 +273,12 @@ public enum CooldownLedger {
         }
 
         let cd = Cooldown(
-            platform: platform, cause: cause, since: now, until: until,
+            platform: platform, runnerID: runnerID, capability: capability,
+            cause: cause, since: now, until: until,
             strikes: strikes, detail: String(detail.prefix(200))
         )
-        map[platform] = cd
-        save(map)
+        if let priorIndex { entries[priorIndex] = cd } else { entries.append(cd) }
+        save(entries)
         return cd
     }
 
@@ -206,21 +288,33 @@ public enum CooldownLedger {
     /// 退避不会让它提前结束 -- 用户改了账号或换了工具之后，手动调这里把条目删掉，
     /// 调度器下一轮就能重新选这个平台。返回 false 说明本来就没在冷却中。
     public static func resume(_ platform: Platform) -> Bool {
-        var map = load()
-        guard map.removeValue(forKey: platform) != nil else { return false }
-        save(map)
+        var entries = loadEntries()
+        let before = entries.count
+        entries.removeAll { $0.platform == platform }
+        guard entries.count != before else { return false }
+        save(entries)
         return true
     }
 
     /// 跑成功了就清掉，让计数从头开始。
     ///
-    /// `probePlatforms()` 探测成功时调它清掉旧冷却；`runOneTask()` 任务状态为 `.done`
-    /// 时也调它 -- 一次成功就证明平台恢复了，连续失败计数归零，下次失败从第一档退避重新开始。
-    public static func clear(_ platform: Platform) {
-        var map = load()
-        guard map[platform] != nil else { return }
-        map.removeValue(forKey: platform)
-        save(map)
+    /// `runOneTask()` 真实任务成功时调用；一次成功只清理对应 Runner 能力，
+    /// 不得顺手清掉同平台其他执行器的故障。
+    public static func clear(_ platform: Platform, runnerID: String? = nil,
+                             capability: String? = nil) {
+        var entries = loadEntries()
+        let before = entries.count
+        if let runnerID {
+            entries.removeAll {
+                $0.platform == platform && $0.runnerID == runnerID
+                    && $0.capability == capability
+            }
+        } else {
+            // 手动恢复和旧调用保留平台级语义。
+            entries.removeAll { $0.platform == platform }
+        }
+        guard entries.count != before else { return }
+        save(entries)
     }
 
     /// 从 agent 的报错文本里判断该不该进冷却、进哪种。
@@ -228,7 +322,7 @@ public enum CooldownLedger {
     /// 只认平台侧的问题。agent 自己把任务干砸了不该让整个平台停摆 --
     /// 那是任务的问题，换个平台大概率一样砸。
     ///
-    /// 由 `runOneTask()` 和 `probePlatforms()` 调用，传入 agent 的 stdout+stderr。
+    /// 由真实任务和持久日志恢复调用，传入 agent 的 stdout+stderr。
     /// 返回 nil 表示不是平台的问题，不进冷却。注意永久性故障要先于环境故障检查 --
     /// "no longer supported" 里也含 "not found"，顺序反了会把永久故障降级成临时故障。
     public static func classify(_ text: String) -> Cooldown.Cause? {

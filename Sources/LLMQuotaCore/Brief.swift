@@ -98,9 +98,16 @@ public enum Brief {
         // 因此坏了 27 次才被发现。
         // 冷却中的平台不算「异常」—— 下面 cooling 那一行已经写了
         // 「还有几天恢复」。报两遍会让人跳过整段。
-        let cooling = Set(CooldownLedger.active(now: now).map(\.0.displayName))
+        let cooldownEntries = CooldownLedger.activeEntries(now: now)
+        let cooling = Set(cooldownEntries.filter { $0.runnerID == nil }
+            .map(\.platform.displayName))
+        let coolingKeys = Set(cooldownEntries.compactMap { cooldown -> String? in
+            guard let runnerID = cooldown.runnerID,
+                  let capability = cooldown.capability else { return nil }
+            return runnerID + "|" + capability
+        })
         s.platformProblems = PlatformHealth.problems(
-            excusedBy: cooling, now: now)
+            excusedBy: cooling, excusedKeys: coolingKeys, now: now)
 
         for (p, cd) in CooldownLedger.active(now: now) {
             s.cooling.append((p.displayName, cd.cause.displayName, cd.until))

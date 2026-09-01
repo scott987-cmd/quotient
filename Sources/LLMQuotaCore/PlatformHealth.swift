@@ -27,10 +27,39 @@ import Foundation
 /// 今天已经踩过一次（手机待审清单被另一台机器推成空），不再犯。
 public enum PlatformHealth {
 
+    /// 调度真正关心的是执行能力，不是供应商商标。
+    public enum Capability: String, Codable, Sendable, Hashable {
+        case text
+        case code
+        case review
+        case media
+    }
+
+    public enum State: String, Codable, Sendable {
+        /// 有新鲜的被动事实证明最近成功过。
+        case available
+        case unavailable
+        /// 只知道本机配置存在，远端认证、额度和服务状态没有事实。
+        case unknown
+    }
+
+    public enum Source: String, Codable, Sendable {
+        case taskAttempt
+        case localConfiguration
+        case legacyActiveProbe
+    }
+
     /// 一个平台在一台机器上的探测结果。
     public struct Entry: Codable, Sendable {
         /// 平台显示名（`Platform.displayName`）。
         public var platform: String
+        /// 同一平台可以注册代码、评审、媒体等多个完全不同的执行器。
+        public var runnerID: String
+        public var capability: Capability
+        public var state: State
+        public var source: Source
+        public var observedAt: Date?
+        public var expiresAt: Date?
         /// `可用` / `不可用` / `未安装`。
         public var status: String
         /// 不可用时的原因；可用时是回话内容。
@@ -40,7 +69,34 @@ public enum PlatformHealth {
         public init(platform: String, status: String,
                     detail: String, seconds: Double) {
             self.platform = platform
+            self.runnerID = "legacy." + platform.lowercased()
+                .replacingOccurrences(of: " ", with: "-")
+            self.capability = .text
+            self.state = status == "可用" ? .available
+                : (status == "不可用" || status == "未安装" ? .unavailable : .unknown)
+            self.source = .legacyActiveProbe
+            self.observedAt = nil
+            self.expiresAt = nil
             self.status = status
+            self.detail = detail
+            self.seconds = seconds
+        }
+
+        public init(platform: String, runnerID: String, capability: Capability,
+                    state: State, source: Source, observedAt: Date,
+                    expiresAt: Date?, detail: String, seconds: Double = 0) {
+            self.platform = platform
+            self.runnerID = runnerID
+            self.capability = capability
+            self.state = state
+            self.source = source
+            self.observedAt = observedAt
+            self.expiresAt = expiresAt
+            self.status = switch state {
+            case .available: "可用"
+            case .unavailable: source == .localConfiguration ? "未安装" : "不可用"
+            case .unknown: "未知"
+            }
             self.detail = detail
             self.seconds = seconds
         }
@@ -50,7 +106,14 @@ public enum PlatformHealth {
         /// 由 `record` 在覆盖前对比上一份报告自动填，不用人配。
         public var wasUsableHere: Bool = false
 
-        public var isUsable: Bool { status == "可用" }
+        public var key: String { runnerID + "|" + capability.rawValue }
+
+        public var isUsable: Bool { state == .available }
+
+        public func isFresh(now: Date = Date()) -> Bool {
+            guard let expiresAt else { return false }
+            return now < expiresAt
+        }
 
         /// 这条算不算**故障**。
         ///
@@ -68,6 +131,31 @@ public enum PlatformHealth {
             if status == "未安装" { return wasUsableHere }
             return true      // 装着却跑不通 —— 一律算故障
         }
+
+        private enum CodingKeys: String, CodingKey {
+            case platform, runnerID, capability, state, source, observedAt, expiresAt
+            case status, detail, seconds, wasUsableHere
+        }
+
+        /// 探针报告会跨机器滚动升级；旧报告缺少 Runner 维度时降级成 legacy 键，
+        /// 不能因为一个新字段让整台机器从汇总里消失。
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            platform = try c.decode(String.self, forKey: .platform)
+            status = try c.decodeIfPresent(String.self, forKey: .status) ?? "未知"
+            detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
+            seconds = try c.decodeIfPresent(Double.self, forKey: .seconds) ?? 0
+            runnerID = try c.decodeIfPresent(String.self, forKey: .runnerID)
+                ?? "legacy." + platform.lowercased().replacingOccurrences(of: " ", with: "-")
+            capability = try c.decodeIfPresent(Capability.self, forKey: .capability) ?? .text
+            state = try c.decodeIfPresent(State.self, forKey: .state)
+                ?? (status == "可用" ? .available
+                    : (status == "不可用" || status == "未安装" ? .unavailable : .unknown))
+            source = try c.decodeIfPresent(Source.self, forKey: .source) ?? .legacyActiveProbe
+            observedAt = try c.decodeIfPresent(Date.self, forKey: .observedAt)
+            expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
+            wasUsableHere = try c.decodeIfPresent(Bool.self, forKey: .wasUsableHere) ?? false
+        }
     }
 
     /// 一台机器的一次完整探测。
@@ -76,6 +164,66 @@ public enum PlatformHealth {
         public var machineName: String
         public var at: Date
         public var entries: [Entry]
+    }
+
+    public static func capability(for runner: AgentRunner) -> Capability {
+        if runner.mediaOnly { return .media }
+        if runner.reviewOnly { return .review }
+        if runner.canEdit { return .code }
+        return .text
+    }
+
+    /// 零 token、零工具、零文件副作用的第一层检查。
+    ///
+    /// 二进制存在只说明本地配置齐全，不能证明远端认证或额度可用，因此保持
+    /// `unknown`。真正的 `available` 只能由近期真实任务成功这类被动事实产生。
+    public static func passiveEntries(runners: [AgentRunner], now: Date = Date()) -> [Entry] {
+        runners.map { runner in
+            let capability = capability(for: runner)
+            let installed = runner.isAvailable
+            return Entry(
+                platform: runner.platform.displayName,
+                runnerID: runner.runnerID,
+                capability: capability,
+                state: installed ? .unknown : .unavailable,
+                source: .localConfiguration,
+                observedAt: now,
+                expiresAt: now.addingTimeInterval(3600),
+                detail: installed
+                    ? "本地执行器存在；远端认证、额度和服务状态尚无被动事实"
+                    : runner.binaryName + " 没装或不可执行")
+        }
+    }
+
+    /// 低置信本地扫描不能覆盖仍新鲜的真实任务事实。
+    public static func mergedEntries(incoming: [Entry], previous: [Entry],
+                                     now: Date = Date()) -> [Entry] {
+        let previousByKey = Dictionary(uniqueKeysWithValues: previous.map { ($0.key, $0) })
+        return incoming.map { entry in
+            guard entry.source == .localConfiguration,
+                  let old = previousByKey[entry.key],
+                  old.source == .taskAttempt, old.isFresh(now: now) else { return entry }
+            return old
+        }
+    }
+
+    /// 真实任务结果是健康状态的首选被动来源。
+    public static func recordObservation(
+        runner: AgentRunner, state: State, detail: String,
+        expiresAt: Date? = nil, now: Date = Date()
+    ) {
+        let id = Paths.machineID()
+        let before = all().first { $0.machineID == id }?.entries ?? []
+        let entry = Entry(
+            platform: runner.platform.displayName,
+            runnerID: runner.runnerID,
+            capability: capability(for: runner),
+            state: state,
+            source: .taskAttempt,
+            observedAt: now,
+            expiresAt: expiresAt ?? now.addingTimeInterval(3600),
+            detail: detail)
+        record(before.filter { $0.key != entry.key } + [entry], now: now)
     }
 
     static var dir: URL {
@@ -88,15 +236,16 @@ public enum PlatformHealth {
         // 「一直没装」和「装过又没了」是两回事，只有后者是故障。
         let id = Paths.machineID()
         let before = all().first { $0.machineID == id }
-        var everUsable = Set(before?.entries.filter(\.isUsable).map(\.platform) ?? [])
+        var everUsable = Set(before?.entries.filter(\.isUsable).map(\.key) ?? [])
         // 上一份里已经标过的也要传下去 —— 否则平台坏掉的第二轮，
         // 「以前能用」这个事实就丢了，故障会自己降级成「本来就没装」。
         for e in before?.entries ?? [] where e.wasUsableHere {
-            everUsable.insert(e.platform)
+            everUsable.insert(e.key)
         }
-        let stamped = entries.map { e -> Entry in
+        let merged = mergedEntries(incoming: entries, previous: before?.entries ?? [], now: now)
+        let stamped = merged.map { e -> Entry in
             var e = e
-            e.wasUsableHere = e.isUsable || everUsable.contains(e.platform)
+            e.wasUsableHere = e.isUsable || everUsable.contains(e.key)
             return e
         }
         let r = Report(machineID: id,
@@ -126,7 +275,7 @@ public enum PlatformHealth {
 
     /// 超过这个时长的探测结果不再当成「现状」。
     ///
-    /// 探针会真发请求、花真额度，所以不能跑太勤；但太老的结果比没有更糟 ——
+    /// 被动事实也会过时；太老的结果比没有更糟 ——
     /// 平台可能早就修好了，而这里还在报「坏着」，人会学会忽略它。
     public static let staleAfter: TimeInterval = 24 * 3600
 
@@ -146,6 +295,7 @@ public enum PlatformHealth {
     ///   而冷却混进来会稀释它。
     public static func problems(reports: [Report] = all(),
                                 excusedBy: Set<String> = [],
+                                excusedKeys: Set<String> = [],
                                 staleAfter: TimeInterval = staleAfter,
                                 now: Date = Date()) -> [String] {
         var out: [String] = []
@@ -158,6 +308,15 @@ public enum PlatformHealth {
                     + Format.duration(age) + "前的，已过期")
                 continue
             }
+            let expired = r.entries.filter {
+                $0.expiresAt != nil && !$0.isFresh(now: now)
+            }
+            if !expired.isEmpty {
+                let names = expired.map {
+                    $0.runnerID + "/" + $0.capability.rawValue
+                }.joined(separator: " · ")
+                out.append("\(r.machineName)：健康事实已过期：" + names)
+            }
             // **冷却只豁免「不可用」，不豁免「未安装」。**
             //
             // 额度用尽产生的是「不可用」，那确实是冷却那一行在讲的事。
@@ -166,19 +325,25 @@ public enum PlatformHealth {
             // 「MacBook 上 Qwen 压根没装」被 Mac mini 的冷却记录盖住 ——
             // **豁免规则把一个真问题藏了起来**，正好是这套机制要防的事。
             let bad = r.entries.filter {
+                guard $0.expiresAt == nil || $0.isFresh(now: now) else { return false }
                 guard $0.isFault else { return false }
                 // 冷却只豁免「不可用」（额度用尽有专门一行讲）；
                 // 「装过又没了」冷却解释不了，照报。
-                return $0.status == "未安装" || !excusedBy.contains($0.platform)
+                if $0.status == "未安装" { return true }
+                if excusedKeys.contains($0.key) { return false }
+                // 旧报告没有 Runner 身份，只能继续用平台级豁免。
+                if $0.source == .legacyActiveProbe,
+                   excusedBy.contains($0.platform) { return false }
+                return true
             }
             guard !bad.isEmpty else { continue }
             // 去重：同一个平台可能注册了多个执行器（MiniMax 有媒体和评审
             // 两个），显示名一样，报两遍纯属噪音。
             var seen = Set<String>()
             let names = bad.compactMap { e -> String? in
-                let key = e.platform + "|" + e.status
+                let key = e.key + "|" + e.status
                 guard seen.insert(key).inserted else { return nil }
-                return "\(e.platform)（\(e.status)）"
+                return "\(e.platform) · \(e.runnerID)/\(e.capability.rawValue)（\(e.status)）"
             }.joined(separator: " · ")
             out.append("\(r.machineName)：" + names)
         }

@@ -109,6 +109,35 @@ final class LocalOnlySchedulingTests: XCTestCase {
                       + "否则上面两条只是因为什么都选不出来才通过的")
     }
 
+    /// 同一平台可以有多个独立执行器。一个执行器撞墙，只能冷却它自己，
+    /// 不能把同账号下仍健康的兄弟执行器一起从候选池抹掉。
+    func testRunnerScopedCooldownDoesNotBlockSiblingRunner() {
+        struct ScopedRunner: AgentRunner {
+            let platform: Platform = .qwen
+            let runnerID: String
+            var binaryName: String { "echo" }
+            func command(prompt: String, cwd: String)
+                -> (launchPath: String, args: [String], env: [String: String]) {
+                ("/bin/echo", [prompt], [:])
+            }
+        }
+
+        CooldownLedger.record(
+            platform: .qwen, runnerID: "qwen.one", capability: "code",
+            cause: .environmentBroken, detail: "runner one failed", now: Date())
+
+        let d = dashboard(platform: .qwen, onMachines: ["本机"])
+        let decision = WorkScheduler().decide(
+            dashboard: d,
+            runners: [ScopedRunner(runnerID: "qwen.one"),
+                      ScopedRunner(runnerID: "qwen.two")])
+
+        XCTAssertEqual(decision.candidates.map { $0.runner.runnerID }, ["qwen.two"])
+        XCTAssertTrue(decision.rejected.contains {
+            $0.platform == .qwen && $0.reason.contains("环境异常")
+        })
+    }
+
     /// `Pick` 里不该有「哪台机器」这个概念。
     ///
     /// 这是结构层面的兜底：只要 Pick 不携带机器，执行路径就没有地方

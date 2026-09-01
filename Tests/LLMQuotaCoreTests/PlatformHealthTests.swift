@@ -14,6 +14,26 @@ import XCTest
 ///   一直如此，只是从来没人在那台机器上跑过探针。
 final class PlatformHealthTests: XCTestCase {
 
+    private struct PassiveRunner: AgentRunner {
+        let platform: Platform = .minimax
+        let runnerID: String
+        let binaryName = "passive-test"
+        let available: Bool
+        let canEdit: Bool
+        let canReadFiles: Bool
+        let mediaOnly: Bool
+        let reviewOnly: Bool
+        let canSeeMedia: Bool
+
+        var binaryPath: String? { available ? "/usr/bin/true" : nil }
+
+        func command(prompt: String, cwd: String)
+            -> (launchPath: String, args: [String], env: [String: String]) {
+            XCTFail("被动健康检查不得构造或启动真实模型命令")
+            return ("/usr/bin/false", [], [:])
+        }
+    }
+
     private func entry(_ platform: String, _ status: String) -> PlatformHealth.Entry {
         .init(platform: platform, status: status, detail: "", seconds: 1)
     }
@@ -165,6 +185,77 @@ final class PlatformHealthTests: XCTestCase {
         let r = report("mini", [entry("Codex", "不可用", wasUsable: false)])
         XCTAssertEqual(PlatformHealth.problems(reports: [r]).count, 1,
                        "装着却跑不通就是坏了，跟以前能不能用无关")
+    }
+
+    /// 健康记录的身份必须落到 Runner + 能力，不能再只靠平台名。
+    func testHealthIdentitySeparatesRunnersAndCapabilitiesOnSamePlatform() {
+        let review = PassiveRunner(
+            runnerID: "minimax.review", available: true,
+            canEdit: false, canReadFiles: false,
+            mediaOnly: false, reviewOnly: true, canSeeMedia: false)
+        let media = PassiveRunner(
+            runnerID: "minimax.media", available: true,
+            canEdit: true, canReadFiles: false,
+            mediaOnly: true, reviewOnly: false, canSeeMedia: true)
+
+        let entries = PlatformHealth.passiveEntries(runners: [review, media], now: Date())
+
+        XCTAssertEqual(Set(entries.map(\.runnerID)), ["minimax.review", "minimax.media"])
+        XCTAssertEqual(Set(entries.map(\.capability)), [.review, .media])
+        XCTAssertEqual(Set(entries.map(\.key)).count, 2)
+    }
+
+    /// 本地安装只能证明“可执行文件存在”，不能冒充远端认证/额度可用。
+    func testPassiveCheckHasNoModelCallAndKeepsRemoteAvailabilityUnknown() {
+        let runner = PassiveRunner(
+            runnerID: "minimax.review", available: true,
+            canEdit: false, canReadFiles: false,
+            mediaOnly: false, reviewOnly: true, canSeeMedia: false)
+
+        let entry = PlatformHealth.passiveEntries(runners: [runner], now: Date()).first
+
+        XCTAssertEqual(entry?.state, .unknown)
+        XCTAssertEqual(entry?.source, .localConfiguration)
+        XCTAssertFalse(entry?.isUsable ?? true,
+                       "只看到二进制存在，不等于平台、认证和额度都可用")
+    }
+
+    func testFreshTaskEvidenceWinsOverLocalConfigurationScan() {
+        let now = Date()
+        let proven = PlatformHealth.Entry(
+            platform: "MiniMax", runnerID: "minimax.review", capability: .review,
+            state: .available, source: .taskAttempt, observedAt: now,
+            expiresAt: now.addingTimeInterval(3600), detail: "真实任务成功")
+        let scan = PlatformHealth.Entry(
+            platform: "MiniMax", runnerID: "minimax.review", capability: .review,
+            state: .unknown, source: .localConfiguration, observedAt: now,
+            expiresAt: now.addingTimeInterval(3600), detail: "只看到二进制")
+
+        let merged = PlatformHealth.mergedEntries(
+            incoming: [scan], previous: [proven], now: now)
+
+        XCTAssertEqual(merged.first?.state, .available)
+        XCTAssertEqual(merged.first?.source, .taskAttempt)
+    }
+
+    func testRunnerCooldownDoesNotHideSiblingRunnerFailure() {
+        let now = Date()
+        let review = PlatformHealth.Entry(
+            platform: "MiniMax", runnerID: "minimax.review", capability: .review,
+            state: .unavailable, source: .taskAttempt, observedAt: now,
+            expiresAt: now.addingTimeInterval(3600), detail: "review auth")
+        let media = PlatformHealth.Entry(
+            platform: "MiniMax", runnerID: "minimax.media", capability: .media,
+            state: .unavailable, source: .taskAttempt, observedAt: now,
+            expiresAt: now.addingTimeInterval(3600), detail: "media broken")
+        let r = report("mini", [review, media])
+
+        let lines = PlatformHealth.problems(
+            reports: [r], excusedKeys: [review.key], now: now)
+        let joined = lines.joined(separator: " ")
+
+        XCTAssertFalse(joined.contains("minimax.review"))
+        XCTAssertTrue(joined.contains("minimax.media"), joined)
     }
 
 }

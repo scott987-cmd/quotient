@@ -62,42 +62,14 @@ public struct QuotaEngine: Sendable {
             return lhs.machineID < rhs.machineID
         }
 
+        let cooling = cooldowns ?? CooldownLedger.active(now: now)
         var reports: [PlatformReport] = []
         for platform in Platform.allCases {
             guard let plan = config.plan(for: platform), plan.enabled else { continue }
             // 用去重后的 —— 否则旧身份的用量被重复计算,额度百分比虚高。
             reports.append(buildReport(
-                plan: plan, snapshots: deduped, localMachineID: machineID, now: now))
-        }
-
-        // **从 429 学来的「已打空」盖过本地估算。**
-        //
-        // 本地只数得到自己发起的用量；上限没配、或额度跟网页版共用时，
-        // 状态显示「未配上限/正常」—— 而服务端 429 说的才是真话
-        //（用户原话：「qwen 额度用完了，但是还是显示可调度」）。
-        // 冷却台账里 cause=quotaExhausted 且未到期的，注入一条 exhausted
-        // 状态置顶：手机、报表、调度器从此看到同一个事实。
-        // 冷却和 tasks 一样是外部状态：生产默认读真实账本，测试/预览可显式
-        // 注入，避免本机恰好有平台冷却时把额度计算用例污染成两条状态。
-        let cooling = cooldowns ?? CooldownLedger.active(now: now)
-        for i in reports.indices {
-            guard let cd = cooling[reports[i].platform],
-                  cd.cause == .quotaExhausted else { continue }
-            reports[i].statuses.insert(QuotaStatus(
-                platform: reports[i].platform,
-                planName: reports[i].planName,
-                limitID: "learned-429",
-                label: "服务端确认打空",
-                metric: .percent,
-                kind: .periodic,
-                used: 100, limit: 100, usedFraction: 1,
-                windowStart: cd.since,
-                resetsAt: cd.until,
-                windowElapsedFraction: 1,
-                projectedUsedFraction: nil, projectedWaste: nil,
-                health: .exhausted,
-                isOfficial: true,
-                sourceNote: "从 429 报错学来：" + String(cd.detail.prefix(80))), at: 0)
+                plan: plan, snapshots: deduped, localMachineID: machineID,
+                cooldown: cooling[platform], now: now))
         }
 
         // TaskStore.all() 每个 id 只留最新一条，正是这里要的。
@@ -124,6 +96,7 @@ public struct QuotaEngine: Sendable {
         plan: PlatformPlan,
         snapshots: [MachineSnapshot],
         localMachineID: String,
+        cooldown: Cooldown?,
         now: Date
     ) -> PlatformReport {
         var byMachineBuckets: [String: [UsageBucket]] = [:]
@@ -215,7 +188,6 @@ public struct QuotaEngine: Sendable {
             .filter { $0.lane != .headless && ($0.requests > 0 || $0.prompts > 0) }
             .map(\.start).max()
 
-        let cooling = CooldownLedger.active(now: now)[plan.platform]
         let req30 = b30.reduce(0) { $0 + $1.requests }
         let tok30 = b30.reduce(0) { $0 + $1.billableTokens }
         let req7 = b7.reduce(0) { $0 + $1.requests }
@@ -257,8 +229,8 @@ public struct QuotaEngine: Sendable {
             // 冷却状态要跟着发出去 —— 手机上看不到它的话，
             // 「连续空 19 个窗口」会被当成「快去塞活」，
             // 而真相是这个平台正被限流，塞了也进不去。
-            cooldownUntil: cooling?.until,
-            cooldownReason: cooling.map {
+            cooldownUntil: cooldown?.until,
+            cooldownReason: cooldown.map {
                 $0.cause.displayName
                     + ($0.strikes > 1 ? "（连续第 \($0.strikes) 次）" : "")
             }
@@ -322,7 +294,10 @@ public struct QuotaEngine: Sendable {
             health: health,
             isOfficial: true,
             sourceNote: note,
-            advisory: q.advisory
+            advisory: q.advisory,
+            sourceKind: .officialFact,
+            observedAt: q.observedAt,
+            expiresAt: q.resetsAt ?? q.observedAt.addingTimeInterval(6 * 3600)
         )
     }
 
@@ -473,7 +448,10 @@ public struct QuotaEngine: Sendable {
                 ? (limit.hint ?? "未配置上限，仅统计用量")
                 : "由本地日志推算",
             byMachine: machineSplit,
-            observedFloor: floor
+            observedFloor: floor,
+            sourceKind: .localEstimate,
+            observedAt: now,
+            expiresAt: now.addingTimeInterval(machineStaleAfter)
         )
     }
 
