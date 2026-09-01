@@ -171,15 +171,17 @@ public enum OfficeLog {
 
     /// 把本地 + 其它机器的事件并在一起(按时间),给根上的 office.json 用。
     /// 谁来写都是同一个集合 —— last-writer-wins 也就不再互相覆盖。
-    /// 现在还活着的机器身份:本机 + 有每机事件文件的 + 有在线状态文件的。
+    /// 现在还活着的机器身份:本机 + 有在线状态文件的。
     /// 不在这个集合里的 machineID 是漂移期留下的旧身份(同一台机器换过 ID)。
     static func liveMachineIDs(selfID: String) -> Set<String> {
         var live: Set<String> = [selfID]
-        for dir in [perMachineDir, Paths.sharedRoot.appendingPathComponent("presence", isDirectory: true)] {
-            for f in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-            where f.hasSuffix(".json") && !f.hasPrefix(".") {
-                live.insert(String(f.dropLast(5)))
-            }
+        // office 本身是要被过滤的派生事件流，不能反过来成为存活依据；否则
+        // `office/OLD.json` 会永久证明 OLD 仍活着，幽灵工位永远清不掉。
+        let root = dirOverride ?? Paths.sharedRoot
+        let presence = root.appendingPathComponent("presence", isDirectory: true)
+        for f in (try? FileManager.default.contentsOfDirectory(atPath: presence.path)) ?? []
+        where f.hasSuffix(".json") && !f.hasPrefix(".") {
+            live.insert(String(f.dropLast(5)))
         }
         return live
     }

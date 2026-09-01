@@ -168,7 +168,14 @@ public enum AdaptiveQuotaModel {
             return
         }
         var next = candidate
-        if candidate.evidence == .ceiling {
+        if candidate.evidence == .ceiling, old.evidence == .calibrated {
+            // 撞顶样本只证明“至少用了这么多”，信息量低于完整百分比反解。
+            // 保留校准证据和置信度，只用撞顶值抬高硬下界。
+            next = old
+            next.limit = max(old.limit, candidate.limit)
+            next.samples = max(old.samples, candidate.samples)
+            next.updatedAt = candidate.updatedAt
+        } else if candidate.evidence == .ceiling {
             next.limit = max(old.limit, candidate.limit)
         } else if old.evidence == .calibrated {
             // 新批次是覆盖当前历史窗的重新拟合，并非与旧批次完全独立；

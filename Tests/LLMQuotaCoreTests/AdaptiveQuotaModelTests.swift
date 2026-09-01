@@ -114,4 +114,20 @@ final class AdaptiveQuotaModelTests: XCTestCase {
                        "服务端已拒绝时的真实用量是硬下界，模型不能继续显示更低上限")
         XCTAssertEqual(learned.samples, 8)
     }
+
+    func testCeilingRaisesFloorWithoutDowngradingCalibratedEvidence() throws {
+        _ = AdaptiveQuotaModel.update(estimates: [estimate(value: 120)], ceilings: [],
+                                      now: Date(timeIntervalSince1970: 1_000))
+
+        let records = AdaptiveQuotaModel.update(
+            estimates: [],
+            ceilings: [(.qwen, 300, "5 小时", "prompts", 135, 1)],
+            now: Date(timeIntervalSince1970: 2_000))
+
+        let learned = try XCTUnwrap(records.first)
+        XCTAssertEqual(learned.limit, 135)
+        XCTAssertEqual(learned.evidence, .calibrated,
+                       "撞顶只能补充硬下界，不能把更完整的校准证据降级成 ceiling")
+        XCTAssertEqual(learned.confidence, 0.95, accuracy: 0.001)
+    }
 }

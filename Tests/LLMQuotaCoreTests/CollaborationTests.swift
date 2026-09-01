@@ -26,10 +26,14 @@ final class CollaborationTests: XCTestCase {
         scratch = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("collaboration-" + UUID().uuidString)
         CollaborationStore.directoryOverride = scratch
+        // Agent 发现会合并跨机注册表；测试必须使用自己的空注册目录，不能
+        // 把开发机此刻真实在线的 Claude/MiniMax 等 Agent 当成夹具。
+        AgentRegistry.directoryOverride = scratch.appendingPathComponent("agent-registry")
     }
 
     override func tearDown() {
         AgentConsultation.responseOverride = nil
+        AgentRegistry.directoryOverride = nil
         CollaborationStore.directoryOverride = nil
         try? FileManager.default.removeItem(at: scratch)
         super.tearDown()
