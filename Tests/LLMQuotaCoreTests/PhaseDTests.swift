@@ -40,9 +40,16 @@ final class PhaseDTests: XCTestCase {
             snapshots: [
                 snapshot("hardware-A", name: "Mac mini", at: now),
                 snapshot("hardware-B", name: "Mac mini", at: now),
-            ], now: now)
+            ], now: now,
+            nodeNamesByMachineID: [
+                "hardware-A": "macbook-pro-arm64",
+                "hardware-B": "macbook-pro-intel",
+            ])
 
         XCTAssertEqual(Set(dashboard.machines.map(\.machineID)), ["hardware-A", "hardware-B"])
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: dashboard.machines.map {
+            ($0.machineID, $0.nodeName)
+        })["hardware-A"]!, "macbook-pro-arm64")
     }
 
     func testOnlyExplicitProjectCoordinatorMayAutoRefill() {
@@ -162,6 +169,26 @@ final class PhaseDTests: XCTestCase {
         XCTAssertEqual(question.recipientMachineID, "architect-machine")
         XCTAssertEqual(CollaborationStore.all().map(\.kind), [.question],
                        "认领必须由接收方真正开始处理时发布，提问方不能代写")
+    }
+
+    func testKimiQuestionPrefersCodexArchitectMachine() throws {
+        let registrations = [
+            AgentRegistration(
+                machineID: "worker-machine", machineName: "Worker",
+                runnerID: "codex.code", platform: .codex, canConsult: true,
+                isDispatcher: false, updatedAt: Date().addingTimeInterval(10)),
+            AgentRegistration(
+                machineID: "architect-machine", machineName: "Coordinator",
+                runnerID: "codex.code", platform: .codex, canConsult: true,
+                isDispatcher: true, updatedAt: Date()),
+        ]
+        let question = try AgentConsultation.submit(.init(
+            id: "kimi-asks-architect", project: "/tmp/Flint", taskID: "flint-task",
+            senderRunnerID: "kimi.code", recipientRunnerID: "codex.code",
+            question: "跨机任务的基线边界怎么定？"), registrations: registrations)
+
+        XCTAssertEqual(question.recipientMachineID, "architect-machine",
+                       "同名 Codex 分布在多机时必须优先真正的架构师，而不是最新心跳")
     }
 
     func testRecipientProcessPublishesRealClaimThenAnswer() throws {

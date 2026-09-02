@@ -946,17 +946,54 @@ public struct Dashboard: Codable, Sendable {
 public struct MachineInfo: Codable, Sendable, Hashable, Identifiable {
     public var machineID: String
     public var machineName: String
+    /// 集群里的稳定节点名，例如 macbook-pro-arm64。
+    /// 手机用它区分同型号机器；没有集群配置的旧机器保持 nil。
+    public var nodeName: String?
+    /// 目标机自报的执行能力摘要，手机据此解释“为什么这台能/不能接活”。
+    public var maxConcurrentTasks: Int
+    public var runningTaskCount: Int
+    public var repoAliases: [String]
+    public var automaticRepoAliases: [String]
+    public var runningRepoAliases: [String]
     public var lastSeen: Date
     /// 快照太久没更新，说明那台机器没在跑采集。
     public var isStale: Bool
 
     public var id: String { machineID }
 
-    public init(machineID: String, machineName: String, lastSeen: Date, isStale: Bool) {
+    public init(machineID: String, machineName: String, nodeName: String? = nil,
+                maxConcurrentTasks: Int = 0, runningTaskCount: Int = 0,
+                repoAliases: [String] = [], automaticRepoAliases: [String] = [],
+                runningRepoAliases: [String] = [],
+                lastSeen: Date, isStale: Bool) {
         self.machineID = machineID
         self.machineName = machineName
+        self.nodeName = nodeName
+        self.maxConcurrentTasks = maxConcurrentTasks
+        self.runningTaskCount = runningTaskCount
+        self.repoAliases = repoAliases
+        self.automaticRepoAliases = automaticRepoAliases
+        self.runningRepoAliases = runningRepoAliases
         self.lastSeen = lastSeen
         self.isStale = isStale
+    }
+
+    /// 老版 dashboard 没有 `nodeName`；滚动升级时必须继续完整解码机器列表。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        machineID = try c.decode(String.self, forKey: .machineID)
+        machineName = try c.decode(String.self, forKey: .machineName)
+        nodeName = try c.decodeIfPresent(String.self, forKey: .nodeName)
+        maxConcurrentTasks = try c.decodeIfPresent(
+            Int.self, forKey: .maxConcurrentTasks) ?? 0
+        runningTaskCount = try c.decodeIfPresent(Int.self, forKey: .runningTaskCount) ?? 0
+        repoAliases = try c.decodeIfPresent([String].self, forKey: .repoAliases) ?? []
+        automaticRepoAliases = try c.decodeIfPresent(
+            [String].self, forKey: .automaticRepoAliases) ?? []
+        runningRepoAliases = try c.decodeIfPresent(
+            [String].self, forKey: .runningRepoAliases) ?? []
+        lastSeen = try c.decode(Date.self, forKey: .lastSeen)
+        isStale = try c.decode(Bool.self, forKey: .isStale)
     }
 }
 

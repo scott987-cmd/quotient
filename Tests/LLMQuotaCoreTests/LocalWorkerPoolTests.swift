@@ -16,6 +16,24 @@ final class LocalWorkerPoolTests: XCTestCase {
             machineName: "杜师兵的MacBook Pro"), 1)
     }
 
+    func testPublishedCapacityUsesActualLiveCoordinatorSlots() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("llmq-capacity-\(UUID().uuidString)")
+        defer {
+            WorkerCapacityStore.fileOverride = nil
+            try? FileManager.default.removeItem(at: root)
+        }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        WorkerCapacityStore.fileOverride = root.appendingPathComponent("capacity.json")
+        WorkerCapacityStore.publish(maxConcurrentTasks: 4, coordinatorPID: getpid())
+        XCTAssertEqual(WorkerCapacityStore.current(), 4)
+        let future = Date().addingTimeInterval(121)
+        XCTAssertNil(WorkerCapacityStore.current(now: future),
+                     "活着但已停止心跳的协调器不能继续发布执行容量")
+        WorkerCapacityStore.publish(maxConcurrentTasks: 4, coordinatorPID: 999_999)
+        XCTAssertNil(WorkerCapacityStore.current(), "死亡协调器留下的容量不能继续参与跨机选路")
+    }
+
     func testTwoDifferentReposCanFillTwoSlots() {
         let a = task("a", repo: "/dev/A")
         let b = task("b", repo: "/dev/B")

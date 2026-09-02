@@ -1422,6 +1422,18 @@ final class ClusterNetTests: XCTestCase {
         XCTAssertEqual(r, "llmq")
     }
 
+    func testRoutedSubmissionRoundTripKeepsStableOwnerAndDispatchID() throws {
+        let req = ClusterRequest.submitJob(ClusterSubmission(
+            dispatchID: "dispatch-1", prompt: "继续完成 Flint 功能 Alpha",
+            repoAlias: "flint", preferredRunnerID: "kimi.code"))
+        let framed = try Frame.encode(req)
+        let back = try Frame.decode(ClusterRequest.self, from: framed.dropFirst(4))
+        guard case .submitJob(let job) = back else { return XCTFail("解码走样") }
+        XCTAssertEqual(job.dispatchID, "dispatch-1")
+        XCTAssertEqual(job.repoAlias, "flint")
+        XCTAssertEqual(job.preferredRunnerID, "kimi.code")
+    }
+
     /// 长度前缀是握手**之后**才读的，所以认证拦不住它。
     /// 没有上限的话，一个合法节点发个声称 4GB 的前缀就能把内存打爆。
     func testOversizeFrameIsRefused() {

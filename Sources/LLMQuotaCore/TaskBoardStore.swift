@@ -285,6 +285,72 @@ public enum TaskBoardStore {
                        directoryStalled: false, directoryMissing: false)
     }
 
+    // MARK: 老客户端兼容合并
+
+    /// 把各机器的新鲜任务板合进仍由老客户端读取的 `dashboard.tasks`。
+    ///
+    /// 新客户端会自己读取 `taskboards/<machineID>.json`；旧客户端只看唯一的
+    /// `dashboard.json`。如果这里仍然只发布本机任务，那么最后采集的机器会把
+    /// 其他机器整批盖掉。发布端合并一次，旧客户端无需升级也能看到整个集群。
+    ///
+    /// 只合并新鲜且确实读出来的板子。目录卡住或某个文件损坏时，本机刚算出的
+    /// `dashboard.tasks` 仍会保留；绝不能把“读不到”解释成“远端没有任务”。
+    public static func mergedForLegacyDashboard(
+        _ dashboard: Dashboard,
+        now: Date = Date(),
+        timeout: TimeInterval = 4
+    ) -> Dashboard {
+        struct Candidate {
+            var task: TaskBrief
+            var observedAt: Date
+        }
+
+        var byID: [String: Candidate] = [:]
+        for task in dashboard.tasks {
+            byID[task.id] = Candidate(task: task, observedAt: dashboard.generatedAt)
+        }
+
+        let listing = loadAll(timeout: timeout)
+        var inheritedTruncation = dashboard.tasksTruncated
+        for board in listing.boards {
+            let age = now.timeIntervalSince(board.generatedAt)
+            guard age <= staleAfter else { continue }
+            inheritedTruncation = inheritedTruncation || board.tasksTruncated
+            for original in board.tasks {
+                var task = original
+                if task.machineName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    task.machineName = board.machineName
+                }
+                if let old = byID[task.id], old.observedAt > board.generatedAt {
+                    continue
+                }
+                byID[task.id] = Candidate(task: task, observedAt: board.generatedAt)
+            }
+        }
+
+        func rank(_ state: WorkTask.State) -> Int {
+            switch state {
+            case .running: return 0
+            case .queued: return 1
+            case .blocked: return 2
+            case .done, .failed: return 3
+            }
+        }
+        let merged = byID.values.map(\.task).sorted { lhs, rhs in
+            let leftRank = rank(lhs.state), rightRank = rank(rhs.state)
+            if leftRank != rightRank { return leftRank < rightRank }
+            let leftStart = lhs.startedAt ?? .distantFuture
+            let rightStart = rhs.startedAt ?? .distantFuture
+            if leftStart != rightStart { return leftStart < rightStart }
+            return lhs.id < rhs.id
+        }
+
+        var result = dashboard
+        result.tasks = Array(merged.prefix(TaskBoard.maxTasks))
+        result.tasksTruncated = inheritedTruncation || merged.count > TaskBoard.maxTasks
+        return result
+    }
+
     // MARK: 清理
 
     public struct PruneReport: Sendable {

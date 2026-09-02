@@ -79,8 +79,37 @@ public enum ClusterRequest: Codable, Sendable {
     /// `repo` 是**别名**不是路径 —— 解析交给本机的 RepoRegistry。
     /// 这条是硬性的：允许对端指定绝对路径，等于允许它在任意目录里跑 agent。
     case submit(prompt: String, repo: String?, profile: TaskProfile?)
+    /// 新版跨机选路提交。旧 submit 保留给滚动升级期间的人工派发；只有已发布
+    /// 执行能力的新版节点才会收到这个 case。
+    case submitJob(ClusterSubmission)
     /// 查一个任务现在什么状态。
     case task(id: String)
+}
+
+public struct ClusterSubmission: Codable, Sendable {
+    public var dispatchID: String
+    public var prompt: String
+    public var repoAlias: String
+    public var profile: TaskProfile?
+    public var preferredRunnerID: String?
+
+    public init(dispatchID: String, prompt: String, repoAlias: String,
+                profile: TaskProfile? = nil, preferredRunnerID: String? = nil) {
+        self.dispatchID = dispatchID
+        self.prompt = prompt
+        self.repoAlias = repoAlias
+        self.profile = profile
+        self.preferredRunnerID = preferredRunnerID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        dispatchID = try c.decodeIfPresent(String.self, forKey: .dispatchID) ?? ""
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
+        repoAlias = try c.decodeIfPresent(String.self, forKey: .repoAlias) ?? ""
+        profile = try c.decodeIfPresent(TaskProfile.self, forKey: .profile)
+        preferredRunnerID = try c.decodeIfPresent(String.self, forKey: .preferredRunnerID)
+    }
 }
 
 public enum ClusterResponse: Codable, Sendable {
@@ -153,14 +182,33 @@ public enum ClusterService {
             return .task(t)
 
         case .submit(let prompt, let repo, let profile):
+            return accept(prompt: prompt, repoAlias: repo, profile: profile,
+                          preferredRunnerID: nil,
+                          intakeKey: "cluster:\(node):\(repo ?? "default"):\(prompt)",
+                          from: node)
+
+        case .submitJob(let job):
+            guard !job.dispatchID.isEmpty, !job.repoAlias.isEmpty else {
+                return .failed(reason: "跨机任务缺少 dispatchID 或仓库别名")
+            }
+            return accept(prompt: job.prompt, repoAlias: job.repoAlias,
+                          profile: job.profile,
+                          preferredRunnerID: job.preferredRunnerID,
+                          intakeKey: "cluster:\(node):\(job.dispatchID)", from: node)
+        }
+    }
+
+    private static func accept(prompt: String, repoAlias: String?,
+                               profile: TaskProfile?, preferredRunnerID: String?,
+                               intakeKey: String, from node: String) -> ClusterResponse {
             let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.count >= 8 else {
                 return .failed(reason: "任务描述太短")
             }
             // 别名解析走和 iCloud 收件箱同一个闸门。对端给的是别名，
             // 本机决定它指向哪个目录 —— 对端无法指定路径。
-            guard let path = RepoRegistry.resolve(repo) else {
-                return .failed(reason: repo.map { "找不到仓库别名「\($0)」" }
+            guard let path = RepoRegistry.resolve(repoAlias) else {
+                return .failed(reason: repoAlias.map { "找不到仓库别名「\($0)」" }
                     ?? "没有配置默认仓库")
             }
             var t = WorkTask(id: "pending", prompt: trimmed, repo: path)
@@ -168,18 +216,45 @@ public enum ClusterService {
             // 画像由派发方在它自己那台机器上算好带过来，本机不再算一遍 ——
             // 分诊要花一次调用，让发起的人出这笔钱。
             //
-            // 对端可以在这里撒谎（把复杂任务标成 trivial），但它反正已经能提交
-            // 任意提示词了，谎报难度并不会让它拿到多的权限，只会让活派得更差。
+            // profile 来自通过 mTLS 授权的协调节点，不来自手机或公网客户端；
+            // 真正的 Owner、额度、冷却和角色权限仍由本机下面的二次准入决定。
             t.profile = profile
+            if let preferredRunnerID {
+                guard let runner = RunnerRegistry.all.first(where: {
+                    $0.runnerID == preferredRunnerID && $0.isAvailable
+                        && TaskCapabilityLane.accepts(
+                            $0, lane: TaskCapabilityLane.classify(trimmed))
+                }) else {
+                    return .failed(reason: "目标 Owner 在本机不可用或能力泳道不匹配："
+                        + preferredRunnerID)
+                }
+                t.ownerRunnerID = runner.runnerID
+                t.ownerPlatform = runner.platform
+                t.ownerAssignedAt = Date()
+                t.preferredPlatform = runner.platform
+
+                // 协调机拿到的是目标机最近一次发布的快照。真正入队前必须再用
+                // 目标机当前的额度、冷却、角色和工具事实复核，不能信任过期快照，
+                // 也不能让调用方通过 submitJob 绕过本机调度闸门。
+                let history = TaskStore.all()
+                let decision = WorkScheduler().decide(
+                    dashboard: LLMQuota.dashboard(), runners: [runner], task: t,
+                    history: history)
+                guard decision.candidates.contains(where: {
+                    $0.runner.runnerID == preferredRunnerID
+                }) else {
+                    let reason = decision.rejected.first?.reason
+                        ?? "目标 Owner 不满足本机实时调度条件"
+                    return .failed(reason: "目标机二次准入失败：\(reason)")
+                }
+            }
             do {
-                let requestKey = "cluster:\(node):\(repo ?? "default"):\(trimmed)"
                 let outcome = try TaskIntake.enqueuePrepared(
-                    t, idempotencyKey: requestKey, source: "cluster-submit")
+                    t, idempotencyKey: intakeKey, source: "cluster-submit")
                 if case .single(let saved) = outcome { t = saved }
             } catch {
                 return .failed(reason: "写入任务队列失败：\(error.localizedDescription)")
             }
             return .accepted(taskID: t.id, repo: path)
-        }
     }
 }

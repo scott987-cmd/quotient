@@ -2546,7 +2546,8 @@ public enum Proc {
     public static func run(
         _ launchPath: String, _ args: [String],
         cwd: String?, env extraEnv: [String: String], timeout: TimeInterval,
-        deadlineExtension: ((Date) -> DeadlineExtension?)? = nil
+        deadlineExtension: ((Date) -> DeadlineExtension?)? = nil,
+        stopWhen: (() -> Bool)? = nil
     ) -> Result {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: launchPath)
@@ -2595,6 +2596,14 @@ public enum Proc {
         var deadline = Date().addingTimeInterval(timeout)
         var nextExtensionCheck = Date()
         while p.isRunning && Date() < deadline {
+            // Agent 已经把结构化人工问题写出来时，继续让模型在后台等待登录
+            // 只会烧额度，而且 scheduler 要等进程退出后才会发布那张问题卡。
+            // 看到契约文件就收掉本次模型进程；这不是超时，下面会按 Ask 流程
+            // 保存 WIP、转 blocked 并推到手机。
+            if stopWhen?() == true {
+                terminateProcessTree(rootPID: p.processIdentifier)
+                break
+            }
             let now = Date()
             if now >= nextExtensionCheck {
                 nextExtensionCheck = now.addingTimeInterval(1)

@@ -1246,6 +1246,39 @@ func cmdWork(_ args: [String]) throws {
             print(Ansi.dim("  解冻 " + x.id + "  " + (x.note ?? "")))
         }
 
+    case "needs-human":
+        // 给运行中的 Agent 一个不容易写错的人工阻塞入口。它只写本轮的
+        // scratch ask 文件；父 worker 看到文件后负责停止模型、保存 WIP、
+        // 发布移动端问题并原子地把任务转成 blocked。
+        let askEnv = ProcessInfo.processInfo.environment
+        guard let taskID = askEnv["LLMQ_TASK_ID"], !taskID.isEmpty,
+              let path = askEnv["LLMQ_ASK_FILE"], !path.isEmpty else {
+            print(Ansi.red("needs-human 只能在 llmq 调度的运行任务里使用")); exit(2)
+        }
+        let reason = rest.joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reason.isEmpty else {
+            print("用法：llmq work needs-human \"需要人工完成的具体操作\""); exit(2)
+        }
+        guard let runningTask = TaskStore.all().first(where: { $0.id == taskID }),
+              runningTask.state == .running else {
+            print(Ansi.red("任务 \(taskID) 已不在运行，拒绝创建过期问题")); exit(1)
+        }
+        let payload: [String: Any] = [
+            "questions": [[
+                "text": reason,
+                "options": ["我已处理，继续", "放弃这个任务"],
+                "suggestion": "我已处理，继续"
+            ]],
+            "progressNote": "遇到必须由人完成的登录、授权或 GUI 操作；已有改动由调度器保存"
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
+        let url = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        print(Ansi.yellow("已登记人工阻塞并通知调度器，请立即结束本次运行"))
+
     case "progress":
         // Agent 在同一个会话里交里程碑：既给执行租约续期，也立刻发到手机。
         // 不回写 WorkTask，避免 agent 子进程和 worker 并发覆盖任务主状态。
@@ -3135,6 +3168,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         executionEnv["LLMQ_TASK_ID"] = task.id
         executionEnv["LLMQ_WORKSPACE"] = ws.path
         executionEnv["LLMQ_INITIAL_LEASE_SECONDS"] = String(Int(attemptTimeout))
+        if mayAsk { executionEnv["LLMQ_ASK_FILE"] = askFile.path }
         let baselineFingerprint = WorkProgressStore.fingerprint(repo: ws.path)
         let leaseGate = ExecutionLeaseGate(
             taskID: task.id,
@@ -3189,6 +3223,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 print(Ansi.cyan("  自动续期 \(Int(automatic.seconds / 60)) 分钟：")
                       + Ansi.dim(summary))
                 return Proc.DeadlineExtension(seconds: automatic.seconds, reason: summary)
+            },
+            stopWhen: {
+                mayAsk && FileManager.default.fileExists(atPath: askFile.path)
             })
         let elapsed = Date().timeIntervalSince(started)
         if r.exitCode != -1 {
@@ -3926,7 +3963,6 @@ func cmdWorkLoop(_ args: [String]) throws {
        let v = Int(args[i + 1]) {
         workerSlots = min(8, max(1, v))
     }
-
     // 两个循环同时跑会把同一个任务派两遍。从根上只允许一个实例。
     let lock = SingleInstanceLock(name: "work-loop")
     guard lock.acquire() else {
@@ -3935,6 +3971,9 @@ func cmdWorkLoop(_ args: [String]) throws {
         exit(1)
     }
     defer { lock.release() }
+    // 只有拿到唯一协调器锁的实例才能发布容量。失败退出的第二个进程不能
+    // 短暂覆盖真正 worker 的 PID，令集群把一台健康机器误判成无容量。
+    WorkerCapacityStore.publish(maxConcurrentTasks: workerSlots)
     _ = try PublicationGeneration.activate(role: .coordinator)
 
     // SIGTERM/SIGINT 要能干净退出：正在跑的 agent 得让它跑完，
@@ -4132,6 +4171,7 @@ func cmdWorkLoop(_ args: [String]) throws {
     // 再按这份快照派发。后续新任务留到下一轮，不能在半轮里重新读配置改选择。
     @discardableResult
     func dispatchReadyTasks(lowDisk: Bool) -> Bool {
+        WorkerCapacityStore.publish(maxConcurrentTasks: workerSlots)
         guard !dispatchStoppedByFailures,
               !lowDisk,
               Date() >= dispatchHoldUntil else { return false }
@@ -5487,17 +5527,15 @@ func cmdDoctor(tidy: Bool = false) throws {
     }
 
     print(Ansi.bold("调度范围"))
-    print("  自动调度" + Ansi.green("只在本机") + "选平台，"
-        + Ansi.dim("从不把任务派到别的机器"))
-    print(Ansi.dim("  所以每台机器的仓库可以各放各的位置（别名按机器解析成本地路径）"))
+    print("  常驻工作循环" + Ansi.green("只执行本机队列")
+        + Ansi.dim("；跨机智能选路由明确的 dispatch auto 触发"))
+    print(Ansi.dim("  选路按稳定机器 ID、仓库就绪、项目作用域、执行槽和 Agent 能力；"
+        + "路径仍可各放各的位置"))
     if peers.isEmpty {
-        print(Ansi.dim("  跨机要手动：llmq cluster dispatch <对方节点> \"<任务>\""))
+        print(Ansi.dim("  还没有可选对端；先完成 cluster 配置和能力上报"))
     } else {
-        print(Ansi.dim("  跨机要手动，比如："))
-        for p in peers.prefix(2) {
-            print(Ansi.dim("    llmq cluster dispatch \(p.nodeName ?? p.machineName) \"<任务>\""))
-        }
-        print(Ansi.dim("  它在对面按**别名**重新解析路径，不会把本机路径发过去"))
+        print(Ansi.dim("  智能选路：llmq cluster dispatch auto \"<任务>\" --repo <别名>"))
+        print(Ansi.dim("  仍可点名节点；两种方式都只发送别名，不发送本机路径"))
     }
     print("")
 
@@ -6400,11 +6438,15 @@ func cmdCluster(_ rest: [String]) throws {
     // llmq cluster dispatch <节点名> "<任务>" [--repo <别名>] [--no-classify]
     case "dispatch":
         let cfg = loadConfig()
-        let peer = need(1, "对端节点名")
+        let requestedPeer = need(1, "对端节点名或 auto")
         let prompt = need(2, "任务描述")
         var repoAlias: String?
         if let i = rest.firstIndex(of: "--repo"), i + 1 < rest.count {
             repoAlias = rest[i + 1]
+        }
+        var preferredRunnerID: String?
+        if let i = rest.firstIndex(of: "--owner"), i + 1 < rest.count {
+            preferredRunnerID = rest[i + 1]
         }
 
         // 分诊在**派发方**这台机器上做，不在对端。
@@ -6419,9 +6461,70 @@ func cmdCluster(_ rest: [String]) throws {
             printProfile(profile)
         }
 
-        let r = try ClusterNet.send(
-            .submit(prompt: prompt, repo: repoAlias, profile: profile),
-            to: peer, config: cfg, password: myPassword(cfg.nodeName))
+        var peer = requestedPeer
+        var selectedMachineID: String?
+        if requestedPeer == "auto" {
+            let repos = RepoRegistry.all()
+            let repo: RepoAlias
+            if let wanted = repoAlias {
+                guard let exact = repos.first(where: { $0.alias == wanted }) else {
+                    print(Ansi.red("没有仓库别名：\(wanted)")); exit(1)
+                }
+                repo = exact
+            } else {
+                guard let fallback = repos.first(where: \.isDefault) ?? repos.first else {
+                    print(Ansi.red("自动跨机路由必须先登记仓库别名")); exit(1)
+                }
+                repo = fallback
+            }
+            let alias = repo.alias
+            let plan = ClusterDispatchPlanner.plan(
+                repoAlias: alias, lane: TaskCapabilityLane.classify(prompt),
+                profile: profile, preferredRunnerID: preferredRunnerID,
+                preferredPlatform: preferredRunnerID == nil
+                    ? repo.implementationOwner : nil,
+                coordinatorMachineID: repo.coordinatorMachineID)
+            guard let selected = plan.selected else {
+                print(Ansi.red("没有机器同时满足仓库、项目作用域、容量和 Agent 能力："))
+                for item in plan.rejected {
+                    print(Ansi.dim("  \(item.machineName)：\(item.reason)"))
+                }
+                exit(1)
+            }
+            peer = selected.nodeName
+            selectedMachineID = selected.machineID
+            preferredRunnerID = selected.runnerID
+            repoAlias = alias
+            print(Ansi.green("自动选中 \(selected.machineName)")
+                + Ansi.dim(" · \(selected.runnerID) · \(selected.reason)"))
+        }
+
+        let request: ClusterRequest
+        if let owner = preferredRunnerID, let alias = repoAlias {
+            let explicitID: String? = {
+                guard let i = rest.firstIndex(of: "--id"), i + 1 < rest.count else {
+                    return nil
+                }
+                return rest[i + 1]
+            }()
+            let stable = TaskIntake.stableTaskID(
+                "cluster:\(cfg.nodeName):\(alias):\(prompt)")
+            request = .submitJob(ClusterSubmission(
+                dispatchID: explicitID ?? stable, prompt: prompt, repoAlias: alias,
+                profile: profile, preferredRunnerID: owner))
+        } else {
+            request = .submit(prompt: prompt, repo: repoAlias, profile: profile)
+        }
+        // 本机和远端使用完全相同的 submitJob 校验入口。这样“智能选中本机”
+        // 不会退回旧的直接入队逻辑，Owner、额度、冷却和人工活跃门禁仍会复核。
+        let r: ClusterResponse
+        if selectedMachineID == Paths.machineID() {
+            r = ClusterService.handle(request, from: cfg.nodeName)
+        } else {
+            r = try ClusterNet.send(
+                request,
+                to: peer, config: cfg, password: myPassword(cfg.nodeName))
+        }
         switch r {
         case .accepted(let id, let repo):
             print(Ansi.green("已派给 \(peer) ") + id + Ansi.dim("  仓库 " + repo))
@@ -6627,7 +6730,8 @@ func cmdCluster(_ rest: [String]) throws {
           llmq cluster set-bind <地址|auto|all>  换绑定地址（all = 0.0.0.0）
           llmq cluster fix-keychain             更新后台进程读不到口令时跑一次
           llmq cluster ping <对方名>            验双向证书通不通
-          llmq cluster dispatch <对方名> "<任务>" [--repo <别名>]
+          llmq cluster dispatch <对方名|auto> "<任务>" [--repo <别名>]
+                                   [--owner <runner-id>] [--id <稳定请求ID>]
           llmq cluster task <对方名> <任务ID>   查进度
           llmq cluster remote <对方名>          看对方的额度
           llmq cluster status                   本机集群配置

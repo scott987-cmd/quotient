@@ -421,6 +421,10 @@ final class TaskBoardTests: XCTestCase {
             JSONSerialization.jsonObject(with: data) as? [String: Any])
         obj.removeValue(forKey: "tasks")
         obj.removeValue(forKey: "tasksTruncated")
+        if var machines = obj["machines"] as? [[String: Any]], !machines.isEmpty {
+            machines[0].removeValue(forKey: "nodeName")
+            obj["machines"] = machines
+        }
         XCTAssertNil(obj["tasks"])
 
         let legacy = try JSONSerialization.data(withJSONObject: obj)
@@ -429,6 +433,7 @@ final class TaskBoardTests: XCTestCase {
         XCTAssertEqual(decoded.tasks, [])
         XCTAssertFalse(decoded.tasksTruncated)
         XCTAssertEqual(decoded.machines.first?.machineName, "老 Mac")
+        XCTAssertNil(decoded.machines.first?.nodeName)
     }
 
     func testDashboardTasksRoundTrip() throws {

@@ -600,9 +600,16 @@ public enum AgentConsultation {
             $0.isAvailable && $0.canReadFiles && !$0.mediaOnly
                 && supportsReadOnlyConsultation($0)
         }.map {
-            AgentRegistration(machineID: Paths.machineID(), machineName: Paths.machineName(),
+            let role = AgentRoles.role(for: $0.platform)
+            return AgentRegistration(machineID: Paths.machineID(), machineName: Paths.machineName(),
                               runnerID: $0.runnerID, platform: $0.platform,
-                              canConsult: true)
+                              canConsult: true, canEdit: $0.canEdit,
+                              canReadFiles: $0.canReadFiles, mediaOnly: $0.mediaOnly,
+                              reviewOnly: $0.reviewOnly, canSeeMedia: $0.canSeeMedia,
+                              maxRisk: role.maxRisk,
+                              maxTier: role.maxTier ?? .standard,
+                              isDispatcher: AgentRoles.isDispatcher($0.platform),
+                              isMuted: AgentRoles.isMuted($0.platform))
         }
         var byIdentity = Dictionary(uniqueKeysWithValues: AgentRegistry.all().map {
             ($0.machineID + "|" + $0.runnerID, $0)
@@ -658,6 +665,7 @@ public enum AgentConsultation {
                 && (request.recipientMachineID == nil
                     || $0.machineID == request.recipientMachineID)
         }.sorted {
+            if $0.isDispatcher != $1.isDispatcher { return $0.isDispatcher }
             if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
             return $0.machineID < $1.machineID
         }

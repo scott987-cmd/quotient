@@ -1,5 +1,38 @@
 import Foundation
 
+/// 工作循环把实际生效的槽位数留给 Presence 读取。`--slots` 是运行时参数，
+/// 只按机型默认值上报会让跨机路由把一台已满的机器误判为空闲。
+public enum WorkerCapacityStore {
+    private struct Snapshot: Codable {
+        var maxConcurrentTasks: Int
+        var coordinatorPID: Int32
+        var updatedAt: Date
+    }
+
+    public static var fileOverride: URL?
+    private static var file: URL {
+        fileOverride ?? Paths.appSupport.appendingPathComponent("worker-capacity.json")
+    }
+
+    public static func publish(maxConcurrentTasks: Int,
+                               coordinatorPID: Int32 = getpid(),
+                               now: Date = Date()) {
+        let value = Snapshot(maxConcurrentTasks: min(8, max(1, maxConcurrentTasks)),
+                             coordinatorPID: coordinatorPID, updatedAt: now)
+        guard let data = try? SnapshotCoding.encoder().encode(value) else { return }
+        _ = ICloudSafe.write(data, to: file)
+    }
+
+    /// 只有协调器进程仍活着的快照才算数。崩溃留下的文件不能永久占用容量事实。
+    public static func current(now: Date = Date(), staleAfter: TimeInterval = 120) -> Int? {
+        guard let data = try? Data(contentsOf: file),
+              let value = try? SnapshotCoding.decoder().decode(Snapshot.self, from: data),
+              value.coordinatorPID > 0, kill(value.coordinatorPID, 0) == 0,
+              now.timeIntervalSince(value.updatedAt) <= staleAfter else { return nil }
+        return value.maxConcurrentTasks
+    }
+}
+
 /// 一台机器上的并发边界。
 ///
 /// 协调器仍然只有一个；并发的是彼此隔离的 `llmq work run <taskID>` 子进程。

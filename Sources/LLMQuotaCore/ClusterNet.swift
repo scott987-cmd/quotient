@@ -1040,6 +1040,9 @@ public enum ClusterNet {
         case .task(let id): return "查任务 \(id)"
         case .submit(let p, let repo, _):
             return "投任务（\(repo ?? "默认仓库")）：\(p.prefix(40))"
+        case .submitJob(let job):
+            return "定向投任务（\(job.repoAlias) / \(job.preferredRunnerID ?? "自动 Agent")）："
+                + String(job.prompt.prefix(40))
         }
     }
 

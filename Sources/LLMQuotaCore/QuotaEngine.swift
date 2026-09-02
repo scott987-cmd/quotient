@@ -29,7 +29,8 @@ public struct QuotaEngine: Sendable {
         machineID: String = Paths.machineID(),
         machineName: String = Paths.machineName(),
         repoAliases: [RepoAlias]? = nil,
-        cooldowns: [Platform: Cooldown]? = nil
+        cooldowns: [Platform: Cooldown]? = nil,
+        nodeNamesByMachineID: [String: String]? = nil
     ) -> Dashboard {
         // **同一台机器只留最新的那一份。**
         //
@@ -49,10 +50,25 @@ public struct QuotaEngine: Sendable {
                 $0.machineName == $1.machineName
                     ? $0.machineID < $1.machineID : $0.machineName < $1.machineName
             }
+        let presences = ClusterPresenceStore.all()
+        let presenceByMachineID = Dictionary(presences.map { ($0.machineID, $0) },
+                                             uniquingKeysWith: { a, b in
+            a.updatedAt >= b.updatedAt ? a : b
+        })
+        let nodeNames = nodeNamesByMachineID ?? presences.reduce(into: [:]) {
+            if let name = $1.nodeName, !$1.machineID.isEmpty { $0[$1.machineID] = name }
+        }
         var machines: [MachineInfo] = deduped.map {
-            MachineInfo(
+            let presence = presenceByMachineID[$0.machineID]
+            return MachineInfo(
                 machineID: $0.machineID,
                 machineName: $0.machineName,
+                nodeName: nodeNames[$0.machineID],
+                maxConcurrentTasks: presence?.maxConcurrentTasks ?? 0,
+                runningTaskCount: presence?.runningTaskCount ?? 0,
+                repoAliases: presence?.repoAliases ?? [],
+                automaticRepoAliases: presence?.automaticRepoAliases ?? [],
+                runningRepoAliases: presence?.runningRepoAliases ?? [],
                 lastSeen: $0.generatedAt,
                 isStale: now.timeIntervalSince($0.generatedAt) > machineStaleAfter
             )

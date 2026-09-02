@@ -167,12 +167,63 @@ final class TaskBoardStoreTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/LLMQuotaCore/Store.swift"), encoding: .utf8)
-        XCTAssertTrue(src.contains("Inbox.publishDashboard(dash)"),
+        XCTAssertTrue(src.contains("Inbox.publishDashboard(legacyDash)"),
                       "dashboard.json 的 tasks 是老手机唯一的来源，不能停发")
+        XCTAssertTrue(src.contains("TaskBoardStore.mergedForLegacyDashboard("),
+                      "老手机的全局看板必须先合并各机器，否则仍然只显示最后一台")
         XCTAssertTrue(src.contains("TaskBoardStore.publish(dash)"),
                       "按机器分的任务板没发出去，手机上还是只看得到一台")
         XCTAssertTrue(src.contains("TaskBoardStore.prune("),
                       "清理只能在 Mac 侧做，手机只读 —— 这里不做就没人做了")
+    }
+
+    func testLegacyDashboardMergesFreshTasksFromEveryMachine() {
+        TaskBoardStore.publish(board(
+            "AAA", name: "Mac mini", generatedAt: now,
+            tasks: [brief("local", machine: "Mac mini")]))
+        TaskBoardStore.publish(board(
+            "BBB", name: "M2", generatedAt: now.addingTimeInterval(-20),
+            tasks: [brief("remote", machine: "")]))
+        let local = Dashboard(
+            generatedAt: now, machines: [], reports: [],
+            tasks: [brief("local", machine: "Mac mini")])
+
+        let merged = TaskBoardStore.mergedForLegacyDashboard(local, now: now)
+
+        XCTAssertEqual(Set(merged.tasks.map(\.id)), Set(["local", "remote"]))
+        XCTAssertEqual(merged.tasks.first(where: { $0.id == "remote" })?.machineName, "M2",
+                       "任务没写 machineName 时必须用任务板抬头补齐")
+    }
+
+    func testLegacyDashboardRejectsStaleRemoteRunningTask() {
+        TaskBoardStore.publish(board(
+            "OLD", name: "离线机器",
+            generatedAt: now.addingTimeInterval(-(TaskBoardStore.staleAfter + 1)),
+            tasks: [brief("zombie", machine: "离线机器")]))
+        let local = Dashboard(generatedAt: now, machines: [], reports: [], tasks: [])
+
+        let merged = TaskBoardStore.mergedForLegacyDashboard(local, now: now)
+
+        XCTAssertTrue(merged.tasks.isEmpty,
+                      "过期任务板里的 running 不能被兼容层复活成正在执行")
+    }
+
+    func testLegacyDashboardUsesNewestObservationForTransferredTask() {
+        TaskBoardStore.publish(board(
+            "AAA", name: "旧机器", generatedAt: now.addingTimeInterval(-60),
+            tasks: [brief("same", .running, machine: "旧机器")]))
+        TaskBoardStore.publish(board(
+            "BBB", name: "M2", generatedAt: now.addingTimeInterval(-10),
+            tasks: [brief("same", .blocked, machine: "M2")]))
+        let local = Dashboard(
+            generatedAt: now.addingTimeInterval(-120), machines: [], reports: [],
+            tasks: [brief("same", .queued, machine: "Mac mini")])
+
+        let merged = TaskBoardStore.mergedForLegacyDashboard(local, now: now)
+
+        XCTAssertEqual(merged.tasks.count, 1)
+        XCTAssertEqual(merged.tasks[0].machineName, "M2")
+        XCTAssertEqual(merged.tasks[0].state, .blocked)
     }
 
     // MARK: - 4. 清理

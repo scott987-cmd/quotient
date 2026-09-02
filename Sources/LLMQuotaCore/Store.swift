@@ -519,7 +519,11 @@ public enum LLMQuota {
         Watchdog.run("plans.mirror", timeout: 8) { PlansStore.mirrorFromICloud() }
         let dash = dashboard(now: now)
         if publishViews {
-            Watchdog.run("publish.dashboard", timeout: 8) { Inbox.publishDashboard(dash) }
+            Watchdog.run("publish.dashboard", timeout: 8) {
+                let legacyDash = TaskBoardStore.mergedForLegacyDashboard(
+                    dash, now: now, timeout: 4)
+                Inbox.publishDashboard(legacyDash)
+            }
         }
         // 同一份任务，另外再按机器单独发一份。
         //
@@ -529,8 +533,9 @@ public enum LLMQuota {
         // `taskboards/<machineID>.json` 一台一个文件，谁都不写别人的，
         // 手机读的时候再合并（和 `snapshots/` 同一个模式）。
         //
-        // 上面那行**不能删**：老版本的手机只认 `dashboard.tasks`，
-        // 删了它们会一条任务都看不到。
+        // 上面的全局看板**不能删**：老版本手机只认 `dashboard.tasks`。
+        // 发布前还必须把新鲜的分机板合进去，否则最后写入的机器仍会把别的
+        // 机器整批盖掉。新客户端继续读下面的分机板，信息会更完整。
         if publishViews {
             Watchdog.run("publish.taskboard", timeout: 8) { TaskBoardStore.publish(dash) }
         }

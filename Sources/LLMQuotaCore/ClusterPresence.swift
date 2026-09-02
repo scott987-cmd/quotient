@@ -104,6 +104,16 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
     /// 我在哪、我什么状态」的那份自述，版本属于状态。
     public var installedRelease: String?
 
+    /// 本机实际验证为 Git 仓库的别名。路径永不跨机发布；对端只按别名选路。
+    public var repoAliases: [String]
+    /// 本机自动执行作用域允许的仓库别名。`manualOnly` 不会出现在这里，
+    /// 防止中央调度绕过目标机器自己的项目隔离。
+    public var automaticRepoAliases: [String]
+    /// 工作循环实际生效的并发槽位，以及当前真实运行占用。
+    public var maxConcurrentTasks: Int
+    public var runningTaskCount: Int
+    public var runningRepoAliases: [String]
+
     /// 自己连自己**的 LAN 地址**通不通。
     ///
     /// **这是区分「服务卡死」和「被过滤」的那把尺子。**
@@ -156,6 +166,14 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
         restartsLastHour = try c.decodeIfPresent(Int.self, forKey: .restartsLastHour)
         // 老版本不报这个字段 —— 读不到就是 nil，正好说明「它太老了」。
         installedRelease = try c.decodeIfPresent(String.self, forKey: .installedRelease)
+        repoAliases = try c.decodeIfPresent([String].self, forKey: .repoAliases) ?? []
+        automaticRepoAliases = try c.decodeIfPresent(
+            [String].self, forKey: .automaticRepoAliases) ?? []
+        maxConcurrentTasks = try c.decodeIfPresent(
+            Int.self, forKey: .maxConcurrentTasks) ?? 0
+        runningTaskCount = try c.decodeIfPresent(Int.self, forKey: .runningTaskCount) ?? 0
+        runningRepoAliases = try c.decodeIfPresent(
+            [String].self, forKey: .runningRepoAliases) ?? []
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast
         version = try c.decodeIfPresent(String.self, forKey: .version) ?? "?"
     }
@@ -166,10 +184,18 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
                 canReach: [String: Bool], updatedAt: Date, version: String,
                 selfConnectOK: Bool? = nil, firewallRaw: String? = nil,
                 lastLogLines: [String]? = nil, restartsLastHour: Int? = nil,
-                installedRelease: String? = nil) {
+                installedRelease: String? = nil,
+                repoAliases: [String] = [], automaticRepoAliases: [String] = [],
+                maxConcurrentTasks: Int = 0, runningTaskCount: Int = 0,
+                runningRepoAliases: [String] = []) {
         self.lastLogLines = lastLogLines
         self.restartsLastHour = restartsLastHour
         self.installedRelease = installedRelease
+        self.repoAliases = repoAliases
+        self.automaticRepoAliases = automaticRepoAliases
+        self.maxConcurrentTasks = maxConcurrentTasks
+        self.runningTaskCount = runningTaskCount
+        self.runningRepoAliases = runningRepoAliases
         self.machineID = machineID
         self.machineName = machineName
         self.nodeName = nodeName
@@ -214,6 +240,22 @@ public enum ClusterPresenceStore {
         guard let dir else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let cfg = ClusterConfigStore.load()
+        let repos = RepoRegistry.all().filter { GitWorkspace.isRepo($0.localPath) }
+        let scope = ProjectExecutionScope.current(repos: repos)
+        let running = TaskStore.all().filter { task in
+            guard task.state == .running else { return false }
+            guard let pid = task.runnerPID, pid > 0 else { return false }
+            return kill(pid, 0) == 0
+        }
+        func alias(for path: String) -> String? {
+            let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+            return repos.first {
+                URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == normalized
+            }?.alias
+        }
+        // 没有真实、近期心跳的 work loop 就没有执行容量。不能用机型默认值
+        // 冒充在线 worker，否则协调机可能把任务派给一台根本没人消费队列的机器。
+        let slots = WorkerCapacityStore.current() ?? 0
         let p = ClusterPresence(
             machineID: Paths.machineID(),
             machineName: Paths.machineName(),
@@ -236,7 +278,13 @@ public enum ClusterPresenceStore {
             lastLogLines: listenAddress(port: cfg?.port ?? 8443) == nil
                 ? serveLogTail() : nil,
             restartsLastHour: serveRestartCount(),
-            installedRelease: ReleaseChannel.installedSHA.map { String($0.prefix(12)) })
+            installedRelease: ReleaseChannel.installedSHA.map { String($0.prefix(12)) },
+            repoAliases: repos.map(\.alias).sorted(),
+            automaticRepoAliases: repos.filter { scope.allows($0.localPath) }
+                .map(\.alias).sorted(),
+            maxConcurrentTasks: slots,
+            runningTaskCount: running.count,
+            runningRepoAliases: Array(Set(running.compactMap { alias(for: $0.repo) })).sorted())
         guard let data = try? SnapshotCoding.prettyEncoder().encode(p) else { return }
         ICloudSafe.write(data, to: dir.appendingPathComponent("\(p.machineID).json"))
     }
