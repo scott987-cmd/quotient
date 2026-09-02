@@ -358,10 +358,6 @@ public struct PlansConfig: Codable, Sendable {
                 platform: .volcark, planName: "火山方舟", currency: "CNY",
                 limits: [monthly(.billableTokens, hint: h)]
             ),
-            PlatformPlan(
-                platform: .openrouter, planName: "Ox Alpha 免费预览", currency: "USD",
-                pricing: Pricing(currency: "USD")
-            ),
         ])
     }
 }

@@ -91,7 +91,8 @@ public enum AgentRegistry {
                           userInfo: [NSLocalizedDescriptionKey: "不能替另一台机器注册 Agent"])
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let data = try SnapshotCoding.prettyEncoder().encode(registrations)
+        let data = try SnapshotCoding.prettyEncoder().encode(
+            registrations.filter { !$0.platform.isRetired })
         guard ICloudSafe.write(data, to: directory.appendingPathComponent(safe(machineID) + ".json")) else {
             throw NSError(domain: "AgentRegistry", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "Agent 注册表写入失败"])
@@ -105,7 +106,7 @@ public enum AgentRegistry {
     ) throws {
         let history = TaskStore.all()
         let dashboard = LLMQuota.dashboard(now: now)
-        let registrations = runners.filter { $0.isAvailable }.map {
+        let registrations = runners.filter { !$0.platform.isRetired && $0.isAvailable }.map {
             let role = AgentRoles.role(for: $0.platform)
             let quota = quotaFacts(for: $0.platform, dashboard: dashboard, now: now)
             let cooldown = CooldownLedger.active(
@@ -142,7 +143,8 @@ public enum AgentRegistry {
             guard let data = ICloudSafe.read(file),
                   let items = try? SnapshotCoding.decoder().decode([AgentRegistration].self, from: data)
             else { continue }
-            for item in items where now.timeIntervalSince(item.updatedAt) <= staleAfter {
+            for item in items where !item.platform.isRetired
+                    && now.timeIntervalSince(item.updatedAt) <= staleAfter {
                 let key = item.machineID + "|" + item.runnerID
                 if byIdentity[key] == nil || byIdentity[key]!.updatedAt < item.updatedAt {
                     byIdentity[key] = item

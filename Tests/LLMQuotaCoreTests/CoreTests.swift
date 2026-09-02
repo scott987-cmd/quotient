@@ -126,6 +126,23 @@ final class QuotaEngineTests: XCTestCase {
         )
     }
 
+    func testRetiredPlatformNeverReturnsToDashboardFromOldPlanAndSnapshot() {
+        let oldPlan = PlatformPlan(
+            platform: .openrouter, planName: "Ox Alpha 免费预览",
+            pricing: Pricing(currency: "USD"))
+        let eng = QuotaEngine(config: PlansConfig(plans: [oldPlan]))
+        let bucket = UsageBucket(
+            start: UsageBucket.alignedStart(for: Date()), model: "ox-alpha",
+            requests: 12, inputTokens: 1_000, outputTokens: 200)
+
+        let dash = eng.buildDashboard(
+            snapshots: [snapshot(platform: .openrouter, buckets: [bucket])],
+            tasks: [], repoAliases: [], cooldowns: [:], nodeNamesByMachineID: [:])
+
+        XCTAssertFalse(dash.reports.contains { $0.platform == .openrouter },
+                       "历史 Ox 快照只能用于审计，不能重新成为当前 Agent")
+    }
+
     func testPeriodicWindowAlignsAndComputesReset() {
         let e = engine()
         let limit = QuotaLimit(
@@ -2677,10 +2694,13 @@ final class PlanReconcileTests: XCTestCase {
     func testNewPlatformIsAddedToExistingPlans() {
         let old = PlansConfig(plans: [
             PlatformPlan(platform: .claude, planName: "已有 Claude 配置"),
+            PlatformPlan(platform: .openrouter, planName: "旧 Ox 配置"),
         ])
         let out = PlansStore.reconcileWindows(old)
-        XCTAssertNotNil(out.plan(for: .openrouter),
+        XCTAssertNotNil(out.plan(for: .gemini),
                         "升级后新增的平台必须进入旧配置，否则调度永远看不到它")
+        XCTAssertNil(out.plan(for: .openrouter),
+                     "旧配置不得把退役的 Ox 重新发布到看板和调度器")
         XCTAssertEqual(out.plan(for: .claude)?.planName, "已有 Claude 配置")
     }
 }

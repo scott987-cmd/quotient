@@ -116,7 +116,7 @@ public enum LimitLearner {
 
     public static func learn(from scan: RawScan, now: Date = Date()) -> [Estimate] {
         var out: [Estimate] = []
-        for platform in Platform.allCases {
+        for platform in Platform.activeCases {
             let events = scan.events[platform] ?? []
             guard !events.isEmpty else { continue }
 

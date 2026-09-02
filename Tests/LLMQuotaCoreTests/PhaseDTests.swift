@@ -156,6 +156,19 @@ final class PhaseDTests: XCTestCase {
         XCTAssertEqual(Set(registrations.map(\.machineID)), ["machine-A", "machine-B"])
     }
 
+    func testRetiredAgentCannotReturnThroughAStaleRegistryFile() throws {
+        try AgentRegistry.publish([
+            .init(machineID: "machine-A", machineName: "旧机器",
+                  runnerID: "opencode.openrouter.code", platform: .openrouter,
+                  canConsult: true, canEdit: true),
+            .init(machineID: "machine-A", machineName: "旧机器",
+                  runnerID: "kimi.code", platform: .kimi, canConsult: true),
+        ], machineID: "machine-A")
+
+        let registrations = AgentRegistry.all(now: Date())
+        XCTAssertEqual(registrations.map(\.runnerID), ["kimi.code"])
+    }
+
     func testSubmittingConsultationDoesNotForgeRecipientClaim() throws {
         let registrations = [AgentRegistration(
             machineID: "architect-machine", machineName: "MacBook",

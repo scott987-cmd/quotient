@@ -215,7 +215,7 @@ public enum WasteMeter {
         snapshots: [MachineSnapshot], config: PlansConfig, now: Date = Date()
     ) -> [PlatformWaste] {
         var out: [PlatformWaste] = []
-        for platform in Platform.allCases {
+        for platform in Platform.activeCases {
             var detected = false
             var buckets: [UsageBucket] = []
             var retentionStarts: [Date] = []

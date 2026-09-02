@@ -341,6 +341,9 @@ public enum PlansStore {
     static func reconcileWindows(_ saved: PlansConfig) -> PlansConfig {
         let tpl = PlansConfig.template()
         var out = saved
+        // 退役平台只保留在历史快照/任务里供审计，不允许旧 plans.json 或共享
+        // journal 把它重新发布到看板和调度器。
+        out.plans.removeAll { $0.platform.isRetired }
         for i in out.plans.indices {
             guard let t = tpl.plan(for: out.plans[i].platform) else { continue }
             let savedLimits = out.plans[i].limits
@@ -374,7 +377,9 @@ public enum PlansStore {
     public static func save(_ config: PlansConfig, force: Bool = false,
                             expectedRevision: Int? = nil) throws {
         try Paths.ensureDirectories()
-        let data = try SnapshotCoding.prettyEncoder().encode(config)
+        var sanitized = config
+        sanitized.plans.removeAll { $0.platform.isRetired }
+        let data = try SnapshotCoding.prettyEncoder().encode(sanitized)
         let snapshot = SharedConfigJournal.snapshot(
             document: document, compatibilityFile: canonicalFile)
 
@@ -384,7 +389,7 @@ public enum PlansStore {
         // 上限是人一个个去各家用量页面查出来填的，丢了就得全部重来；
         // 而「空配置」几乎总是模板或解码失败的产物，不是本意。
         // 两者相撞时按「有内容的赢」处理，比按「后写的赢」安全得多。
-        if !force, config.filledLimitCount == 0,
+        if !force, sanitized.filledLimitCount == 0,
            let old = snapshot.data,
            let prev = try? SnapshotCoding.decoder().decode(PlansConfig.self, from: old),
            prev.filledLimitCount > 0 {

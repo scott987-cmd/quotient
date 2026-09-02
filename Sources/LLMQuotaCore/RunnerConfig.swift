@@ -16,6 +16,7 @@ public struct RunnerConfig: Codable, Sendable {
     }
 
     public func model(for platform: Platform) -> String? {
+        guard !platform.isRetired else { return nil }
         let m = models[platform.rawValue]
         return (m?.isEmpty ?? true) ? nil : m
     }
@@ -35,6 +36,17 @@ public enum RunnerConfigStore {
     private static var cachedRevision: Int?
     private static var cachedFilePath: String?
 
+    /// 共享配置可能由旧版本写入已退役平台。加载和保存两端都清洗，避免旧 journal
+    /// 在任意一台机器上重新成为当前配置。
+    private static func activeOnly(_ cfg: RunnerConfig) -> RunnerConfig {
+        var out = cfg
+        out.models = out.models.filter { key, _ in
+            guard let platform = Platform(rawValue: key) else { return true }
+            return !platform.isRetired
+        }
+        return out
+    }
+
     public static func load() -> RunnerConfig {
         let currentPath = file.standardizedFileURL.path
         if let cached, let cachedAt, cachedFilePath == currentPath,
@@ -48,7 +60,7 @@ public enum RunnerConfigStore {
         cachedFilePath = currentPath
         if let data = snapshot.data,
            let c = try? SnapshotCoding.decoder().decode(RunnerConfig.self, from: data) {
-            cfg = c
+            cfg = activeOnly(c)
         } else {
             cfg = RunnerConfig()
         }
@@ -59,7 +71,8 @@ public enum RunnerConfigStore {
 
     public static func save(_ cfg: RunnerConfig, expectedRevision: Int? = nil) throws {
         try Paths.ensureDirectories()
-        let data = try SnapshotCoding.prettyEncoder().encode(cfg)
+        let sanitized = activeOnly(cfg)
+        let data = try SnapshotCoding.prettyEncoder().encode(sanitized)
         let currentPath = file.standardizedFileURL.path
         let remembered = cachedFilePath == currentPath ? cachedRevision : nil
         let revision = expectedRevision ?? remembered ?? SharedConfigJournal.snapshot(
@@ -67,7 +80,7 @@ public enum RunnerConfigStore {
         let committed = try SharedConfigJournal.commit(
             document: document, payload: data, expectedRevision: revision,
             compatibilityFile: file)
-        cached = cfg
+        cached = sanitized
         cachedAt = Date()
         cachedRevision = committed
         cachedFilePath = currentPath
@@ -75,10 +88,16 @@ public enum RunnerConfigStore {
 
     @discardableResult
     public static func setModel(_ model: String?, for platform: Platform) throws -> RunnerConfig {
+        guard !platform.isRetired else {
+            throw NSError(domain: "LLMQuota.RunnerConfig", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "\(platform.displayName) 已退役，不能再配置为 Runner"])
+        }
         let snapshot = SharedConfigJournal.snapshot(document: document, compatibilityFile: file)
         var cfg = snapshot.data.flatMap {
             try? SnapshotCoding.decoder().decode(RunnerConfig.self, from: $0)
         } ?? RunnerConfig()
+        cfg = activeOnly(cfg)
         if let model, !model.isEmpty {
             cfg.models[platform.rawValue] = model
         } else {

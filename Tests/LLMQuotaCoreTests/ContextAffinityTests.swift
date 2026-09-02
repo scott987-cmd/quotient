@@ -215,6 +215,10 @@ final class ContextAffinityTests: XCTestCase {
         XCTAssertFalse(RunnerRegistry.all.contains { $0.platform == .openrouter })
         XCTAssertFalse(RunnerRegistry.reasoning.contains { $0.platform == .openrouter })
         XCTAssertFalse(AgentRoles.defaults().contains { $0.platform == .openrouter })
+        XCTAssertFalse(AgentConsultation.supportsReadOnlyConsultation(runner),
+                       "退役 Runner 不能从只读咨询旁路重新执行")
+        XCTAssertNil(RunnerConfig(models: ["openrouter": "openrouter/stealth/ox-alpha"])
+            .model(for: .openrouter))
     }
 
     func testVolcarkRunnerPinsGatewayCodingModel() {

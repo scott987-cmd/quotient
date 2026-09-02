@@ -315,7 +315,7 @@ public enum ConfigIntentIngest {
             return .rejected("不认识的意图类型「\(intent.kind)」"
                 + "——这台 Mac 的版本可能比手机旧")
         }
-        guard let p = Platform(rawValue: intent.platform) else {
+        guard let p = Platform(rawValue: intent.platform), !p.isRetired else {
             return .rejected("不认识的平台「\(intent.platform)」")
         }
         guard let f = intent.fraction else {
@@ -349,7 +349,7 @@ public enum ConfigIntentIngest {
     }
 
     static func applyRole(_ intent: ConfigIntent) -> Outcome {
-        guard let platform = Platform(rawValue: intent.platform) else {
+        guard let platform = Platform(rawValue: intent.platform), !platform.isRetired else {
             return .rejected("不认识的平台「\(intent.platform)」")
         }
         guard intent.title != nil || intent.maxRisk != nil || intent.tierLimit != nil

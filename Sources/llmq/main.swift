@@ -830,9 +830,9 @@ func cmdWork(_ args: [String]) throws {
         var preferred: Platform?
         if let i = rest.firstIndex(of: "--platform"), i + 1 < rest.count {
             preferred = Platform(rawValue: rest[i + 1].lowercased())
-            if preferred == nil {
+            if preferred == nil || preferred?.isRetired == true {
                 print(Ansi.red("不认识的平台「\(rest[i + 1])」；可选：")
-                    + Platform.allCases.map(\.rawValue).joined(separator: " "))
+                    + Platform.activeCases.map(\.rawValue).joined(separator: " "))
                 exit(2)
             }
         }
@@ -965,9 +965,10 @@ func cmdWork(_ args: [String]) throws {
     case "handoff":
         // 人工换负责人也必须走正式交接：保留提交、工作区入口和协作记录，
         // 不能靠直接改 tasks.jsonl 把 owner 换掉（那会让下一棒从 main 重做）。
-        guard rest.count >= 2, let target = Platform(rawValue: rest[1]) else {
+        guard rest.count >= 2, let target = Platform(rawValue: rest[1]),
+              !target.isRetired else {
             print("用法：llmq work handoff <任务id> <平台> [--base <提交>] [--reason <原因>]")
-            print("可选平台：" + Platform.allCases.map(\.rawValue).joined(separator: " "))
+            print("可选平台：" + Platform.activeCases.map(\.rawValue).joined(separator: " "))
             exit(2)
         }
         let allT = TaskStore.all()
@@ -2206,9 +2207,9 @@ func cmdWork(_ args: [String]) throws {
         print(Ansi.dim("清理已合并的残留 worktree：llmq work review --prune"))
 
     case "resume":
-        guard let name = rest.first, let p = Platform(rawValue: name) else {
+        guard let name = rest.first, let p = Platform(rawValue: name), !p.isRetired else {
             print("用法：llmq work resume <平台>   可选："
-                + Platform.allCases.map(\.rawValue).joined(separator: " "))
+                + Platform.activeCases.map(\.rawValue).joined(separator: " "))
             exit(2)
         }
         print(CooldownLedger.resume(p)
@@ -4683,7 +4684,7 @@ func cmdRunner(_ args: [String]) throws {
             return rest[i + 1]
         }
         if let name = opt("--set") {
-            guard let pf = Platform(rawValue: name) else {
+            guard let pf = Platform(rawValue: name), !pf.isRetired else {
                 print(Ansi.red("不认识的平台：\(name)")); exit(2)
             }
             var all = AgentRoles.all()
@@ -4737,7 +4738,7 @@ func cmdRunner(_ args: [String]) throws {
         let history = TaskStore.all()
         print(Ansi.bold(pad("岗位", 12) + pad("agent", 24) + pad("最高风险", 12)
             + pad("难度上限", 12) + pad("留白", 8) + "偏好"))
-        for p in Platform.allCases {
+        for p in Platform.activeCases {
             guard let rep = dash.reports.first(where: { $0.platform == p }),
                   rep.enabled, rep.detected || rep.installed else { continue }
             let role = AgentRoles.role(for: p)
@@ -4770,9 +4771,9 @@ func cmdRunner(_ args: [String]) throws {
 
     case "set":
         let rest = Array(args.dropFirst())
-        guard rest.count >= 1, let p = Platform(rawValue: rest[0]) else {
+        guard rest.count >= 1, let p = Platform(rawValue: rest[0]), !p.isRetired else {
             print("用法：llmq runner set <平台> [模型]   不给模型表示恢复该 CLI 的默认")
-            print("可选平台：" + Platform.allCases.map(\.rawValue).joined(separator: " "))
+            print("可选平台：" + Platform.activeCases.map(\.rawValue).joined(separator: " "))
             exit(2)
         }
         let model = rest.count >= 2 ? rest[1] : nil
@@ -4908,7 +4909,7 @@ func cmdRepo(_ args: [String]) throws {
     case "bootstrap-game":
         guard args.count >= 3,
               let ownerFlag = args.firstIndex(of: "--owner"), ownerFlag + 1 < args.count,
-              let owner = Platform(rawValue: args[ownerFlag + 1]) else {
+              let owner = Platform(rawValue: args[ownerFlag + 1]), !owner.isRetired else {
             print("用法：llmq repo bootstrap-game <别名> <路径> --owner <平台> [--default]")
             print(Ansi.dim("  创建缺失的游戏契约并登记负责人；已有文件绝不覆盖。"))
             exit(2)
@@ -5036,9 +5037,9 @@ func cmdRepo(_ args: [String]) throws {
             print(Ansi.green("已取消 \(alias) 的固定实现负责人"))
             return
         }
-        guard let platform = Platform(rawValue: value) else {
+        guard let platform = Platform(rawValue: value), !platform.isRetired else {
             print(Ansi.red("未知平台 \(value)"))
-            print(Ansi.dim("可选：" + Platform.allCases.map(\.rawValue).joined(separator: " ")))
+            print(Ansi.dim("可选：" + Platform.activeCases.map(\.rawValue).joined(separator: " ")))
             exit(2)
         }
         all[i].implementationOwner = platform
@@ -5678,6 +5679,7 @@ func cmdPlan(_ args: [String]) throws {
     if args.first == "calibrate" {
         let rest = Array(args.dropFirst())
         guard rest.count >= 3, let platform = Platform(rawValue: rest[0].lowercased()),
+              !platform.isRetired,
               let pct = Double(rest[2].replacingOccurrences(of: "%", with: "")) else {
             print("用法：llmq plan calibrate <平台> <窗口id> <已用百分比>")
             print("  例：llmq plan calibrate kimi weekly 23    （订阅页显示本周已用 23%）")

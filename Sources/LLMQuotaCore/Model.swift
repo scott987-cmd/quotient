@@ -15,6 +15,14 @@ public enum Platform: String, Codable, CaseIterable, Sendable, Hashable {
     case volcark
     case openrouter
 
+    /// 已退役平台仍需保留枚举值，才能读取历史快照、任务和审计记录；
+    /// 但不得再进入当前额度、看板、配置或调度候选。
+    public var isRetired: Bool { self == .openrouter }
+
+    public static var activeCases: [Platform] {
+        allCases.filter { !$0.isRetired }
+    }
+
     public var displayName: String {
         switch self {
         case .claude: return "Claude"

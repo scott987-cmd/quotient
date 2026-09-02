@@ -597,7 +597,7 @@ public enum AgentConsultation {
         runners: [AgentRunner] = RunnerRegistry.all
     ) -> [AgentRegistration] {
         let local = runners.filter {
-            $0.isAvailable && $0.canReadFiles && !$0.mediaOnly
+            !$0.platform.isRetired && $0.isAvailable && $0.canReadFiles && !$0.mediaOnly
                 && supportsReadOnlyConsultation($0)
         }.map {
             let role = AgentRoles.role(for: $0.platform)
@@ -615,7 +615,7 @@ public enum AgentConsultation {
             ($0.machineID + "|" + $0.runnerID, $0)
         })
         for item in local { byIdentity[item.machineID + "|" + item.runnerID] = item }
-        return byIdentity.values.filter(\.canConsult).sorted {
+        return byIdentity.values.filter { $0.canConsult && !$0.platform.isRetired }.sorted {
             if $0.runnerID != $1.runnerID { return $0.runnerID < $1.runnerID }
             return $0.machineID < $1.machineID
         }
@@ -624,10 +624,10 @@ public enum AgentConsultation {
     /// 发现结果必须和真正可执行的只读咨询命令一致；否则 Agent 会看到一个
     /// 能选择、但提交后才报“不支持”的虚假目标。
     static func supportsReadOnlyConsultation(_ runner: AgentRunner) -> Bool {
-        runner.runnerID == CodexRunner().runnerID
+        !runner.platform.isRetired && (runner.runnerID == CodexRunner().runnerID
             || runner.runnerID == ClaudeRunner().runnerID
             || runner is MiniMaxCodeRunner
-            || runner is OpenCodeRunner
+            || runner is OpenCodeRunner)
     }
 
     /// 只发布问题，不替接收方认领，也不在提问进程里同步消耗另一模型的额度。
@@ -662,6 +662,7 @@ public enum AgentConsultation {
         }
         let candidates = registrations.filter {
             $0.runnerID == request.recipientRunnerID && $0.canConsult
+                && !$0.platform.isRetired
                 && (request.recipientMachineID == nil
                     || $0.machineID == request.recipientMachineID)
         }.sorted {
@@ -701,7 +702,7 @@ public enum AgentConsultation {
             throw error(11, "这个问题属于另一台机器：" + (question.recipientMachineID ?? "unknown"))
         }
         guard let target = runners.first(where: {
-            $0.runnerID == question.recipientRunnerID && $0.isAvailable
+            $0.runnerID == question.recipientRunnerID && !$0.platform.isRetired && $0.isAvailable
                 && $0.canReadFiles && !$0.mediaOnly
                 && (responseOverride != nil || supportsReadOnlyConsultation($0))
         }) else {
@@ -810,6 +811,9 @@ public enum AgentConsultation {
     private static func readOnlyCommand(
         for target: AgentRunner, prompt: String, cwd: String, session: GraphSession.Mode
     ) throws -> (launchPath: String, args: [String], env: [String: String]) {
+        guard !target.platform.isRetired else {
+            throw error(10, "\(target.platform.displayName) 已退役，不能执行咨询")
+        }
         if target.runnerID == CodexRunner().runnerID {
             // `--approve-for-me` 会把沙箱提升为 workspace-write，不适合咨询。
             // Codex 的 exec 级选项必须位于 resume 子命令之前。
@@ -841,10 +845,9 @@ public enum AgentConsultation {
         if target is OpenCodeRunner {
             var args = ["run", "--dir", cwd, "--agent", "plan"]
             if case .projectResume = session { args.append("-c") }
-            let configured = RunnerConfigStore.load().model(for: target.platform)
-            let model = configured ?? (target.platform == .openrouter
-                ? "openrouter/stealth/ox-alpha" : nil)
-            if let model { args += ["-m", model] }
+            if let model = RunnerConfigStore.load().model(for: target.platform) {
+                args += ["-m", model]
+            }
             args.append(prompt)
             return (target.binaryPath ?? "opencode", args, [:])
         }

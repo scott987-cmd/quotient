@@ -80,7 +80,7 @@ public struct QuotaEngine: Sendable {
 
         let cooling = cooldowns ?? CooldownLedger.active(now: now)
         var reports: [PlatformReport] = []
-        for platform in Platform.allCases {
+        for platform in Platform.activeCases {
             guard let plan = config.plan(for: platform), plan.enabled else { continue }
             // 用去重后的 —— 否则旧身份的用量被重复计算,额度百分比虚高。
             reports.append(buildReport(

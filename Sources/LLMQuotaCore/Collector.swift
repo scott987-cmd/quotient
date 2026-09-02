@@ -613,7 +613,7 @@ public final class Collector {
 
         // 事件装桶
         var snapshots: [PlatformSnapshot] = []
-        for platform in Platform.allCases {
+        for platform in Platform.activeCases {
             let events = perPlatformEvents[platform]?.values ?? Dictionary<String, UsageEvent>().values
             var buckets: [BucketKey: UsageBucket] = [:]
             var lastActivity: Date?
