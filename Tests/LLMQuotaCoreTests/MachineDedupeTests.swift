@@ -11,6 +11,17 @@ import XCTest
 /// 旧身份由 StaleIdentitySweep 清理；看板只按稳定 machineID 去重。
 /// 同名机器必须同时存在，不能拿显示名冒充身份。
 final class MachineDedupeTests: XCTestCase {
+    func testRoleMachineSelectorsSeparateSameNamedComputers() {
+        let selectors = ["hardware-A"]
+        XCTAssertTrue(AgentRoles.matchesMachine(
+            selectors, machineID: "hardware-A", machineName: "MacBook Pro"))
+        XCTAssertFalse(AgentRoles.matchesMachine(
+            selectors, machineID: "hardware-B", machineName: "MacBook Pro"),
+            "稳定 ID 绑定不能误伤另一台同名电脑")
+        XCTAssertTrue(AgentRoles.matchesMachine(
+            ["legacy-name"], machineID: "hardware-C", machineName: "legacy-name"),
+            "旧 roles.json 的机器名绑定仍须兼容")
+    }
     private func snap(_ id: String, _ name: String, at: Date,
                       requests: Int = 0) -> MachineSnapshot {
         MachineSnapshot(
@@ -70,12 +81,15 @@ final class MachineDedupeTests: XCTestCase {
             snapshots: [snap("hardware-A", "Mac mini", at: t, requests: 2),
                         snap("hardware-B", "Mac mini", at: t, requests: 3)], now: t)
         let status = d.reports.first { $0.platform == .kimi }?.statuses.first
+        XCTAssertEqual(d.reports.first { $0.platform == .kimi }?.machineIDs,
+                       ["hardware-A", "hardware-B"],
+                       "同名机器的跨端关联必须使用稳定 machineID")
         XCTAssertEqual(status?.byMachine.count, 2)
         XCTAssertEqual(Set(status.map { Array($0.byMachine.keys) } ?? []),
-                       ["Mac mini · hardware-A", "Mac mini · hardware-B"])
+                       ["Mac mini · ARDWAREA", "Mac mini · ARDWAREB"])
     }
 
-    func testLivePresenceSuppressesStaleIdentityWithSameMachineName() {
+    func testLiveAndOfflineSameNamedMachinesAreBothPreserved() {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let presence = ClusterPresence(
             machineID: "current", machineName: "Mac mini", nodeName: nil,
@@ -88,7 +102,8 @@ final class MachineDedupeTests: XCTestCase {
              snap("current", "Mac mini", at: now)],
             presences: [presence], now: now)
 
-        XCTAssertEqual(result.map(\.machineID), ["current"])
+        XCTAssertEqual(Set(result.map(\.machineID)), ["stale", "current"],
+                       "同名但离线的真实机器不能被在线机器冒名清掉")
     }
 
     func testTwoLiveSameNamedMachinesAreBothPreserved() {
@@ -106,5 +121,82 @@ final class MachineDedupeTests: XCTestCase {
             presences: [presence("A"), presence("B")], now: now)
 
         XCTAssertEqual(Set(result.map(\.machineID)), ["A", "B"])
+    }
+
+    func testPublishedMachineDisplayNamesNeverContainTheComputerOwner() {
+        XCTAssertEqual(Paths.privacySafeMachineName("杜师兵的Mac mini"), "Mac mini")
+        XCTAssertEqual(Paths.privacySafeMachineName("dushibing MacBook Pro"),
+                       "MacBook Pro")
+        XCTAssertEqual(Paths.privacySafeMachineName("Dushibing-MacBook-Pro.local"),
+                       "MacBook Pro")
+        XCTAssertEqual(Paths.privacySafeMachineName("杜师兵的工作站"), "Mac")
+        XCTAssertEqual(
+            Paths.privacySafeMachineLabel("杜师兵的 MacBook Pro", machineID: "machine-A"),
+            "MacBook Pro · MACHINEA")
+        XCTAssertEqual(Paths.privacySafeMachineDisplayName(
+            nodeName: "macbook-pro-m2", machineName: "杜师兵的 MacBook Pro",
+            machineID: "machine-A"), "macbook-pro-m2")
+        XCTAssertEqual(Paths.privacySafeMachineDisplayName(
+            nodeName: "dushibing-macbook-pro", machineName: "dushibing MacBook Pro",
+            machineID: "machine-A"), "MacBook Pro · MACHINEA",
+            "节点路由名带登录用户名时也不能绕过展示层脱敏")
+        XCTAssertEqual(Paths.privacySafeMachineDisplayName(
+            nodeName: "杜师兵-M2", machineName: "杜师兵的 MacBook Pro",
+            machineID: "machine-A"), "MacBook Pro · MACHINEA")
+
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let dashboard = QuotaEngine(config: PlansConfig(plans: [])).buildDashboard(
+            snapshots: [snap("hardware-A", "杜师兵的Mac mini", at: now)],
+            now: now, nodeNamesByMachineID: ["hardware-A": "mac-mini"])
+        XCTAssertEqual(dashboard.machines.first?.machineName, "杜师兵的Mac mini",
+                       "协议身份字段不能被显示层脱敏破坏")
+        XCTAssertEqual(dashboard.machines.first?.displayName, "mac-mini")
+    }
+
+    func testPresenceCollaborationDisplayDoesNotExposeOwnerInNodeName() {
+        let presence = ClusterPresence(
+            machineID: "machine-A", machineName: "dushibing MacBook Pro",
+            nodeName: "dushibing-macbook-pro", lanIP: nil, port: 8443,
+            serving: true, boundAddress: nil, lanRouteInterface: nil,
+            firewallOn: false, canReach: [:], updatedAt: Date(), version: "test")
+        XCTAssertEqual(presence.displayName, "MacBook Pro · MACHINEA")
+    }
+
+    func testPrivacyDisplayDoesNotBreakReportToMachineIdentityJoin() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let config = PlansConfig(plans: [PlatformPlan(
+            platform: .kimi, planName: "Kimi")])
+        let dashboard = QuotaEngine(config: config).buildDashboard(
+            snapshots: [snap("hardware-A", "杜师兵的Mac mini", at: now, requests: 1)],
+            now: now, nodeNamesByMachineID: ["hardware-A": "mac-mini"])
+
+        XCTAssertEqual(dashboard.reports.first?.machineIDs, ["hardware-A"],
+                       "跨端关联必须只依赖稳定 machineID")
+        XCTAssertEqual(dashboard.reports.first?.machines, ["Mac mini"],
+                       "展示字段不能泄露电脑所有者姓名")
+        XCTAssertEqual(dashboard.machines.first?.displayName, "mac-mini")
+    }
+}
+
+extension MachineDedupeTests {
+    func testLegacyInboxMachineNameMustBeUniqueAcrossStableIDs() {
+        func presence(_ id: String) -> ClusterPresence {
+            ClusterPresence(
+                machineID: id, machineName: "MacBook Pro", nodeName: nil,
+                lanIP: nil, port: 8443, serving: true, boundAddress: nil,
+                lanRouteInterface: nil, firewallOn: false, canReach: [:],
+                updatedAt: Date(), version: "test")
+        }
+        let sameName = [
+            presence("hardware-A"),
+            presence("hardware-B"),
+        ]
+        XCTAssertTrue(Inbox.legacyMachineNameIsAmbiguous(
+            "MacBook Pro", presences: sameName))
+        XCTAssertFalse(Inbox.legacyMachineNameIsAmbiguous(
+            "Mac mini", presences: sameName))
+        XCTAssertFalse(Inbox.legacyMachineNameIsAmbiguous(
+            "MacBook Pro", presences: [sameName[0]]),
+            "滚动升级期只有一台匹配时仍兼容旧手机客户端")
     }
 }

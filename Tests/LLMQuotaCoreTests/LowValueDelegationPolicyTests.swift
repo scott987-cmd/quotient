@@ -14,10 +14,14 @@ final class LowValueDelegationPolicyTests: XCTestCase {
     }
 
     private func agent(_ runnerID: String, _ platform: Platform,
-                       machine: String = "m1") -> AgentRegistration {
+                       machine: String = "m1", pool: String? = nil,
+                       available: Double? = nil,
+                       blockedReason: String? = nil) -> AgentRegistration {
         AgentRegistration(machineID: machine, machineName: machine,
                           runnerID: runnerID, platform: platform,
-                          canConsult: true)
+                          quotaPoolID: pool, canConsult: true,
+                          quotaAvailableFraction: available,
+                          quotaBlockedReason: blockedReason)
     }
 
     func testSubstantialMainTaskSelectsBestAvailableSidecarWithoutHardCodingVendor() throws {
@@ -32,6 +36,7 @@ final class LowValueDelegationPolicyTests: XCTestCase {
         XCTAssertEqual(instruction.questionID, "sidecar:main-task:helper-v1")
         XCTAssertTrue(instruction.clause.contains("只读辅助委派"))
         XCTAssertTrue(instruction.clause.contains("--to 'minimax.code'"))
+        XCTAssertTrue(instruction.clause.contains("--machine 'm1'"))
         XCTAssertTrue(instruction.clause.contains("主任务 Owner 不变"))
         XCTAssertFalse(instruction.clause.contains("work add"),
                        "辅助委派不能偷偷拆成新的写入任务")
@@ -45,6 +50,33 @@ final class LowValueDelegationPolicyTests: XCTestCase {
         XCTAssertEqual(instruction.recipientRunnerID, "claude.code")
         XCTAssertTrue(instruction.clause.contains("--to 'claude.code'"))
         XCTAssertFalse(instruction.clause.contains("MiniMax"))
+    }
+
+    func testSameRunnerOnDifferentMachinesUsesSelectedMachineQuotaPoolAndRoute() throws {
+        let instruction = try XCTUnwrap(LowValueDelegationPolicy.instruction(
+            task: task(), runnerID: "kimi.code", events: [],
+            candidates: [
+                agent("qwen.code", .qwen, machine: "mac-a", pool: "qwen-a",
+                      available: 0, blockedReason: "本池额度已用尽"),
+                agent("qwen.code", .qwen, machine: "mac-b", pool: "qwen-b",
+                      available: 0.6)
+            ],
+            headroom: [.qwen: 0.9]))
+
+        XCTAssertEqual(instruction.recipientRunnerID, "qwen.code")
+        XCTAssertEqual(instruction.recipientMachineID, "mac-b")
+        XCTAssertTrue(instruction.clause.contains("--machine 'mac-b'"))
+        XCTAssertFalse(instruction.clause.contains("--machine 'mac-a'"))
+    }
+
+    func testCandidateBlockedReasonOverridesPlatformFallbackAndReportedFraction() {
+        let instruction = LowValueDelegationPolicy.instruction(
+            task: task(), runnerID: "kimi.code", events: [],
+            candidates: [agent("qwen-a", .qwen, pool: "qwen-a",
+                               available: 0.8, blockedReason: "冷却中")],
+            headroom: [.qwen: 0.95])
+
+        XCTAssertNil(instruction)
     }
 
     func testSmallTaskOrOnlySelfCandidateDoesNotDelegateForShow() {

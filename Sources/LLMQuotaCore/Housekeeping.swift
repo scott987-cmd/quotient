@@ -106,7 +106,8 @@ public enum Housekeeping {
             if swept > 0 { notes.append("清掉 \(swept) 个过期验收目录") }
             let orphans = sweepOrphanEvidence()
             if orphans > 0 { notes.append("清掉 \(orphans) 个没人引用的证据文件") }
-            // 过时机器身份留下的孤儿快照/任务板/在线状态 —— 同名机器只留最新的。
+            // 过时机器身份留下的孤儿快照/任务板/在线状态 —— 只按稳定 ID + TTL，
+            // 同名机器绝不互删。菜单栏镜像也会执行同一收敛，空闲时照样能清。
             // 详见 StaleIdentitySweep:machineID 漂移期留下的一堆旧身份文件,
             // 手机上一台机器裂成十几个(2026-08-23)。
             let staleIds = StaleIdentitySweep.run()

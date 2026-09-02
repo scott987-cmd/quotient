@@ -8,7 +8,9 @@ final class ClusterDispatchPlannerTests: XCTestCase {
                           repos: [String] = ["flint"],
                           automatic: [String] = ["flint"],
                           running: [String] = [], slots: Int = 1,
-                          used: Int = 0, canReach: [String: Bool] = [:]) -> ClusterPresence {
+                          used: Int = 0, canReach: [String: Bool] = [:],
+                          capabilities: [String] = [],
+                          claims: [String] = []) -> ClusterPresence {
         ClusterPresence(
             machineID: id, machineName: id, nodeName: node,
             lanIP: "192.168.1.2", port: 8443, serving: true,
@@ -16,7 +18,8 @@ final class ClusterDispatchPlannerTests: XCTestCase {
             firewallOn: false, canReach: canReach, updatedAt: now, version: "1",
             repoAliases: repos, automaticRepoAliases: automatic,
             maxConcurrentTasks: slots, runningTaskCount: used,
-            runningRepoAliases: running)
+            runningRepoAliases: running, capabilities: capabilities,
+            runningResourceClaims: claims)
     }
 
     private func agent(_ machine: String, runner: String = "kimi.code",
@@ -89,6 +92,27 @@ final class ClusterDispatchPlannerTests: XCTestCase {
         XCTAssertEqual(plan.selected?.runnerID, "kimi.code")
     }
 
+    func testRequiresMachineCapabilityAndRejectsConflictingResourceClaim() {
+        let plan = ClusterDispatchPlanner.plan(
+            repoAlias: "flint", lane: .coding, profile: nil,
+            requiredCapabilities: ["tool:unreal"],
+            resourceClaims: ["tool:unreal-editor"],
+            currentMachineID: "mini", coordinatorMachineID: "mini",
+            presences: [
+                presence("mini", node: "mac-mini",
+                         canReach: ["m2": true, "intel": true]),
+                presence("m2-id", node: "m2", capabilities: ["tool:unreal"],
+                         claims: ["tool:unreal-editor"]),
+                presence("intel-id", node: "intel", capabilities: []),
+            ], registrations: [agent("m2-id"), agent("intel-id")], now: now)
+
+        XCTAssertNil(plan.selected)
+        XCTAssertTrue(plan.rejected.contains { $0.machineID == "m2-id"
+            && $0.reason.contains("资源") })
+        XCTAssertTrue(plan.rejected.contains { $0.machineID == "intel-id"
+            && $0.reason.contains("能力") })
+    }
+
     func testProjectImplementationOwnerIsAHardCrossMachineBoundary() {
         let plan = ClusterDispatchPlanner.plan(
             repoAlias: "flint", lane: .coding, profile: nil,
@@ -157,6 +181,8 @@ final class ClusterDispatchPlannerTests: XCTestCase {
         XCTAssertNil(plan.selected)
         XCTAssertEqual(old.maxConcurrentTasks, 0)
         XCTAssertEqual(old.repoAliases, [])
+        XCTAssertNil(old.coordinatorState)
+        XCTAssertNil(old.coordinatorSummary)
     }
 
     func testOnlyProjectCoordinatorMayAutoRoute() {

@@ -49,6 +49,20 @@ func colorize(_ health: QuotaHealth, _ text: String) -> String {
     }
 }
 
+func coordinatorStateLabel(_ raw: String?) -> String {
+    switch raw {
+    case "idle": return "空闲"
+    case "running": return "执行中"
+    case "waiting": return "等待资源"
+    case "dispatching": return "正在派发"
+    case "paused": return "已暂停"
+    case "offline": return "未运行"
+    case "starting": return "启动中"
+    case .some(let value): return value
+    case nil: return "旧版本未上报"
+    }
+}
+
 /// 固定宽度左对齐。中文字符在终端占两列，直接用 count 会排不齐。
 func pad(_ s: String, _ width: Int) -> String {
     let w = displayWidth(s)
@@ -209,7 +223,7 @@ func cmdReport(json: Bool) throws {
     }
     for m in dash.machines {
         let mark = m.isStale ? Ansi.yellow("○ 快照较旧") : Ansi.green("● 活跃")
-        print("  \(mark)  " + pad(m.machineName, 24)
+        print("  \(mark)  " + pad(m.displayName, 24)
             + Ansi.dim("更新于 " + Format.relative(m.lastSeen, now: dash.generatedAt)))
     }
 
@@ -278,6 +292,24 @@ func cmdReport(json: Bool) throws {
             + Format.compact(r.last30dBillableTokens) + " token"
             + (r.machines.isEmpty ? "" : " · " + r.machines.joined(separator: ", "))
         ))
+
+        if let pools = r.quotaPools, !pools.isEmpty {
+            for pool in pools {
+                let local = pool.poolID == r.localQuotaPoolID ? Ansi.cyan(" [本机]") : ""
+                let machines = pool.machines.isEmpty ? "尚无快照" : pool.machines.joined(separator: ", ")
+                print("    " + Ansi.bold("额度池 \(pool.displayName)") + local
+                    + Ansi.dim(" · " + machines))
+                if let until = pool.cooldownUntil, until > dash.generatedAt {
+                    print("      " + Ansi.red("冷却中") + " · "
+                        + (pool.cooldownReason ?? "原因未知") + " · "
+                        + Format.duration(until.timeIntervalSince(dash.generatedAt)) + "后恢复")
+                }
+            }
+        } else if let until = r.cooldownUntil, until > dash.generatedAt {
+            print("    " + Ansi.red("冷却中") + " · "
+                + (r.cooldownReason ?? "原因未知") + " · "
+                + Format.duration(until.timeIntervalSince(dash.generatedAt)) + "后恢复")
+        }
 
         for s in r.statuses {
             let bar = Format.bar(s.usedFraction, width: 16)
@@ -2682,6 +2714,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     // 读到 queued；内核租约把“选中 → 写 running”之间的竞态窗口封住。
     var repoExecutionLease: LocalExecutionLease?
     defer { repoExecutionLease?.release() }
+    // 调度快照只能说明“刚才看起来没冲突”，不能充当锁。手工 `work run`、
+    // 两个 worker 同毫秒选中任务或跨机状态尚未同步时都可能绕过它。
+    // 独占工具因此也要持有进程级租约，直到本次执行完整结束。
+    var resourceExecutionLeases: [LocalExecutionLease] = []
+    defer { resourceExecutionLeases.forEach { $0.release() } }
     var leaseNoted = 0
     for (idx, candidateTask) in vettedQueue.enumerated() {
         var cand = candidateTask
@@ -2775,6 +2812,28 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     continue
                 }
                 repoExecutionLease = lease
+
+                var acquiredResources: [LocalExecutionLease] = []
+                var blockedResource: String?
+                for claim in cand.resourceClaims.sorted() {
+                    let resourceLease = LocalExecutionLease(scope: .resource, key: claim)
+                    guard resourceLease.acquire() else {
+                        blockedResource = claim
+                        break
+                    }
+                    acquiredResources.append(resourceLease)
+                }
+                if let blockedResource {
+                    acquiredResources.forEach { $0.release() }
+                    repoExecutionLease?.release()
+                    repoExecutionLease = nil
+                    if !quiet, leaseNoted < 3 {
+                        leaseNoted += 1
+                        print(Ansi.dim("  让开 \(cand.id)：独占资源 \(blockedResource) 正在使用"))
+                    }
+                    continue
+                }
+                resourceExecutionLeases = acquiredResources
             }
             if idx > 0, !quiet {
                 print(Ansi.dim("  队头 \(idx) 个任务暂时没人能接，先跑后面这个"))
@@ -4246,26 +4305,45 @@ func cmdWorkLoop(_ args: [String]) throws {
     @discardableResult
     func dispatchReadyTasks(lowDisk: Bool) -> Bool {
         WorkerCapacityStore.publish(maxConcurrentTasks: workerSlots)
-        guard !dispatchStoppedByFailures,
-              !lowDisk,
-              Date() >= dispatchHoldUntil else { return false }
-
         let allTasks = TaskStore.all()
         let scope = ProjectExecutionScope.current()
-        guard !scope.configurationError else { return false }
         let now = Date()
         taskDispatchHolds = taskDispatchHolds.filter { $0.value > now }
-        let ready = scope.filter(TaskStore.readyQueue(from: allTasks)).filter {
+        let scopedReady = scope.filter(TaskStore.readyQueue(from: allTasks))
+        let ready = scopedReady.filter {
             (taskDispatchHolds[$0.id] ?? .distantPast) <= now
         }
-        guard !ready.isEmpty else { return false }
         let activeExecutors = DetachedExecutorRegistry.active(tasks: allTasks)
-        let plan = LocalWorkerSlotPlanner.plan(
-            ready: ready, allTasks: allTasks,
-            active: activeExecutors, maxConcurrentTasks: workerSlots)
+        let pauseReason: String? = {
+            if dispatchStoppedByFailures { return "连续失败达到上限，已停止派发" }
+            if lowDisk { return "磁盘空间不足，已停止派发" }
+            if scope.configurationError { return "本机项目作用域配置损坏，已停止派发" }
+            if scope.mode == .manualOnly { return "本机处于仅手工执行模式" }
+            if now < dispatchHoldUntil {
+                return "维护阶段暂缓派发，预计 " + Format.relative(dispatchHoldUntil)
+            }
+            if !ready.isEmpty, let next = gate.nextAllowed(now: now) {
+                return "每小时派发上限已满，预计 " + Format.relative(next) + " 恢复"
+            }
+            return nil
+        }()
+        let plan: LocalWorkerSlotPlanner.Plan
+        if let pauseReason {
+            plan = .init(selected: [], decisions: ready.map {
+                .init(taskID: $0.id, selected: false, reason: pauseReason)
+            })
+        } else {
+            plan = LocalWorkerSlotPlanner.plan(
+                ready: ready, allTasks: allTasks,
+                active: activeExecutors, maxConcurrentTasks: workerSlots)
+        }
         let snapshot = SchedulerSnapshot(
             scope: scope, ready: ready, active: activeExecutors,
-            plan: plan, maxConcurrentTasks: workerSlots)
+            plan: plan, maxConcurrentTasks: workerSlots,
+            allTasks: scope.filter(allTasks),
+            heldTaskCount: scopedReady.count - ready.count,
+            stateOverride: pauseReason == nil ? nil : .paused,
+            summaryOverride: pauseReason)
         do {
             try SchedulerSnapshotStore.save(snapshot)
         } catch {
@@ -4273,6 +4351,7 @@ func cmdWorkLoop(_ args: [String]) throws {
                 + error.localizedDescription))
             return false
         }
+        guard pauseReason == nil, !ready.isEmpty else { return false }
         var launchedAny = false
         var rateLimited = false
         for task in plan.selected {
@@ -4772,14 +4851,16 @@ func cmdRunner(_ args: [String]) throws {
                 r.maxTier = v == "auto" ? nil : TaskProfile.Tier(rawValue: v)
             }
             if let v = opt("--title") { r.title = v }
-            // 静音是**按机器**的：同一个平台在不同机器上处境不一样。
-            let me = Paths.machineName()
+            // 静音是**按机器**的。新增记录写稳定 machineID；删除时同时清掉
+            // nodeName/历史机器名，避免升级后留下两条互相打架的绑定。
+            let me = Paths.machineID()
+            let localSelectors = Set(AgentRoles.localMachineSelectors())
             if rest.contains("--mute-here") {
                 if !r.mutedOn.contains(me) { r.mutedOn.append(me) }
                 r.muteReason = opt("--reason") ?? r.muteReason
             }
             if rest.contains("--unmute-here") {
-                r.mutedOn.removeAll { $0 == me }
+                r.mutedOn.removeAll { localSelectors.contains($0) }
                 if r.mutedOn.isEmpty { r.muteReason = nil }
             }
             // 留白比例：调度最多能吃掉这个平台额度的多少，剩下的归你自己用。
@@ -4800,7 +4881,7 @@ func cmdRunner(_ args: [String]) throws {
                 if !r.dispatcherOn.contains(me) { r.dispatcherOn.append(me) }
             }
             if rest.contains("--no-dispatcher-here") {
-                r.dispatcherOn.removeAll { $0 == me }
+                r.dispatcherOn.removeAll { localSelectors.contains($0) }
             }
             all[pf] = r
             try AgentRoles.save(Array(all.values))
@@ -5076,12 +5157,41 @@ func cmdRepo(_ args: [String]) throws {
             print(Ansi.green("已取消本机专注 ") + alias
                 + Ansi.dim("  不再自动补活；已排队任务仍可手工运行"))
         } else {
-            var updated = all
-            updated[i].coordinatorMachineID = Paths.machineID()
-            try RepoRegistry.save(updated)
             try ProjectExecutionScope.setFocusedRepo(all[i].localPath)
             print(Ansi.green("本机已专注 ") + alias
-                + Ansi.dim("  本机成为唯一续活协调节点；队列空了按它的 PLAN.md 续活"))
+                + Ansi.dim("  只改变本机执行边界；共享协调机保持不变"))
+        }
+        return
+
+    case "coordinator":
+        var all = RepoRegistry.all()
+        let pos = args.dropFirst().filter { !$0.hasPrefix("--") }
+        guard let alias = pos.first else {
+            for repo in all {
+                print("\(repo.alias)：\(repo.coordinatorMachineID ?? "未指定（失败关闭）")")
+            }
+            print(Ansi.dim("  设置：llmq repo coordinator <别名> <this|机器ID|off>"))
+            return
+        }
+        guard let i = all.firstIndex(where: { $0.alias == alias }) else {
+            print(Ansi.red("没有登记过别名 \(alias)")); exit(1)
+        }
+        guard pos.count >= 2 else {
+            print("\(alias)：\(all[i].coordinatorMachineID ?? "未指定（失败关闭）")")
+            return
+        }
+        let value = pos[pos.index(after: pos.startIndex)]
+        all[i].coordinatorMachineID = value == "off"
+            ? nil
+            : (value == "this" ? Paths.machineID() : value)
+        // 只有这个显式命令可以清除协调机。普通旧客户端保存仓库配置时，
+        // 仍会保住它不认识/未携带的 coordinator 字段。
+        try RepoRegistry.save(all, preserveMissingCoordinator: false)
+        if let machine = all[i].coordinatorMachineID {
+            print(Ansi.green("已把 \(alias) 的续活协调机设为 ") + machine)
+        } else {
+            print(Ansi.green("已清除 \(alias) 的续活协调机")
+                + Ansi.dim("  自动续活将失败关闭"))
         }
         return
 
@@ -5265,9 +5375,12 @@ func cmdRepo(_ args: [String]) throws {
 func cmdMachines() throws {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     func short(_ p: String) -> String { p.replacingOccurrences(of: home, with: "~") }
+    let dash = LLMQuota.dashboard()
 
     print(Ansi.bold("本机"))
-    print("  名称      " + Paths.machineName())
+    let localDisplayName = dash.machines.first { $0.machineID == Paths.machineID() }?.displayName
+        ?? Paths.privacySafeMachineLabel(Paths.machineName(), machineID: Paths.machineID())
+    print("  名称      " + localDisplayName)
     print("  机器 ID   " + Ansi.dim(Paths.machineID()))
 
     print("\n" + Ansi.bold("共享通道") + Ansi.dim("（本地暂存，由菜单栏 App 镜像到 iCloud）"))
@@ -5289,7 +5402,6 @@ func cmdMachines() throws {
             + (hasPlans ? Ansi.green("已共享") : Ansi.yellow("尚未生成")))
     }
 
-    let dash = LLMQuota.dashboard()
     print("\n" + Ansi.bold("已接入的电脑") + Ansi.dim("  共 \(dash.machines.count) 台"))
     if dash.machines.count <= 1 {
         print(Ansi.dim("  只有本机。在另一台电脑上装好并跑一次 llmq collect 即可，"))
@@ -5298,7 +5410,7 @@ func cmdMachines() throws {
     for m in dash.machines {
         let mark = m.isStale ? Ansi.yellow("○") : Ansi.green("●")
         let self_ = m.machineID == Paths.machineID() ? Ansi.dim("（本机）") : ""
-        print("  \(mark) " + pad(m.machineName + self_, 30)
+        print("  \(mark) " + pad(m.displayName + self_, 30)
             + Ansi.dim("更新于 " + Format.relative(m.lastSeen, now: dash.generatedAt)))
     }
 
@@ -5516,7 +5628,43 @@ func cmdDoctor(tidy: Bool = false) throws {
         print(Ansi.dim("  半行通常来自「写到一半进程被杀」，多数情况下删掉那几行就行。"))
         print("")
     }
-    _ = all
+    let ledgerBytes = ((try? FileManager.default.attributesOfItem(
+        atPath: TaskStore.file.path)[.size]) as? NSNumber)?.int64Value ?? 0
+    let parsedBytes = TaskStore.bytesParsedLastLoad
+    let ledgerSize = ByteCountFormatter.string(
+        fromByteCount: ledgerBytes, countStyle: .file)
+    let parsedSize = ByteCountFormatter.string(
+        fromByteCount: parsedBytes, countStyle: .file)
+    print(Ansi.bold("任务账本"))
+    print("  完整审计 \(ledgerSize) · \(all.count) 个任务 · 本轮解析 \(parsedSize)")
+    if ledgerBytes > 2 * 1_024 * 1_024 && parsedBytes >= ledgerBytes {
+        print(Ansi.yellow("  ⚠ 冷启动仍在全量解析账本，物化 checkpoint 没有命中"))
+    } else if ledgerBytes > 0 {
+        print(Ansi.green("  ✓ checkpoint 已命中")
+            + Ansi.dim("，完整审计仍保留，启动只读取新增尾部"))
+    }
+    print("")
+
+    print(Ansi.bold("本机调度器"))
+    if let scheduler = SchedulerSnapshotStore.latest() {
+        let age = Date().timeIntervalSince(scheduler.createdAt)
+        let ageText = Format.relative(scheduler.createdAt)
+        let state = coordinatorStateLabel(scheduler.state.rawValue)
+        let stateText = age > 120 ? Ansi.red(state + "（心跳过期）")
+            : (scheduler.state == .paused ? Ansi.yellow(state) : Ansi.green(state))
+        print("  " + stateText + " · " + scheduler.summary)
+        print(Ansi.dim("  状态 \(ageText) · 待处理 \(scheduler.pendingTaskCount)"
+            + " · 真实运行 \(scheduler.runningTaskCount)"
+            + " · 冷却暂扣 \(scheduler.heldTaskCount)"
+            + " · 执行槽 \(scheduler.runningTaskCount)/\(scheduler.maxConcurrentTasks)"))
+        if age > 120 {
+            print(Ansi.red("  ⚠ 超过 2 分钟没有调度心跳；不能把旧的 idle/running 当成当前事实"))
+        }
+    } else {
+        print(Ansi.yellow("  ⚠ 还没有权威调度快照")
+            + Ansi.dim("；协调器未启动，或尚未完成首轮派发判断"))
+    }
+    print("")
 
     // **worker 跑的是不是你刚发布的那份二进制。**
     //
@@ -5747,38 +5895,136 @@ func cmdPlan(_ args: [String]) throws {
         return
     }
 
-    // llmq plan calibrate <平台> <窗口id> <已用百分比>
+    // 平台不是账号。三台机器可以各自消费不同订阅，也可以显式共用同一份；
+    // 只有 poolID 相同才聚合用量和冷却。默认把绑定落到本机，避免误共享。
+    if args.first == "pool" {
+        let rest = Array(args.dropFirst())
+        let action = rest.first ?? "list"
+        var cfg = PlansStore.load()
+        func value(after flag: String) -> String? {
+            guard let i = rest.firstIndex(of: flag), i + 1 < rest.count else { return nil }
+            return rest[i + 1]
+        }
+        func requestedMachine() -> String? {
+            if rest.contains("--shared") { return nil }
+            let raw = value(after: "--machine") ?? "this"
+            return raw == "this" ? Paths.machineID() : raw
+        }
+        if action == "list" {
+            let pools = cfg.quotaPools ?? []
+            if pools.isEmpty {
+                print(Ansi.yellow("尚未区分订阅额度池；当前按平台共用 legacy 池。"))
+            }
+            for pool in pools.sorted(by: {
+                ($0.platform.sortIndex, $0.poolID, $0.machineID ?? "")
+                    < ($1.platform.sortIndex, $1.poolID, $1.machineID ?? "")
+            }) {
+                let target = pool.machineID.map { "机器 " + $0 } ?? "所有机器（共享）"
+                let runner = pool.runnerID.map { " · Runner " + $0 } ?? ""
+                print("  " + pad(pool.platform.displayName, 10)
+                    + Ansi.bold(pool.displayName ?? pool.poolID)
+                    + Ansi.dim(" [\(pool.poolID)] · \(target)\(runner)"))
+            }
+            print(Ansi.dim("  设置：llmq plan pool set <平台> <池ID> [--machine this|ID|--shared] [--runner ID] [--name 名称]"))
+            print(Ansi.dim("  删除：llmq plan pool remove <平台> <池ID> [--machine this|ID|--shared] [--runner ID]"))
+            return
+        }
+        guard ["set", "remove"].contains(action), rest.count >= 3,
+              let platform = Platform(rawValue: rest[1].lowercased()), !platform.isRetired else {
+            print("用法：llmq plan pool <list|set|remove> <平台> <池ID> [--machine this|ID|--shared] [--runner ID] [--name 名称]")
+            exit(2)
+        }
+        let poolID = rest[2].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !poolID.isEmpty else { print(Ansi.red("池 ID 不能为空")); exit(2) }
+        let machineID = requestedMachine()
+        let runnerID = value(after: "--runner")
+        var pools = cfg.quotaPools ?? []
+        func matches(_ item: QuotaPoolBinding) -> Bool {
+            item.platform == platform && item.poolID == poolID
+                && item.machineID == machineID && item.runnerID == runnerID
+        }
+        if action == "remove" {
+            let before = pools.count
+            pools.removeAll(where: matches)
+            guard pools.count != before else {
+                print(Ansi.yellow("没有找到这条额度池绑定")); return
+            }
+            cfg.quotaPools = pools
+            try PlansStore.save(cfg)
+            print(Ansi.green("已删除额度池绑定：") + "\(platform.displayName) / \(poolID)")
+            return
+        }
+        let name = value(after: "--name")
+        if let i = pools.firstIndex(where: matches) {
+            if let name { pools[i].displayName = name }
+        } else {
+            pools.append(QuotaPoolBinding(
+                poolID: poolID, platform: platform, displayName: name,
+                machineID: machineID, runnerID: runnerID))
+        }
+        cfg.quotaPools = pools
+        try PlansStore.save(cfg)
+        print(Ansi.green("已绑定额度池：") + "\(platform.displayName) / \(name ?? poolID)"
+            + Ansi.dim(machineID.map { " · 机器 " + $0 } ?? " · 跨机器共享"))
+        return
+    }
+
+    // llmq plan calibrate <平台> <窗口id> <已用百分比> [--pool <池ID>]
     // 只给比例不给数字的平台(Kimi)用这条:上限 = 本窗口用量 ÷ 比例。
     if args.first == "calibrate" {
         let rest = Array(args.dropFirst())
         guard rest.count >= 3, let platform = Platform(rawValue: rest[0].lowercased()),
               !platform.isRetired,
               let pct = Double(rest[2].replacingOccurrences(of: "%", with: "")) else {
-            print("用法：llmq plan calibrate <平台> <窗口id> <已用百分比>")
+            print("用法：llmq plan calibrate <平台> <窗口id> <已用百分比> [--pool <池ID>]")
             print("  例：llmq plan calibrate kimi weekly 23    （订阅页显示本周已用 23%）")
             print("  窗口 id 看 llmq plan 的输出（5h / weekly / monthly …）")
             exit(2)
         }
         let limitID = rest[1]
         var cfg = PlansStore.load()
-        guard let pi = cfg.plans.firstIndex(where: { $0.platform == platform }),
-              let li = cfg.plans[pi].limits.firstIndex(where: { $0.id == limitID }) else {
+        guard let basePlan = cfg.plan(for: platform),
+              let baseLimit = basePlan.limits.first(where: { $0.id == limitID }) else {
             print(Ansi.red("plans.json 里没有 \(platform.rawValue) 的窗口 \(limitID)")); exit(1)
         }
-        let status = LLMQuota.dashboard().reports
-            .first { $0.platform == platform }?
-            .statuses.first { $0.limitID == limitID }
+        let dashboard = LLMQuota.dashboard()
+        guard let report = dashboard.reports.first(where: { $0.platform == platform }) else {
+            print(Ansi.red("还没有 \(platform.displayName) 的额度快照")); exit(1)
+        }
+        let requestedPoolID: String? = {
+            guard let i = rest.firstIndex(of: "--pool"), i + 1 < rest.count else {
+                return report.localQuotaPoolID
+            }
+            return rest[i + 1]
+        }()
+        let statuses: [QuotaStatus]
+        if let requestedPoolID {
+            guard let pool = report.quotaPool(id: requestedPoolID) else {
+                print(Ansi.red("额度快照里没有池 \(requestedPoolID)")); exit(1)
+            }
+            statuses = pool.statuses
+        } else {
+            statuses = report.localQuotaStatuses
+        }
+        let status = statuses.first { $0.limitID == limitID }
         guard let used = status?.used, used > 0 else {
             print(Ansi.red("这个窗口还没有测到用量，除不出来 —— 用一会儿再校")); exit(1)
         }
-        let metric = cfg.plans[pi].limits[li].metric
+        let metric = baseLimit.metric
         do {
             let value = try QuotaCalibration.limit(used: used, percentUsed: pct)
-            cfg.plans[pi].limits[li].limit = value
-            cfg.plans[pi].limits[li].hint = QuotaCalibration.provenance(
+            let hint = QuotaCalibration.provenance(
                 percentUsed: pct, used: used, metric: metric)
+            guard cfg.setQuotaLimit(
+                platform: platform, poolID: requestedPoolID, limitID: limitID,
+                limit: value, hint: hint) else {
+                print(Ansi.red("无法写入 \(platform.displayName) 的窗口 \(limitID)")); exit(1)
+            }
             try PlansStore.save(cfg)
-            print(Ansi.green("已校准 ") + "\(platform.displayName) \(cfg.plans[pi].limits[li].label)："
+            let poolLabel = requestedPoolID.map {
+                " · " + cfg.quotaPoolDisplayName(for: platform, poolID: $0)
+            } ?? ""
+            print(Ansi.green("已校准 ") + "\(platform.displayName)\(poolLabel) \(baseLimit.label)："
                 + "上限 ≈ " + Format.metricValue(value, metric: metric)
                 + Ansi.dim("（本窗口用量 " + Format.metricValue(used, metric: metric)
                     + " ÷ \(pct)%）"))
@@ -6553,9 +6799,13 @@ func cmdCluster(_ rest: [String]) throws {
                 repo = fallback
             }
             let alias = repo.alias
+            let resources = TaskResourcePolicy.infer(prompt: prompt)
             let plan = ClusterDispatchPlanner.plan(
                 repoAlias: alias, lane: TaskCapabilityLane.classify(prompt),
-                profile: profile, preferredRunnerID: preferredRunnerID,
+                profile: profile,
+                requiredCapabilities: resources.capabilities,
+                resourceClaims: resources.claims,
+                preferredRunnerID: preferredRunnerID,
                 preferredPlatform: preferredRunnerID == nil
                     ? repo.implementationOwner : nil,
                 coordinatorMachineID: repo.coordinatorMachineID)
@@ -6649,7 +6899,7 @@ func cmdCluster(_ rest: [String]) throws {
             + pad("在听", 8) + pad("防火墙", 10) + pad("LAN 走", 10) + "上报"))
         for p in list {
             let stale = p.isStale()
-            let name = p.machineID == me ? p.machineName + "（本机）" : p.machineName
+            let name = p.machineID == me ? p.displayName + "（本机）" : p.displayName
             let serving = p.serving ? Ansi.green("是") : Ansi.red("否")
             // 防火墙开着 + 没在听，是最容易误诊的组合：从对面看
             // connect 会超时，和「没起服务」一模一样。
@@ -6663,6 +6913,33 @@ func cmdCluster(_ rest: [String]) throws {
                 + (stale ? Ansi.red("已过期") : Ansi.dim(relativeTime(p.updatedAt))))
         }
 
+        print("\n" + Ansi.bold("执行面")
+            + Ansi.dim("（状态和停住原因来自各机同一轮派发快照）"))
+        for p in list {
+            let label = p.displayName
+            let state = coordinatorStateLabel(p.coordinatorState)
+            let stateAge = p.coordinatorUpdatedAt.map {
+                Date().timeIntervalSince($0)
+            }
+            let stateText: String
+            if p.coordinatorState == "offline" || (stateAge ?? 0) > 20 * 60 {
+                stateText = Ansi.red(state)
+            } else if p.coordinatorState == "paused" || p.coordinatorState == nil {
+                stateText = Ansi.yellow(state)
+            } else {
+                stateText = Ansi.green(state)
+            }
+            print("  " + pad(label, 26) + pad(stateText, 14)
+                + "执行槽 \(p.runningTaskCount)/\(p.maxConcurrentTasks)")
+            print(Ansi.dim("    " + (p.coordinatorSummary ?? "对端版本尚未上报停住原因")
+                + (p.coordinatorUpdatedAt.map { " · " + relativeTime($0) } ?? "")))
+            let claims = p.runningResourceClaims.isEmpty
+                ? "无独占资源" : "占用 " + p.runningResourceClaims.joined(separator: "、")
+            let caps = p.capabilities.isEmpty
+                ? "能力未上报" : "能力 " + p.capabilities.joined(separator: "、")
+            print(Ansi.dim("    " + claims + " · " + caps))
+        }
+
         // 没在听的机器，直接把它日志的尾巴摊在这儿。
         //
         // 「在听 = 否」只说结果不说原因，而原因有一堆完全不同的可能
@@ -6670,7 +6947,7 @@ func cmdCluster(_ rest: [String]) throws {
         // 为了拿这几行日志来回折腾过好几轮 —— 它明明就在对端机器上，
         // presence 每轮都在写 iCloud，顺手带上就完了。
         for p in list where !p.serving {
-            let who = p.nodeName ?? p.machineName
+            let who = p.displayName
             print("\n" + Ansi.red("✗ \(who) 没在监听"))
             if let n = p.restartsLastHour, n > 3 {
                 print(Ansi.yellow("  最近一小时启动了 \(n) 次 —— 崩溃重启循环"))
@@ -6744,19 +7021,19 @@ func cmdCluster(_ rest: [String]) throws {
         print()
         for p in list where p.machineID != me {
             if p.isStale() {
-                print(Ansi.yellow("⚠︎ \(p.machineName) 超过 15 分钟没上报")
+                print(Ansi.yellow("⚠︎ \(p.displayName) 超过 15 分钟没上报")
                     + Ansi.dim(" —— 它可能关机了，或者 iCloud 没在同步"))
             } else if !p.serving {
-                print(Ansi.yellow("⚠︎ \(p.machineName) 没在监听")
+                print(Ansi.yellow("⚠︎ \(p.displayName) 没在监听")
                     + Ansi.dim(" —— 在那台上跑 llmq cluster install-serve"))
             } else if p.lanHijackedByTunnel {
-                print(Ansi.red("✗ \(p.machineName) 的局域网流量走 \(p.lanRouteInterface ?? "?")")
+                print(Ansi.red("✗ \(p.displayName) 的局域网流量走 \(p.lanRouteInterface ?? "?")")
                     + Ansi.dim(" —— 被代理客户端的 TUN 接管了"))
                 print(Ansi.dim("   现象极具迷惑性：服务在听、防火墙关着、ping 也通，"))
                 print(Ansi.dim("   但 TCP 回包被塞进隧道出不来，对面看就是连接超时。"))
                 print(Ansi.dim("   在那台的代理客户端里打开「绕过局域网 / Bypass LAN」。"))
             } else if p.firewallOn {
-                print(Ansi.yellow("⚠︎ \(p.machineName) 在听，但防火墙开着")
+                print(Ansi.yellow("⚠︎ \(p.displayName) 在听，但防火墙开着")
                     + Ansi.dim(" —— 没放行 llmq 的话入站会被**静默丢弃**，"
                              + "表现是连接超时，和没起服务一模一样"))
             }

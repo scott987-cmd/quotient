@@ -132,6 +132,14 @@ final class MirrorController: ObservableObject {
             // 但一轮加起来可以到几十秒 —— 主线程等它就是菜单栏卡死。
             let stats = MirrorService.sync(local: local, cloud: cloud,
                                            selfMachineID: selfID)
+            // 清理必须跟常驻镜像走，不能依赖“刚好有任务在跑”。否则云端独有的
+            // 旧机器分片会先被拉回本地，调度器空闲时又永远没人回收，手机端就会
+            // 周期性看到已经消失的电脑和 Agent。先完成本轮镜像，再按稳定 ID +
+            // 30 天 TTL 同时收敛本地和云端；同名机器不会成为删除依据。
+            _ = StaleIdentitySweep.run(
+                sharedRoot: local, iCloudRoot: cloud,
+                localSnapshotsDir: Paths.localSnapshotsDir,
+                selfID: selfID)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.syncing = false

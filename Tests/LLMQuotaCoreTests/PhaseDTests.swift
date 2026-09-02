@@ -270,7 +270,7 @@ final class PhaseDTests: XCTestCase {
         let section = try XCTUnwrap(page.sections.first { $0.title == "可用 Agent" })
         XCTAssertEqual(section.cards?.count, 2)
         XCTAssertEqual(Set(section.cards?.compactMap(\.body) ?? []), [
-            "Mac mini\nmachine-A", "Mac mini\nmachine-B",
+            "Mac mini · MACHINEA\nmachine-A", "Mac mini · MACHINEB\nmachine-B",
         ])
         XCTAssertEqual(Set(section.cards?.compactMap(\.detail) ?? []), [
             "Codex · 可接收咨询", "Codex · 仅执行任务",

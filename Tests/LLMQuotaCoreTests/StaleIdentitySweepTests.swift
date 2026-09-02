@@ -1,7 +1,7 @@
 import XCTest
 @testable import LLMQuotaCore
 
-/// **过时机器身份的孤儿文件要被扫掉,同名机器只留最新一份。**
+/// **同名机器不能互删。** 过时身份只允许按稳定 ID + TTL 回收。
 ///
 /// 老板 2026-08-23:「好几个 mac mini,有的离线有的正常」「任务队列展示又问题」。
 /// machineID 漂移期间,每个身份都在 snapshots/taskboards/presence 留了一份
@@ -20,18 +20,17 @@ final class StaleIdentitySweepTests: XCTestCase {
                      atomically: true, encoding: .utf8)
     }
 
-    func testKeepsOnlyNewestPerMachine() {
+    func testSameNamedMachinesAreNeverDeletedByDisplayName() {
         let d = dir(); defer { try? FileManager.default.removeItem(at: d) }
         write(d, id: "OLD1", name: "Mac mini", at: "2026-08-22T10:00:00Z")
         write(d, id: "OLD2", name: "Mac mini", at: "2026-08-22T18:00:00Z")
         write(d, id: "NEW",  name: "Mac mini", at: "2026-08-23T06:00:00Z")
         write(d, id: "MBP",  name: "MacBook Pro", at: "2026-08-23T06:00:00Z")
         let removed = StaleIdentitySweep.sweepDir(d)
-        XCTAssertEqual(removed, 2, "同一台的两个旧身份该删")
+        XCTAssertEqual(removed, 0, "无法仅凭同名证明是同一台机器")
         let left = (try? FileManager.default.contentsOfDirectory(atPath: d.path))?
             .sorted() ?? []
-        XCTAssertEqual(left, ["MBP.json", "NEW.json"],
-                       "每台机器留最新的那份;别的机器不受影响")
+        XCTAssertEqual(left, ["MBP.json", "NEW.json", "OLD1.json", "OLD2.json"])
     }
 
     /// **同名不同机绝不互删本机文件。** 三轮 review 都点名缺这条边界。
@@ -52,9 +51,8 @@ final class StaleIdentitySweepTests: XCTestCase {
                       "本机文件哪怕较旧也绝不能删")
     }
 
-    /// presence 文件用的是 updatedAt 不是 generatedAt —— 也得能按它去重。
-    /// 漏了这个字段,老板手机上 presence 的 12 个旧身份一个没扫掉(2026-08-23)。
-    func testHandlesUpdatedAtField() {
+    /// presence 即使带 updatedAt，也不能只因同名就删除另一台机器。
+    func testUpdatedAtDoesNotAuthorizeNameBasedDeletion() {
         let d = dir(); defer { try? FileManager.default.removeItem(at: d) }
         func writeP(_ id: String, _ name: String, _ at: String) {
             let j = #"{"machineID":"\#(id)","machineName":"\#(name)","updatedAt":"\#(at)"}"#
@@ -63,7 +61,8 @@ final class StaleIdentitySweepTests: XCTestCase {
         }
         writeP("OLD", "Mac mini", "2026-08-22T10:00:00Z")
         writeP("NEW", "Mac mini", "2026-08-23T06:00:00Z")
-        XCTAssertEqual(StaleIdentitySweep.sweepDir(d), 1, "按 updatedAt 也要能分出新旧")
+        XCTAssertEqual(StaleIdentitySweep.sweepDir(d), 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: d.appendingPathComponent("OLD.json").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: d.appendingPathComponent("NEW.json").path))
     }
 

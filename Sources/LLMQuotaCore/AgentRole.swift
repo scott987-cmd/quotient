@@ -52,8 +52,9 @@ public struct AgentRole: Codable, Sendable {
     /// 不能派活时说清为什么。空字符串表示能派。
     public var cannotTakeWorkReason: String = ""
 
-    /// 在这些机器上不派活给它。存机器名（`llmq machines` 里看到的那个），
-    /// 不存 machineID —— 后者是一串 UUID，配置文件里没法读。
+    /// 在这些机器上不派活给它。新配置存稳定 machineID；读取时同时兼容
+    /// nodeName 和历史机器名。不能继续只存机器名：两台 MacBook Pro 可以同名，
+    /// 名称匹配会让一台机器上的静音误伤另一台。
     ///
     /// 为什么按机器分而不是全局关掉：同一个平台在不同机器上的处境不一样。
     /// 比如这台 Mac 的 Codex 是控制面（就是那个决定「该干什么」的环节），
@@ -110,8 +111,8 @@ public struct AgentRole: Codable, Sendable {
     /// 3. 把配置说成故障 ——「被静音了」听起来像出了什么事，
     ///    而这是有意的架构选择。
     ///
-    /// 和 mutedOn 一样按机器名存：Mac mini 上的 Claude 是指挥，
-    /// MacBook 上同一个 Claude 可以干活。全局开关会把后者一起误伤。
+    /// 和 mutedOn 一样按稳定机器选择器存，并兼容历史机器名：Mac mini 上的
+    /// Claude 是指挥，MacBook 上同一个 Claude 可以干活。全局开关会把后者一起误伤。
     public var dispatcherOn: [String] = []
 
     public init(platform: Platform, title: String, maxRisk: TaskProfile.Risk,
@@ -403,9 +404,46 @@ public enum AgentRoles {
         cached = nil; cachedAt = nil; cachedRevision = nil; cachedFilePath = nil
     }
 
+    /// 一条角色机器选择器是否指向给定机器。
+    ///
+    /// machineID 是权威身份；nodeName 便于人工配置；machineName 只用于兼容
+    /// 已经存在的旧 roles.json。新增配置不再写 machineName。
+    public static func matchesMachine(
+        _ selectors: [String], machineID: String?, machineName: String?, nodeName: String? = nil
+    ) -> Bool {
+        let candidates = Set([machineID, nodeName, machineName].compactMap { raw -> String? in
+            guard let raw else { return nil }
+            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        })
+        return selectors.contains { candidates.contains($0) }
+    }
+
+    public static func localMachineSelectors() -> [String] {
+        [Paths.machineID(), ClusterConfigStore.load()?.nodeName, Paths.machineName()]
+            .compactMap { raw -> String? in
+                guard let raw else { return nil }
+                let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+    }
+
     /// 这个平台在**本机**是不是被静音了。
-    public static func isMuted(_ p: Platform, machine: String = Paths.machineName()) -> Bool {
+    public static func isMuted(_ p: Platform) -> Bool {
+        matchesMachine(role(for: p).mutedOn,
+                       machineID: Paths.machineID(), machineName: Paths.machineName(),
+                       nodeName: ClusterConfigStore.load()?.nodeName)
+    }
+
+    /// 兼容按历史机器名查询的调用方。
+    public static func isMuted(_ p: Platform, machine: String) -> Bool {
         role(for: p).mutedOn.contains(machine)
+    }
+
+    public static func isMuted(_ p: Platform, machineID: String,
+                               machineName: String, nodeName: String? = nil) -> Bool {
+        matchesMachine(role(for: p).mutedOn, machineID: machineID,
+                       machineName: machineName, nodeName: nodeName)
     }
 
     /// 这个平台的留白比例。没配就用全局默认。
@@ -430,14 +468,35 @@ public enum AgentRoles {
     }
 
     /// 这个平台在**本机**是不是指挥。
-    public static func isDispatcher(_ p: Platform,
-                                    machine: String = Paths.machineName()) -> Bool {
+    public static func isDispatcher(_ p: Platform) -> Bool {
+        matchesMachine(role(for: p).dispatcherOn,
+                       machineID: Paths.machineID(), machineName: Paths.machineName(),
+                       nodeName: ClusterConfigStore.load()?.nodeName)
+    }
+
+    /// 兼容按历史机器名查询的调用方。
+    public static func isDispatcher(_ p: Platform, machine: String) -> Bool {
         role(for: p).dispatcherOn.contains(machine)
+    }
+
+    public static func isDispatcher(_ p: Platform, machineID: String,
+                                    machineName: String, nodeName: String? = nil) -> Bool {
+        matchesMachine(role(for: p).dispatcherOn, machineID: machineID,
+                       machineName: machineName, nodeName: nodeName)
     }
 
     /// 本机的指挥是谁。没配就是 nil ——
     /// 那种机器退回「谁有额度谁上」。**不能因为找不到指挥就不干活。**
-    public static func dispatcher(machine: String = Paths.machineName()) -> AgentRole? {
+    public static func dispatcher() -> AgentRole? {
+        all().values.first {
+            matchesMachine($0.dispatcherOn,
+                           machineID: Paths.machineID(), machineName: Paths.machineName(),
+                           nodeName: ClusterConfigStore.load()?.nodeName)
+        }
+    }
+
+    /// 兼容按历史机器名查询的调用方。
+    public static func dispatcher(machine: String) -> AgentRole? {
         all().values.first { $0.dispatcherOn.contains(machine) }
     }
 

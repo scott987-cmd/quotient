@@ -790,9 +790,39 @@ public enum DashboardHTML {
           + "。空工位表示在编未上岗，趴桌上表示额度已烧穿。";
       })();
 
+      function safeMachineName(raw) {
+        var compact = String(raw || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (compact.indexOf("macbookpro") >= 0) return "MacBook Pro";
+        if (compact.indexOf("macbookair") >= 0) return "MacBook Air";
+        if (compact.indexOf("macmini") >= 0) return "Mac mini";
+        if (compact.indexOf("macstudio") >= 0) return "Mac Studio";
+        if (compact.indexOf("macpro") >= 0) return "Mac Pro";
+        if (compact.indexOf("imac") >= 0) return "iMac";
+        return "Mac";
+      }
+
+      function safeNodeName(raw, machineName) {
+        var node = String(raw || "").trim();
+        if (!node || !/^[a-z0-9._ -]+$/i.test(node)) return "";
+        var machine = String(machineName || "").toLowerCase();
+        var markers = ["macbook", "mac mini", "macmini", "mac studio",
+          "macstudio", "mac pro", "macpro", "imac"];
+        var starts = markers.map(function (marker) { return machine.indexOf(marker); })
+          .filter(function (index) { return index >= 0; });
+        var owner = starts.length
+          ? machine.slice(0, Math.min.apply(null, starts)).replace(/[^a-z0-9]/g, "") : "";
+        var compactNode = node.toLowerCase().replace(/[^a-z0-9]/g, "");
+        return owner.length >= 3 && compactNode.indexOf(owner) >= 0 ? "" : node;
+      }
+
       document.getElementById("footer").textContent =
         "由 llmq dashboard 生成 · 数据来自本机各 CLI 的会话日志，未经任何网络请求 · " +
-        DATA.machines.map(function (m) { return m.machineName + (m.isStale ? "（快照较旧）" : ""); }).join(" / ");
+        DATA.machines.map(function (m) {
+          var id = String(m.machineID || "").replace(/[^a-z0-9]/gi, "").slice(0, 8).toUpperCase();
+          var node = safeNodeName(m.nodeName, m.machineName);
+          var label = node || (safeMachineName(m.machineName) + (id ? " · " + id : ""));
+          return label + (m.isStale ? "（快照较旧）" : "");
+        }).join(" / ");
     })();
     </script>
     """

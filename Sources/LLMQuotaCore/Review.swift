@@ -539,7 +539,7 @@ public enum Review {
     }
     public static func setAutoLand(enabled: Bool) {
         if enabled {
-            try? ICloudSafe.write(Data("on".utf8), to: autoLandFlagURL)
+            _ = ICloudSafe.write(Data("on".utf8), to: autoLandFlagURL)
         } else {
             try? FileManager.default.removeItem(at: autoLandFlagURL)
         }
@@ -600,7 +600,7 @@ public enum Review {
         var m = autoLandVeto()
         m[branch] = VetoEntry(note: String(note.prefix(300)), head: head, at: Date())
         if let d = try? JSONEncoder().encode(m) {
-            try? ICloudSafe.write(d, to: autoLandVetoURL)
+            _ = ICloudSafe.write(d, to: autoLandVetoURL)
         }
     }
 
@@ -2071,7 +2071,7 @@ extension Review {
                 guard done.rejected else { continue }
                 out.append(Digest(
                     repo: path, repoName: repo.alias, branch: item.branch,
-                    platform: item.platform ?? "", subject: item.subject,
+                    platform: item.platform, subject: item.subject,
                     prompt: nil, files: item.files, insertions: 0, deletions: 0,
                     mergesCleanly: true, overlapsWith: [], committedAt: item.committedAt,
                     evidence: item.evidence))
@@ -2458,7 +2458,7 @@ extension Review {
                 m.sorted { $0.key < $1.key }.suffix(200).map { ($0.key, $0.value) })
         }
         if let d = try? JSONEncoder().encode(m) {
-            try? ICloudSafe.write(d, to: verdictAttemptsFile)
+            _ = ICloudSafe.write(d, to: verdictAttemptsFile)
         }
         return n
     }

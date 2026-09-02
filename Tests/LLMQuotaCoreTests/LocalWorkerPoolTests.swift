@@ -16,6 +16,22 @@ final class LocalWorkerPoolTests: XCTestCase {
             machineName: "杜师兵的MacBook Pro"), 1)
     }
 
+    func testStandaloneUERequiresUnrealCapabilityAndExclusiveEditor() {
+        let requirements = TaskResourcePolicy.infer(
+            prompt: "在 M2 上用 UE 重新制作 Flint 场景")
+
+        XCTAssertTrue(requirements.capabilities.contains("tool:unreal"))
+        XCTAssertTrue(requirements.claims.contains("tool:unreal-editor"))
+    }
+
+    func testQueueTextDoesNotAccidentallyRequireUnreal() {
+        let requirements = TaskResourcePolicy.infer(
+            prompt: "修复任务队列 queue 卡住的问题")
+
+        XCTAssertFalse(requirements.capabilities.contains("tool:unreal"))
+        XCTAssertFalse(requirements.claims.contains("tool:unreal-editor"))
+    }
+
     func testPublishedCapacityUsesActualLiveCoordinatorSlots() {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("llmq-capacity-\(UUID().uuidString)")
@@ -40,6 +56,19 @@ final class LocalWorkerPoolTests: XCTestCase {
         XCTAssertEqual(LocalWorkerSlotPlanner.select(
             ready: [a, b], allTasks: [a, b], active: [],
             maxConcurrentTasks: 2).map(\.id), ["a", "b"])
+    }
+
+    func testDifferentReposStillSerializeWhenTheyClaimSameExclusiveTool() {
+        var a = task("a", repo: "/dev/A")
+        var b = task("b", repo: "/dev/B")
+        a.resourceClaims = ["tool:unreal-editor"]
+        b.resourceClaims = ["tool:unreal-editor"]
+        let plan = LocalWorkerSlotPlanner.plan(
+            ready: [a, b], allTasks: [a, b], active: [], maxConcurrentTasks: 2)
+
+        XCTAssertEqual(plan.selected.map(\.id), ["a"])
+        XCTAssertTrue(plan.decisions.first { $0.taskID == "b" }?.reason
+            .contains("资源") == true)
     }
 
     func testSameRepoStillUsesOnlyOneSlot() {
@@ -136,6 +165,66 @@ final class LocalWorkerPoolTests: XCTestCase {
         XCTAssertEqual(restored.ready.map(\.rev), [0, 0])
     }
 
+    func testSchedulerSnapshotExplainsIdleAndWaitingStates() {
+        let scope = ProjectExecutionScope(allowedRepo: "/dev/A")
+        let emptyPlan = LocalWorkerSlotPlanner.Plan(selected: [], decisions: [])
+        let idle = SchedulerSnapshot(
+            scope: scope, ready: [], active: [], plan: emptyPlan,
+            maxConcurrentTasks: 2, allTasks: [])
+        XCTAssertEqual(idle.state, .idle)
+        XCTAssertTrue(idle.summary.contains("没有待执行任务"))
+
+        var blocked = task("blocked", repo: "/dev/A", state: .blocked)
+        blocked.waitReason = .dependency
+        let waiting = SchedulerSnapshot(
+            scope: scope, ready: [], active: [], plan: emptyPlan,
+            maxConcurrentTasks: 2, allTasks: [blocked])
+        XCTAssertEqual(waiting.state, .waiting)
+        XCTAssertTrue(waiting.summary.contains("门禁") || waiting.summary.contains("依赖"))
+    }
+
+    func testSchedulerSnapshotJournalOnlyAppendsMeaningfulTransitions() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("llmq-snapshot-transitions-\(UUID().uuidString)")
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: root)
+        }
+        Paths.appSupportOverride = root
+        let scope = ProjectExecutionScope(allowedRepo: "/dev/A")
+        let plan = LocalWorkerSlotPlanner.Plan(selected: [], decisions: [])
+        let first = SchedulerSnapshot(
+            scope: scope, ready: [], active: [], plan: plan,
+            maxConcurrentTasks: 1, allTasks: [],
+            createdAt: Date(timeIntervalSince1970: 10))
+        let heartbeat = SchedulerSnapshot(
+            scope: scope, ready: [], active: [], plan: plan,
+            maxConcurrentTasks: 1, allTasks: [],
+            createdAt: Date(timeIntervalSince1970: 20))
+        try SchedulerSnapshotStore.save(first)
+        try SchedulerSnapshotStore.save(heartbeat)
+
+        XCTAssertEqual(SchedulerSnapshotStore.latest()?.createdAt,
+                       Date(timeIntervalSince1970: 20),
+                       "current 快照仍要每轮刷新心跳")
+        let unchangedLines = try Data(contentsOf: SchedulerSnapshotStore.file)
+            .split(separator: UInt8(ascii: "\n"))
+        XCTAssertEqual(unchangedLines.count, 1,
+                       "状态没变不能每几秒向审计账本追加一行")
+
+        let changed = SchedulerSnapshot(
+            scope: scope, ready: [task("next", repo: "/dev/A")], active: [],
+            plan: LocalWorkerSlotPlanner.Plan(
+                selected: [], decisions: [.init(
+                    taskID: "next", selected: false, reason: "执行槽已满")]),
+            maxConcurrentTasks: 1, allTasks: [task("next", repo: "/dev/A")],
+            createdAt: Date(timeIntervalSince1970: 30))
+        try SchedulerSnapshotStore.save(changed)
+        let changedLines = try Data(contentsOf: SchedulerSnapshotStore.file)
+            .split(separator: UInt8(ascii: "\n"))
+        XCTAssertEqual(changedLines.count, 2)
+    }
+
     func testJustLaunchedChildReservesItsOwnerBeforeRunningStateIsWritten() {
         var first = task("first", repo: "/dev/A")
         first.ownerRunnerID = "minimax.code"
@@ -159,6 +248,25 @@ final class LocalWorkerPoolTests: XCTestCase {
         XCTAssertTrue(other.acquire(), "不同 Agent 可以各占一个执行槽")
         first.release()
         XCTAssertTrue(duplicate.acquire(), "上一任务结束后同 Agent 应立即可用")
+    }
+
+    func testKernelResourceLeasePreventsPlannerRaceAndManualBypass() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("llmq-resource-leases-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let unreal = LocalExecutionLease(
+            scope: .resource, key: "tool:unreal-editor", root: root)
+        let duplicate = LocalExecutionLease(
+            scope: .resource, key: "tool:unreal-editor", root: root)
+        let blender = LocalExecutionLease(
+            scope: .resource, key: "tool:blender", root: root)
+
+        XCTAssertTrue(unreal.acquire())
+        XCTAssertFalse(duplicate.acquire(),
+                       "即使绕过调度快照，同一独占工具也不能并发启动")
+        XCTAssertTrue(blender.acquire(), "不同独占工具可以并行")
+        unreal.release()
+        XCTAssertTrue(duplicate.acquire())
     }
 
     func testProcessPoolRunsChildrenConcurrentlyAndIsolatesFailure() throws {

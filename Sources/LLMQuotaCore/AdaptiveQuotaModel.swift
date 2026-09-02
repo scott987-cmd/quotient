@@ -12,6 +12,7 @@ public enum AdaptiveQuotaModel {
 
     public struct Record: Codable, Sendable, Equatable {
         public var platform: Platform
+        public var quotaPoolID: String?
         public var windowMinutes: Int
         public var metric: QuotaMetric
         public var limit: Double
@@ -19,6 +20,39 @@ public enum AdaptiveQuotaModel {
         public var confidence: Double
         public var evidence: Evidence
         public var updatedAt: Date
+
+        public init(platform: Platform, quotaPoolID: String? = nil,
+                    windowMinutes: Int, metric: QuotaMetric, limit: Double,
+                    samples: Int, confidence: Double, evidence: Evidence,
+                    updatedAt: Date) {
+            self.platform = platform
+            self.quotaPoolID = quotaPoolID
+            self.windowMinutes = windowMinutes
+            self.metric = metric
+            self.limit = limit
+            self.samples = samples
+            self.confidence = confidence
+            self.evidence = evidence
+            self.updatedAt = updatedAt
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case platform, quotaPoolID, windowMinutes, metric, limit, samples
+            case confidence, evidence, updatedAt
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            platform = try c.decodeIfPresent(Platform.self, forKey: .platform) ?? .codex
+            quotaPoolID = try c.decodeIfPresent(String.self, forKey: .quotaPoolID)
+            windowMinutes = try c.decodeIfPresent(Int.self, forKey: .windowMinutes) ?? 0
+            metric = try c.decodeIfPresent(QuotaMetric.self, forKey: .metric) ?? .requests
+            limit = try c.decodeIfPresent(Double.self, forKey: .limit) ?? 0
+            samples = try c.decodeIfPresent(Int.self, forKey: .samples) ?? 0
+            confidence = try c.decodeIfPresent(Double.self, forKey: .confidence) ?? 0
+            evidence = try c.decodeIfPresent(Evidence.self, forKey: .evidence) ?? .ceiling
+            updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast
+        }
     }
 
     struct Document: Codable {
@@ -76,7 +110,8 @@ public enum AdaptiveQuotaModel {
     /// 合并新观测。可信反解做加权校准；撞顶记录是硬下界，只允许把上限往上推。
     @discardableResult
     public static func update(
-        estimates: [LimitLearner.Estimate], ceilings: [CeilingEstimate], now: Date
+        estimates: [LimitLearner.Estimate], ceilings: [CeilingEstimate], now: Date,
+        quotaPoolIDs: [Platform: String] = [:]
     ) -> [Record] {
         withLock {
             let previous = loadDocument()
@@ -86,7 +121,9 @@ public enum AdaptiveQuotaModel {
             for estimate in estimates where estimate.method == .calibrated
                 && estimate.isTrustworthy {
                 let candidate = Record(
-                    platform: estimate.platform, windowMinutes: estimate.windowMinutes,
+                    platform: estimate.platform,
+                    quotaPoolID: quotaPoolIDs[estimate.platform],
+                    windowMinutes: estimate.windowMinutes,
                     metric: estimate.metric, limit: estimate.value,
                     samples: estimate.samples,
                     confidence: max(0, min(1, 1 - (estimate.spread ?? 1))),
@@ -102,7 +139,9 @@ public enum AdaptiveQuotaModel {
                     continue
                 }
                 let candidate = Record(
-                    platform: ceiling.platform, windowMinutes: ceiling.windowMinutes,
+                    platform: ceiling.platform,
+                    quotaPoolID: quotaPoolIDs[ceiling.platform],
+                    windowMinutes: ceiling.windowMinutes,
                     metric: metric, limit: ceiling.value, samples: ceiling.samples,
                     confidence: 0.9, evidence: .ceiling, updatedAt: now)
                 let fingerprintKey = key(candidate) + "|ceiling"
@@ -127,8 +166,14 @@ public enum AdaptiveQuotaModel {
             return document.records
         }
         let scan = try Collector().scanRaw(now: now)
+        let config = PlansStore.load()
+        let quotaPoolIDs = Dictionary(uniqueKeysWithValues: Platform.activeCases.map {
+            ($0, config.quotaPoolID(
+                for: $0, machineID: Paths.machineID()))
+        })
         return update(estimates: LimitLearner.learn(from: scan, now: now),
-                      ceilings: QuotaCeiling.estimates(), now: now)
+                      ceilings: QuotaCeiling.estimates(quotaPoolIDs: quotaPoolIDs), now: now,
+                      quotaPoolIDs: quotaPoolIDs)
     }
 
     /// 仅填补未知窗口。运行时生成副本，不改持久化套餐配置。
@@ -138,27 +183,60 @@ public enum AdaptiveQuotaModel {
             now.timeIntervalSince($0.updatedAt) <= maxAge && $0.limit > 0
         }
         for pi in result.plans.indices {
-            for li in result.plans[pi].limits.indices {
-                let current = result.plans[pi].limits[li]
-                guard current.limit == nil
-                        || current.hint?.hasPrefix("持续学习") == true else { continue }
-                let matches = records.filter {
-                    $0.platform == result.plans[pi].platform
-                        && $0.windowMinutes == current.windowMinutes
-                }.sorted {
-                    if $0.evidence != $1.evidence {
-                        return $0.evidence == .calibrated
-                    }
-                    if $0.confidence != $1.confidence { return $0.confidence > $1.confidence }
-                    return $0.updatedAt > $1.updatedAt
+            let platform = result.plans[pi].platform
+            let hasExplicitPools = (result.quotaPools ?? []).contains {
+                $0.platform == platform
+            }
+            if hasExplicitPools {
+                let localPoolID = result.quotaPoolID(
+                    for: platform, machineID: Paths.machineID())
+                let indices = (result.quotaPools ?? []).indices.filter {
+                    result.quotaPools?[$0].platform == platform
+                        && result.quotaPools?[$0].poolID == localPoolID
                 }
-                guard let learned = matches.first else { continue }
-                result.plans[pi].limits[li].limit = learned.limit
-                result.plans[pi].limits[li].metric = learned.metric
-                result.plans[pi].limits[li].hint = "持续学习估算 · \(learned.samples) 个样本"
+                guard !indices.isEmpty else { continue }
+                var limits = indices.compactMap { result.quotaPools?[$0].limits }.first
+                    ?? result.plans[pi].limits
+                apply(records: records.filter { $0.quotaPoolID == localPoolID },
+                      platform: platform, to: &limits)
+                // 一个 poolID 可以由多台机器共同消费，但窗口定义只能保存一份。
+                // 把学习结果复制到每条 machine binding 会制造多个可写副本：之后
+                // 任一机器校准时，读取值就开始依赖数组顺序。这里和人工 set-limit
+                // 使用同一条收敛规则——保留已有 override 的那条，否则取第一条。
+                let keeper = indices.first(where: { result.quotaPools?[$0].limits != nil })
+                    ?? indices[0]
+                for index in indices {
+                    result.quotaPools?[index].limits = index == keeper ? limits : nil
+                }
+            } else {
+                let defaultPoolID = "\(platform.rawValue):default"
+                apply(records: records.filter {
+                    $0.quotaPoolID == nil || $0.quotaPoolID == defaultPoolID
+                },
+                      platform: platform, to: &result.plans[pi].limits)
             }
         }
         return result
+    }
+
+    private static func apply(records: [Record], platform: Platform,
+                              to limits: inout [QuotaLimit]) {
+        for li in limits.indices {
+            let current = limits[li]
+            guard current.limit == nil
+                    || current.hint?.hasPrefix("持续学习") == true else { continue }
+            let matches = records.filter {
+                $0.platform == platform && $0.windowMinutes == current.windowMinutes
+            }.sorted {
+                if $0.evidence != $1.evidence { return $0.evidence == .calibrated }
+                if $0.confidence != $1.confidence { return $0.confidence > $1.confidence }
+                return $0.updatedAt > $1.updatedAt
+            }
+            guard let learned = matches.first else { continue }
+            limits[li].limit = learned.limit
+            limits[li].metric = learned.metric
+            limits[li].hint = "持续学习估算 · \(learned.samples) 个样本"
+        }
     }
 
     private static func merge(_ candidate: Record, into records: inout [String: Record]) {
@@ -193,11 +271,15 @@ public enum AdaptiveQuotaModel {
     }
 
     private static func key(_ record: Record) -> String {
-        "\(record.platform.rawValue)|\(record.windowMinutes)|\(record.metric.rawValue)"
+        "\(record.platform.rawValue)|\(record.quotaPoolID ?? "legacy")|"
+            + "\(record.windowMinutes)|\(record.metric.rawValue)"
     }
 
     private static func recordOrder(_ lhs: Record, _ rhs: Record) -> Bool {
         if lhs.platform != rhs.platform { return lhs.platform.sortIndex < rhs.platform.sortIndex }
+        if lhs.quotaPoolID != rhs.quotaPoolID {
+            return (lhs.quotaPoolID ?? "") < (rhs.quotaPoolID ?? "")
+        }
         if lhs.windowMinutes != rhs.windowMinutes { return lhs.windowMinutes < rhs.windowMinutes }
         return lhs.metric.rawValue < rhs.metric.rawValue
     }

@@ -16,6 +16,7 @@ public enum SharedLayout {
         "answers", "questions", "outbox",
         "config-intents", "config-intents/processed",
         "releases", "collaboration", "agent-registry", "config-journal",
+        "cooldown-events",
     ]
 
     public static func ensure(at root: URL) {
@@ -137,7 +138,7 @@ public enum MirrorService {
     /// 手机改 approvedAt），整文件覆盖必然丢一边。
     static let bidirectionalDirs = ["config", "releases", "approvals", "push-tokens", "verdicts", "actions"]
     /// 多写者不可变事件目录：文件名全局唯一，两边只做集合并集，不按 mtime 覆盖。
-    static let appendOnlyDirs = ["config-journal"]
+    static let appendOnlyDirs = ["config-journal", "cooldown-events"]
     /// 只推不拉的目录：证据截图是 Mac 端产的，手机只看。
     static let pushOnlyDirs = ["evidence", "views"]
 

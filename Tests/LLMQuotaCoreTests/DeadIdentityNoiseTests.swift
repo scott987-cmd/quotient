@@ -45,7 +45,7 @@ final class DeadIdentityNoiseTests: XCTestCase {
             try "[]".write(to: u, atomically: true, encoding: .utf8)
             if old { try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -3 * 3600)], ofItemAtPath: u.path) }
         }
-        try touch("presence/LIVE.json", old: true)
+        try touch("presence/LIVE.json", old: false)
         try touch("office/LIVE.json", old: true)
         try touch("office/DEAD.json", old: true)
         try touch("reviews/DEAD.json", old: true)
@@ -53,7 +53,8 @@ final class DeadIdentityNoiseTests: XCTestCase {
         try touch("agent-registry/DEAD.json", old: true)
         try touch("taskboards/ME.json", old: true)      // 本机,即使没 presence 也不清
         try touch("reviews/NEW.json", old: false)        // 新机器刚起,还没写 presence:别误删
-        let removed = StaleIdentitySweep.sweepOrphanNames(sharedRoot: root, selfID: "ME")
+        let removed = StaleIdentitySweep.sweepOrphanNames(
+            sharedRoot: root, selfID: "ME", olderThan: 2 * 3600)
         XCTAssertEqual(Set(removed), [
             "office/DEAD.json", "reviews/DEAD.json",
             "probes/DEAD.json", "agent-registry/DEAD.json",
@@ -64,7 +65,7 @@ final class DeadIdentityNoiseTests: XCTestCase {
     }
 
 
-    func test_一次巡检先淘汰重复presence再清关联孤儿() throws {
+    func test_一次巡检不会因为同名淘汰另一台机器() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("one-pass-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: root) }
@@ -88,9 +89,9 @@ final class DeadIdentityNoiseTests: XCTestCase {
         _ = StaleIdentitySweep.run(sharedRoot: root, iCloudRoot: nil,
                                    localSnapshotsDir: nil)
 
-        XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent("presence/OLD-ID.json").path))
-        XCTAssertFalse(fm.fileExists(atPath: staleOffice.path),
-                       "同一轮已经确认 OLD-ID 死亡，就不该等下一轮才清其办公室分片")
+        XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("presence/OLD-ID.json").path))
+        XCTAssertTrue(fm.fileExists(atPath: staleOffice.path),
+                      "同名不等于同机，30 天 TTL 未到前不得把离线真机当脏数据")
     }
 
     func test_无presence的旧问题收件箱目录会清理_新目录和活机器保留() throws {
@@ -114,11 +115,37 @@ final class DeadIdentityNoiseTests: XCTestCase {
         }
 
         _ = StaleIdentitySweep.run(sharedRoot: root, iCloudRoot: nil,
-                                   localSnapshotsDir: nil)
+                                   localSnapshotsDir: nil, olderThan: 2 * 3600)
 
         XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent("questions/DEAD").path))
         XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("questions/NEW").path))
         XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("questions/LIVE").path))
+    }
+
+    func test_过期presence本体和云端孪生会一起回收() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("stale-presence-\(UUID().uuidString)")
+        let cloud = fm.temporaryDirectory.appendingPathComponent("stale-presence-cloud-\(UUID().uuidString)")
+        defer {
+            try? fm.removeItem(at: root)
+            try? fm.removeItem(at: cloud)
+        }
+        try fm.createDirectory(at: root.appendingPathComponent("presence"),
+                               withIntermediateDirectories: true)
+        try fm.createDirectory(at: cloud.appendingPathComponent("presence"),
+                               withIntermediateDirectories: true)
+        let stale = #"{"machineID":"DEAD","machineName":"MacBook Pro","updatedAt":"2025-01-01T00:00:00Z"}"#
+        try stale.write(to: root.appendingPathComponent("presence/DEAD.json"),
+                        atomically: true, encoding: .utf8)
+        try stale.write(to: cloud.appendingPathComponent("presence/DEAD.json"),
+                        atomically: true, encoding: .utf8)
+
+        _ = StaleIdentitySweep.run(
+            sharedRoot: root, iCloudRoot: cloud, localSnapshotsDir: nil,
+            olderThan: 2 * 3600)
+
+        XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent("presence/DEAD.json").path))
+        XCTAssertFalse(fm.fileExists(atPath: cloud.appendingPathComponent("presence/DEAD.json").path))
     }
 
     func test_活机器的办公室分片也不能夹带旧身份事件() throws {

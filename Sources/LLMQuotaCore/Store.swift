@@ -193,28 +193,18 @@ public enum SnapshotStore {
 
     /// 读取路径上的最后一道身份闸。
     ///
-    /// 旧机器 ID 可能仍留在另一台电脑的本地快照目录里；即使共享目录已经清干净，
-    /// 那台电脑下一次生成 dashboard 时仍会把旧 ID 全部重新写回根文件。磁盘清理
-    /// 负责最终删除，这里负责在清理尚未运行、旧版本仍在线的过渡期里不让脏数据
-    /// 进入用户看到的汇总。
-    ///
-    /// 不能简单按 machineName 合并：两台真实机器完全可能同名。只有同名组里存在
-    /// 当前 presence 时，才把没有当前 presence 的成员视为漂移身份；如果没有任何
-    /// 在线证据，全部保留，避免误删两台都暂时离线的真机器。
+    /// machineID 现在由硬件身份稳定派生，`loadAll()` 也已按 machineID 只保留
+    /// 最新快照。这里绝不能再按 machineName 猜“是不是同一台”：两台真实
+    /// MacBook Pro 可以同名，而且其中一台离线是正常状态，不是脏身份。
+    /// 历史孤儿由 StaleIdentitySweep 按稳定 ID + 长期失联期限清理。
     public static func reconcileIdentities(
         _ snapshots: [MachineSnapshot],
         presences: [ClusterPresence],
         now: Date = Date()
     ) -> [MachineSnapshot] {
-        let liveIDs = Set(presences.filter { !$0.isStale(now: now) }.map(\.machineID))
-        guard !liveIDs.isEmpty else { return snapshots }
-
-        let groups = Dictionary(grouping: snapshots, by: \.machineName)
-        return groups.values.flatMap { group in
-            guard group.count > 1 else { return group }
-            let live = group.filter { liveIDs.contains($0.machineID) }
-            return live.isEmpty ? group : live
-        }
+        _ = presences
+        _ = now
+        return snapshots
     }
 
     /// 最近一次 loadAll 里解不出来的快照。诊断用（`llmq mirror`）。
@@ -341,30 +331,43 @@ public enum PlansStore {
     static func reconcileWindows(_ saved: PlansConfig) -> PlansConfig {
         let tpl = PlansConfig.template()
         var out = saved
+        func reconcileLimits(_ savedLimits: [QuotaLimit], against template: PlatformPlan)
+            -> [QuotaLimit] {
+            let byID = Dictionary(savedLimits.map { ($0.id, $0) },
+                                  uniquingKeysWith: { a, _ in a })
+            var merged: [QuotaLimit] = template.limits.map { definition in
+                var limit = definition
+                // 只搬数值和锚点，其余（窗口长度、口径、说明）以模板为准。
+                limit.limit = byID[definition.id]?.limit
+                limit.anchor = byID[definition.id]?.anchor
+                // 人工校准会把依据写进 hint；不能被模板的通用提示覆盖。
+                if byID[definition.id]?.limit != nil,
+                   let savedHint = byID[definition.id]?.hint, !savedHint.isEmpty {
+                    limit.hint = savedHint
+                }
+                return limit
+            }
+            let templateIDs = Set(template.limits.map(\.id))
+            merged += savedLimits.filter {
+                !templateIDs.contains($0.id) && ($0.limit != nil || $0.anchor != nil)
+            }
+            return merged
+        }
         // 退役平台只保留在历史快照/任务里供审计，不允许旧 plans.json 或共享
         // journal 把它重新发布到看板和调度器。
         out.plans.removeAll { $0.platform.isRetired }
         for i in out.plans.indices {
             guard let t = tpl.plan(for: out.plans[i].platform) else { continue }
-            let savedLimits = out.plans[i].limits
-            let byID = Dictionary(savedLimits.map { ($0.id, $0) },
-                                  uniquingKeysWith: { a, _ in a })
-            var merged: [QuotaLimit] = t.limits.map { def in
-                var l = def
-                // 只搬数值和锚点，其余（窗口长度、口径、说明）以模板为准。
-                l.limit = byID[def.id]?.limit
-                l.anchor = byID[def.id]?.anchor
-                return l
+            out.plans[i].limits = reconcileLimits(out.plans[i].limits, against: t)
+            // 额度池 override 也是一份套餐窗口；只升级平台默认值却不升级它，
+            // 会让老池永远缺少后来新增的周/月窗口。
+            if out.quotaPools != nil {
+                for poolIndex in out.quotaPools!.indices
+                where out.quotaPools![poolIndex].platform == out.plans[i].platform {
+                    guard let limits = out.quotaPools![poolIndex].limits else { continue }
+                    out.quotaPools![poolIndex].limits = reconcileLimits(limits, against: t)
+                }
             }
-            let templateIDs = Set(t.limits.map(\.id))
-            // 用户自加的窗口：填了数字**或**给了锚点都算「他自己的」，保留。
-            // 原来只认 limit —— 于是一个「官方不公布数字、但到期时间已知」
-            // 的窗口（2026-08-21 老板给的 Kimi 月额度到期日）被当成模板
-            // 遗留洗掉了。只有两样都没有的才像模板残骸。
-            merged += savedLimits.filter {
-                !templateIDs.contains($0.id) && ($0.limit != nil || $0.anchor != nil)
-            }
-            out.plans[i].limits = merged
         }
         // 新版本新增平台时，旧配置里没有对应 plan。只更新已有窗口会让它
         // 永远缺席 dashboard，调度随后以「没有这个平台的用量数据」拒绝 runner。
@@ -379,6 +382,13 @@ public enum PlansStore {
         try Paths.ensureDirectories()
         var sanitized = config
         sanitized.plans.removeAll { $0.platform.isRetired }
+        sanitized.quotaPools?.removeAll { $0.platform.isRetired }
+        let poolConflicts = sanitized.quotaPoolBindingConflicts()
+        guard poolConflicts.isEmpty else {
+            throw NSError(domain: "PlansStore", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "额度池绑定冲突：" + poolConflicts.joined(separator: "；")
+            ])
+        }
         let data = try SnapshotCoding.prettyEncoder().encode(sanitized)
         let snapshot = SharedConfigJournal.snapshot(
             document: document, compatibilityFile: canonicalFile)
@@ -483,7 +493,7 @@ public enum LLMQuota {
     /// 采集本机数据并写出快照。
     @discardableResult
     public static func collect(now: Date = Date(), publishViews: Bool = true) throws -> CollectResult {
-        try PlansStore.ensureExists()
+        _ = try PlansStore.ensureExists()
 
         // 覆盖之前先看看上一份是谁写的。菜单栏 App 和 llmq 是两个独立二进制、
         // 写同一个文件，只更新其中一个就会互相覆盖，症状是新接的平台数据时有时无。

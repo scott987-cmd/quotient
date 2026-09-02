@@ -185,6 +185,84 @@ extension CooldownClassifyTests {
             "一个 Runner 恢复不能清掉同平台另一个能力的故障")
     }
 
+    func testCooldownEventLedgerSurvivesCompatibilityFileOverwrite() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-event-union-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+
+        _ = CooldownLedger.record(
+            platform: .qwen, runnerID: "qwen.code", capability: "code",
+            cause: .authFailed, detail: "qwen auth")
+        // 模拟另一台旧二进制后写一个不包含 Qwen 的整文件视图。
+        CooldownLedger.save([Cooldown(
+            platform: .minimax, runnerID: "minimax.code", capability: "code",
+            cause: .environmentBroken, since: Date(),
+            until: Date().addingTimeInterval(3_600), strikes: 1, detail: "minimax env")])
+
+        let entries = CooldownLedger.loadEntries()
+        XCTAssertTrue(entries.contains { $0.platform == .qwen },
+                      "不可变事件必须保住被兼容整文件覆盖掉的另一台机器记录")
+        XCTAssertTrue(entries.contains { $0.platform == .minimax },
+                      "事件账尚未接管的旧记录仍要兼容读取")
+    }
+
+    func testCooldownClearTombstonePreventsStaleFileResurrection() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-event-clear-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+
+        let stale = CooldownLedger.record(
+            platform: .qwen, runnerID: "qwen.code", capability: "code",
+            cause: .authFailed, detail: "old auth")
+        CooldownLedger.clear(.qwen, runnerID: "qwen.code", capability: "code")
+        // 模拟离线机器随后把清除前的旧兼容视图同步回来。
+        CooldownLedger.save([stale])
+
+        XCTAssertNil(CooldownLedger.active(
+            platform: .qwen, runnerID: "qwen.code", capability: "code"),
+            "clear 事件必须压住后来回流的旧整文件")
+    }
+
+    func testDefaultPoolEventReplacesLegacyNilPoolRecord() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-event-default-pool-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+
+        let old = Date(timeIntervalSince1970: 1_788_000_000)
+        let staleLegacy = Cooldown(
+            platform: .qwen, runnerID: "qwen.code", capability: "code",
+            cause: .quotaExhausted, since: old,
+            until: old.addingTimeInterval(3_600), strikes: 1, detail: "legacy")
+        CooldownLedger.save([staleLegacy])
+        let latest = CooldownLedger.record(
+            platform: .qwen, runnerID: "qwen.code", capability: "code",
+            cause: .authFailed, detail: "new event", now: old.addingTimeInterval(60))
+
+        // 模拟未升级机器随后把 nil-pool 旧视图同步回来。
+        CooldownLedger.save([staleLegacy])
+        let qwen = CooldownLedger.loadEntries().filter { $0.platform == .qwen }
+
+        XCTAssertEqual(qwen.count, 1,
+                       "默认池事件和 nil-pool 旧记录是同一账号，不能在看板显示两份")
+        XCTAssertEqual(qwen.first?.quotaPoolID, "qwen:default")
+        XCTAssertEqual(qwen.first?.detail, latest.detail)
+    }
+
     func testLegacyPlatformCooldownStillDecodes() throws {
         let old: [String: Any] = [
             "platform": "qwen",

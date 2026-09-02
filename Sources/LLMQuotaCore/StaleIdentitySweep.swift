@@ -10,16 +10,13 @@ import Foundation
 /// 漂移期间,每个身份都在 `snapshots/`、`taskboards/`、`presence/` 这些
 /// **按机器一文件**的目录里留了一份 `<那次的ID>.json`。
 ///
-/// 这些文件只增不减:同步会把它们在机器间来回传,dashboard 去重能挡住
-/// 快照那一路,但**任务板、在线状态**是手机按文件直接读的 —— 于是手机上
-/// 一台机器裂成十几个,有的显示在线、有的离线(旧文件的时间戳早就过期)。
-///
-/// 我逐个删了三轮、跨三个目录,每轮都被镜像同步回来。追着删是打地鼠;
-/// 这里做成每轮自动扫:同一台机器(按 machineName)只留 generatedAt
-/// 最新的那份,其余删掉。删本地的,镜像下一轮自然把远端的也收敛掉。
+/// 这些文件只增不减:同步会把它们在机器间来回传。清理必须以稳定 machineID
+/// 和长期失联期限为依据，绝不能按 machineName 猜身份；两台真 MacBook Pro
+/// 可以同名，按名字“只留最新”会把暂时离线的那台当脏数据删掉。
 public enum StaleIdentitySweep {
-    /// 按机器名分组、只留最新的目录。这些都是「一台机器一个文件」。
-    static let perMachineDirs = ["snapshots", "taskboards", "presence"]
+    /// 真机器即使关机几天也应该留在看板里；只有连续 30 天没有心跳的稳定 ID
+    /// 才进入孤儿回收。调用方测试可以传更短期限验证边界。
+    public static let staleMachineRetention: TimeInterval = 30 * 86400
 
     /// 从一个 JSON 文件里读出 (机器名, 生成时间)。读不出就返回 nil。
     static func identity(of url: URL) -> (name: String, id: String, at: Date)? {
@@ -37,7 +34,8 @@ public enum StaleIdentitySweep {
         return (name, mid, at)
     }
 
-    /// 扫一个目录,同名机器只留最新。返回删掉的文件数。
+    /// 历史兼容入口。按名字去重在同名真机场景不安全，因此不再删除任何文件。
+    /// 真正的回收统一走 `sweepOrphanNames` 的稳定 ID + TTL 规则。
     @discardableResult
     public static func sweepDir(_ dir: URL, selfID: String = Paths.machineID()) -> Int {
         sweepDirNames(dir, selfID: selfID).count
@@ -49,31 +47,9 @@ public enum StaleIdentitySweep {
     /// (Mirror.syncPerMachine)—— 删掉的旧身份文件下一轮又从 iCloud 拉回来,
     /// 云端永远收敛不掉;手机的计划清单页因此一直有两个「MacBook Pro」。
     public static func sweepDirNames(_ dir: URL, selfID: String = Paths.machineID()) -> [String] {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: dir,
-                includingPropertiesForKeys: nil) else { return [] }
-        // 机器名 → (最新时间, 最新文件)
-        var newest: [String: (Date, URL)] = [:]
-        var byName: [String: [URL]] = [:]
-        for f in files where f.pathExtension == "json" {
-            guard let id = identity(of: f) else { continue }
-            byName[id.name, default: []].append(f)
-            if let cur = newest[id.name], cur.0 >= id.at { continue }
-            newest[id.name] = (id.at, f)
-        }
-        var removed: [String] = []
-        for (name, urls) in byName {
-            guard let keep = newest[name]?.1 else { continue }
-            for u in urls where u != keep {
-                // **当前机器的文件永不删。** 2026-08-23 复审(H2):去重按
-                // machineName,两台真机重名(macOS 默认名不去重)时,镜像把对方
-                // 文件拉到本地,sweep 每轮删掉「较旧」那台的活文件 —— 互删的删除战。
-                // machineID 已是硬件派生、稳定,拿它自保:本机 ID 的文件绝不删。
-                if identity(of: u)?.id == selfID { continue }
-                if (try? fm.removeItem(at: u)) != nil { removed.append(u.lastPathComponent) }
-            }
-        }
-        return removed
+        _ = dir
+        _ = selfID
+        return []
     }
 
     /// 云端孪生所在的 iCloud 根(`~/Library/Mobile Documents/com~apple~CloudDocs/LLMQuotaBar`)。
@@ -89,7 +65,8 @@ public enum StaleIdentitySweep {
     /// 没有 JSON 内部身份可读的每机目录(事件流是数组、验收摘要是数组):
     /// 按「有没有对应的 presence」判死活 —— 一台活着的机器每轮都写 presence。
     static let orphanDirs = [
-        "office", "reviews", "taskboards", "snapshots", "probes", "agent-registry",
+        "presence", "office", "reviews", "taskboards", "snapshots", "probes",
+        "agent-registry",
     ]
 
     /// `office/<machineID>.json` 是数组，不能用 `identity(of:)` 判断内部身份。
@@ -126,13 +103,12 @@ public enum StaleIdentitySweep {
     /// 删掉这些目录里 `<id>.json` 的 id 已经没有 presence、且文件超过 `olderThan` 没更新的。
     /// 返回删掉的文件名(带目录)。新机器刚起来还没写 presence 的那一两轮,文件是新的,不会被误删。
     public static func sweepOrphanNames(sharedRoot: URL, selfID: String = Paths.machineID(),
-                                        olderThan: TimeInterval = 2 * 3600, now: Date = Date()) -> [String] {
+                                        olderThan: TimeInterval = staleMachineRetention,
+                                        now: Date = Date()) -> [String] {
         let fm = FileManager.default
         let presenceDir = sharedRoot.appendingPathComponent("presence", isDirectory: true)
-        var live: Set<String> = [selfID]
-        for f in (try? fm.contentsOfDirectory(atPath: presenceDir.path)) ?? [] where f.hasSuffix(".json") {
-            live.insert(String(f.dropLast(5)))
-        }
+        let live = retainedPresenceIDs(
+            presenceDir: presenceDir, selfID: selfID, olderThan: olderThan, now: now)
         var removed: [String] = []
         for sub in orphanDirs {
             let dir = sharedRoot.appendingPathComponent(sub, isDirectory: true)
@@ -141,8 +117,7 @@ public enum StaleIdentitySweep {
                 let id = String(f.dropLast(5))
                 if live.contains(id) { continue }
                 let url = dir.appendingPathComponent(f)
-                let mod = (try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? now
-                guard now.timeIntervalSince(mod) > olderThan else { continue }
+                guard isOlderThanRetention(url, olderThan: olderThan, now: now) else { continue }
                 if (try? fm.removeItem(at: url)) != nil { removed.append(sub + "/" + f) }
             }
         }
@@ -153,15 +128,12 @@ public enum StaleIdentitySweep {
     /// `<id>.json` 扫描覆盖。只清理无 presence 且已稳定超过宽限期的整目录。
     static func sweepOrphanQuestionDirectories(
         sharedRoot: URL, selfID: String = Paths.machineID(),
-        olderThan: TimeInterval = 2 * 3600, now: Date = Date()
+        olderThan: TimeInterval = staleMachineRetention, now: Date = Date()
     ) -> [String] {
         let fm = FileManager.default
         let presenceDir = sharedRoot.appendingPathComponent("presence", isDirectory: true)
-        var live: Set<String> = [selfID]
-        for file in (try? fm.contentsOfDirectory(atPath: presenceDir.path)) ?? []
-        where file.hasSuffix(".json") && !file.hasPrefix(".") {
-            live.insert(String(file.dropLast(5)))
-        }
+        let live = retainedPresenceIDs(
+            presenceDir: presenceDir, selfID: selfID, olderThan: olderThan, now: now)
         let questions = sharedRoot.appendingPathComponent("questions", isDirectory: true)
         let directories = (try? fm.contentsOfDirectory(
             at: questions, includingPropertiesForKeys: [.isDirectoryKey],
@@ -181,56 +153,83 @@ public enum StaleIdentitySweep {
         return removed
     }
 
+    private static func retainedPresenceIDs(
+        presenceDir: URL, selfID: String, olderThan: TimeInterval, now: Date
+    ) -> Set<String> {
+        let fm = FileManager.default
+        var retained: Set<String> = [selfID]
+        for file in (try? fm.contentsOfDirectory(
+            at: presenceDir, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])) ?? [] where file.pathExtension == "json" {
+            guard !isOlderThanRetention(file, olderThan: olderThan, now: now) else { continue }
+            retained.insert(file.deletingPathExtension().lastPathComponent)
+        }
+        return retained
+    }
+
+    private static func isOlderThanRetention(
+        _ url: URL, olderThan: TimeInterval, now: Date
+    ) -> Bool {
+        if let record = identity(of: url), record.at != .distantPast {
+            return now.timeIntervalSince(record.at) > olderThan
+        }
+        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]
+                        as? Date) ?? now
+        return now.timeIntervalSince(modified) > olderThan
+    }
+
+    private static func sweepIdentityFiles(
+        in directory: URL, retaining machineIDs: Set<String>,
+        olderThan: TimeInterval, now: Date
+    ) -> Int {
+        let fm = FileManager.default
+        let files = (try? fm.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])) ?? []
+        var removed = 0
+        for file in files where file.pathExtension == "json" {
+            let machineID = file.deletingPathExtension().lastPathComponent
+            guard !machineIDs.contains(machineID),
+                  isOlderThanRetention(file, olderThan: olderThan, now: now) else { continue }
+            if (try? fm.removeItem(at: file)) != nil { removed += 1 }
+        }
+        return removed
+    }
+
     /// 扫所有按机器分文件的共享目录。
     @discardableResult
     public static func run(sharedRoot: URL = Paths.sharedRoot,
                            iCloudRoot: URL? = defaultICloudRoot,
-                           localSnapshotsDir: URL? = Paths.localSnapshotsDir) -> Int {
+                           localSnapshotsDir: URL? = Paths.localSnapshotsDir,
+                           olderThan: TimeInterval = staleMachineRetention,
+                           selfID: String = Paths.machineID()) -> Int {
         var total = 0
-        // dashboard() 同时读取 shared/snapshots 和 appSupport/snapshots。后者是
-        // MirrorService 的本地副本，旧身份即使已经从共享区和 iCloud 删除，仍会
-        // 从这里被汇总成第二台机器。过去的清理器漏了这条真实读路径。
+        let now = Date()
         if let localSnapshotsDir {
-            total += sweepDirNames(localSnapshotsDir).count
-        }
-        // presence 是其它每机文件的唯一存活依据，必须先收敛它。旧顺序先扫
-        // orphan，再淘汰重复 presence，导致刚确认死亡的身份还要再等一轮。
-        let presenceNames = sweepDirNames(
-            sharedRoot.appendingPathComponent("presence", isDirectory: true))
-        total += presenceNames.count
-        if let root = iCloudRoot {
-            for name in presenceNames {
-                try? FileManager.default.removeItem(
-                    at: root.appendingPathComponent("presence").appendingPathComponent(name))
-            }
+            let retained = retainedPresenceIDs(
+                presenceDir: sharedRoot.appendingPathComponent("presence", isDirectory: true),
+                selfID: selfID, olderThan: olderThan, now: now)
+            total += sweepIdentityFiles(
+                in: localSnapshotsDir, retaining: retained,
+                olderThan: olderThan, now: now)
         }
         // 先按 presence 判死活,清没有身份可读的那几类目录(事件流/验收摘要/任务板/快照)。
         // 老板 2026-08-23:「办公室出现了一台未知的机器」—— 旧 ID 的 reviews/office 文件
         // 一直没人清,presence 一清它们就成了无名氏。云端孪生同样要删。
-        let orphans = sweepOrphanNames(sharedRoot: sharedRoot)
+        let orphans = sweepOrphanNames(
+            sharedRoot: sharedRoot, selfID: selfID,
+            olderThan: olderThan, now: now)
         total += orphans.count
-        let orphanQuestionDirs = sweepOrphanQuestionDirectories(sharedRoot: sharedRoot)
+        let orphanQuestionDirs = sweepOrphanQuestionDirectories(
+            sharedRoot: sharedRoot, selfID: selfID,
+            olderThan: olderThan, now: now)
         total += orphanQuestionDirs.count
         if let root = iCloudRoot {
             for rel in orphans + orphanQuestionDirs {
-                try? FileManager.default.removeItem(at: root.appendingPathComponent(rel))
+                _ = ICloudSafe.remove(root.appendingPathComponent(rel))
             }
         }
         total += sanitizeOfficeShards(sharedRoot: sharedRoot)
-        for sub in perMachineDirs where sub != "presence" {
-            let names = sweepDirNames(sharedRoot.appendingPathComponent(sub, isDirectory: true))
-            total += names.count
-            // **云端的孪生也要删。** 镜像对「别人的文件」只拉不删:只删本地,
-            // 下一轮就被从 iCloud 拉回来,云端永远收敛不掉,手机上一直两个 MacBook。
-            // 这些文件早就同步到本地了(是 ~/Library/Mobile Documents 里的普通文件),
-            // removeItem 不触发下载,不会卡。
-            if let root = iCloudRoot {
-                for n in names {
-                    try? FileManager.default.removeItem(
-                        at: root.appendingPathComponent(sub).appendingPathComponent(n))
-                }
-            }
-        }
         return total
     }
 }

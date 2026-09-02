@@ -157,7 +157,7 @@ public enum ViewFeed {
             kind = try c.decode(String.self, forKey: .kind)
             title = try c.decodeIfPresent(String.self, forKey: .title)
             note = try c.decodeIfPresent(String.self, forKey: .note)
-            tone = (try? c.decodeIfPresent(Tone.self, forKey: .tone)) as? Tone ?? .neutral
+            tone = (try? c.decodeIfPresent(Tone.self, forKey: .tone)) ?? .neutral
             text = try c.decodeIfPresent(String.self, forKey: .text)
             meters = try c.decodeIfPresent([Meter].self, forKey: .meters)
             cards = try c.decodeIfPresent([Card].self, forKey: .cards)
@@ -251,7 +251,7 @@ public enum ViewFeed {
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
         guard let d = try? enc.encode(page) else { return false }
-        return (try? d.write(to: url, options: .atomic)) != nil
+        return ICloudSafe.write(d, to: url)
     }
 
     // MARK: - 收动作
@@ -357,7 +357,7 @@ public enum ViewFeed {
                 .suffix(200).map { ($0.key, $0.value) })
         }
         if let d = try? JSONEncoder().encode(m) {
-            try? ICloudSafe.write(d, to: failuresFile)
+            _ = ICloudSafe.write(d, to: failuresFile)
         }
         return n
     }
@@ -487,13 +487,13 @@ extension ViewFeed {
 
         // 机器心跳。超过两轮采集没到就算掉线 —— 一轮可能只是 iCloud 慢了半拍。
         let stale: TimeInterval = 30 * 60
-        let machines = SnapshotStore.loadAll()
+        let machines = dashboard.machines
         if !machines.isEmpty {
             sections.append(Section(
                 kind: "facts", title: "机器心跳",
                 facts: machines.map { m in
-                    let age = now.timeIntervalSince(m.generatedAt)
-                    return Fact(key: m.machineName,
+                    let age = now.timeIntervalSince(m.lastSeen)
+                    return Fact(key: m.displayName,
                                 value: Format.duration(age) + "前",
                                 tone: age > stale ? .warn : .good)
                 }))
@@ -959,11 +959,16 @@ extension ViewFeed {
                 eventKind: "chain", taskID: taskID)
         }
         let registeredAgents = AgentRegistry.all(now: now)
+        let presenceNames = Dictionary(uniqueKeysWithValues:
+            ClusterPresenceStore.all().map { ($0.machineID, $0.displayName) })
         let agentCards = registeredAgents.map { registration in
-            Card(
+            let fallback = Paths.privacySafeMachineLabel(
+                registration.machineName, machineID: registration.machineID)
+            return Card(
                 id: "agent:\(registration.machineID):\(registration.runnerID)",
                 title: actor(registration.runnerID),
-                body: registration.machineName + "\n" + registration.machineID,
+                body: (presenceNames[registration.machineID] ?? fallback)
+                    + "\n" + registration.machineID,
                 detail: registration.platform.displayName + " · "
                     + (registration.canConsult ? "可接收咨询" : "仅执行任务"),
                 tone: registration.canConsult ? .good : .neutral,

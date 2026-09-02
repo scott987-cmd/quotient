@@ -194,7 +194,8 @@ public enum RepoRegistry {
         return list.sorted { $0.alias < $1.alias }
     }
 
-    public static func save(_ list: [RepoAlias], expectedRevision: Int? = nil) throws {
+    public static func save(_ list: [RepoAlias], expectedRevision: Int? = nil,
+                            preserveMissingCoordinator: Bool = true) throws {
         try Paths.ensureDirectories()
         // **保住老版本不认识的字段。**
         //
@@ -220,7 +221,7 @@ public enum RepoRegistry {
                 for (machine, path) in p.pathByMachine where merged[i].pathByMachine[machine] == nil {
                     merged[i].pathByMachine[machine] = path
                 }
-                if merged[i].coordinatorMachineID == nil {
+                if preserveMissingCoordinator, merged[i].coordinatorMachineID == nil {
                     merged[i].coordinatorMachineID = p.coordinatorMachineID
                 }
             }
@@ -376,6 +377,14 @@ public enum Inbox {
         public var repo: String
     }
 
+    /// 旧手机客户端只会在 envelope 里写 machineName。集群里出现两台同名 Mac
+    /// 后，这个选择器已经没有唯一含义；任何一台都不能用“名字碰巧相同”来认领。
+    static func legacyMachineNameIsAmbiguous(
+        _ name: String, presences: [ClusterPresence] = ClusterPresenceStore.all()
+    ) -> Bool {
+        Set(presences.filter { $0.machineName == name }.map(\.machineID)).count > 1
+    }
+
     /// 扫一遍收件箱，把里面的东西变成任务。
     ///
     /// 处理过的文件移到 processed/ 而不是删掉：删了的话手机上会看到文件凭空消失，
@@ -417,13 +426,23 @@ public enum Inbox {
 
             // **点名了别的机器就别碰。** 留在收件箱里让目标机器来抢 ——
             // 既不 park（park 等于替它认领了）也不报错（这不是错）。
-            // 按 machineID 精确匹配，machineName 兜底（老数据只有名字）。
+            // 按 machineID 精确匹配，machineName 只在集群内唯一时兼容。
+            // 两台同名 Mac 若都按名字兜底，会同时摄入同一个请求；即使下游幂等
+            // 最终只留一条，Owner/仓库归属已经不可审计，因此直接给手机可见失败。
             if let want = env.machineID, !want.isEmpty, want != Paths.machineID() {
                 continue
             }
-            if env.machineID == nil, let wantName = env.machineName,
-               !wantName.isEmpty, wantName != Paths.machineName() {
-                continue
+            if env.machineID == nil, let wantName = env.machineName, !wantName.isEmpty {
+                if legacyMachineNameIsAmbiguous(wantName) {
+                    let requestID = url.deletingPathExtension().lastPathComponent
+                    writeResult(
+                        taskID: requestID, state: "failed",
+                        note: "目标机器名「\(wantName)」对应多台电脑；请刷新后用稳定机器 ID 重投。",
+                        prompt: env.prompt)
+                    park(url, to: doneDir, suffix: "ambiguous-machine")
+                    continue
+                }
+                if wantName != Paths.machineName() { continue }
             }
 
             guard let repo = RepoRegistry.resolve(env.repo) else {

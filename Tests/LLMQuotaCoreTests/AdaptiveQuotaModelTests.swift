@@ -130,4 +130,81 @@ final class AdaptiveQuotaModelTests: XCTestCase {
                        "撞顶只能补充硬下界，不能把更完整的校准证据降级成 ceiling")
         XCTAssertEqual(learned.confidence, 0.95, accuracy: 0.001)
     }
+
+    func testLearningRecordsAndRuntimeLimitsStayInsideQuotaPool() throws {
+        _ = AdaptiveQuotaModel.update(
+            estimates: [estimate(value: 100)], ceilings: [],
+            now: Date(timeIntervalSince1970: 1_000),
+            quotaPoolIDs: [.qwen: "qwen-a"])
+        let records = AdaptiveQuotaModel.update(
+            estimates: [estimate(value: 200)], ceilings: [],
+            now: Date(timeIntervalSince1970: 2_000),
+            quotaPoolIDs: [.qwen: "qwen-b"])
+        XCTAssertEqual(records.count, 2, "两份订阅不能共享同一条学习记录")
+
+        let baseLimit = QuotaLimit(
+            id: "5h", label: "5 小时", windowMinutes: 300,
+            kind: .session, metric: .requests)
+        let config = PlansConfig(
+            plans: [PlatformPlan(platform: .qwen, planName: "Qwen", limits: [baseLimit])],
+            quotaPools: [
+                QuotaPoolBinding(poolID: "qwen-a", platform: .qwen,
+                                 machineID: "machine-a"),
+                QuotaPoolBinding(poolID: "qwen-b", platform: .qwen,
+                                 machineID: "machine-b"),
+            ])
+        Paths.machineIDOverride = "machine-b"
+        defer { Paths.machineIDOverride = nil }
+        let applied = AdaptiveQuotaModel.applying(
+            to: config, now: Date(timeIntervalSince1970: 2_100))
+        XCTAssertNil(applied.plan(for: .qwen, quotaPoolID: "qwen-a")?.limits[0].limit)
+        XCTAssertEqual(applied.plan(for: .qwen, quotaPoolID: "qwen-b")?.limits[0].limit, 200)
+    }
+
+    func testSyntheticDefaultPoolLearningStillUpdatesLegacyPlan() {
+        _ = AdaptiveQuotaModel.update(
+            estimates: [estimate(value: 160)], ceilings: [],
+            now: Date(timeIntervalSince1970: 1_000),
+            quotaPoolIDs: [.qwen: "qwen:default"])
+        let config = PlansConfig(plans: [PlatformPlan(
+            platform: .qwen, planName: "Qwen",
+            limits: [QuotaLimit(id: "5h", label: "5 小时", windowMinutes: 300,
+                                kind: .session, metric: .requests)])])
+
+        let applied = AdaptiveQuotaModel.applying(
+            to: config, now: Date(timeIntervalSince1970: 1_100))
+        XCTAssertEqual(applied.plans[0].limits[0].limit, 160,
+                       "未显式分池的旧套餐也必须继续吸收自动学习结果")
+    }
+
+    func testSharedPoolLearningKeepsOnlyOneLimitOverride() throws {
+        _ = AdaptiveQuotaModel.update(
+            estimates: [estimate(value: 180)], ceilings: [],
+            now: Date(timeIntervalSince1970: 1_000),
+            quotaPoolIDs: [.qwen: "shared-qwen"])
+        let baseLimit = QuotaLimit(
+            id: "5h", label: "5 小时", windowMinutes: 300,
+            kind: .session, metric: .requests)
+        let config = PlansConfig(
+            plans: [PlatformPlan(
+                platform: .qwen, planName: "Qwen", limits: [baseLimit])],
+            quotaPools: [
+                QuotaPoolBinding(poolID: "shared-qwen", platform: .qwen,
+                                 machineID: "machine-a"),
+                QuotaPoolBinding(poolID: "shared-qwen", platform: .qwen,
+                                 machineID: "machine-b"),
+            ])
+        Paths.machineIDOverride = "machine-b"
+        defer { Paths.machineIDOverride = nil }
+
+        let applied = AdaptiveQuotaModel.applying(
+            to: config, now: Date(timeIntervalSince1970: 1_100))
+        let sharedBindings = try XCTUnwrap(applied.quotaPools).filter {
+            $0.platform == .qwen && $0.poolID == "shared-qwen"
+        }
+        XCTAssertEqual(sharedBindings.filter { $0.limits != nil }.count, 1,
+                       "一份订阅只能有一份窗口 override，机器绑定不能复制它")
+        XCTAssertEqual(applied.plan(for: .qwen, quotaPoolID: "shared-qwen")?
+            .limits.first?.limit, 180)
+    }
 }

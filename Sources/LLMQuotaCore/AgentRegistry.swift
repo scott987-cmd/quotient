@@ -8,6 +8,8 @@ public struct AgentRegistration: Codable, Sendable, Equatable {
     public var machineName: String
     public var runnerID: String
     public var platform: Platform
+    /// 该执行器实际消费的订阅池。跨机选路不能只按 platform 合并额度。
+    public var quotaPoolID: String?
     public var canConsult: Bool
     /// 下面这些都是接收机器自报的执行事实。跨机路由不能拿“本机同名
     /// Runner”的能力去猜另一台机器，也不能只凭额度看板猜它装没装。
@@ -29,7 +31,7 @@ public struct AgentRegistration: Codable, Sendable, Equatable {
     public var updatedAt: Date
 
     public init(machineID: String, machineName: String, runnerID: String,
-                platform: Platform, canConsult: Bool,
+                platform: Platform, quotaPoolID: String? = nil, canConsult: Bool,
                 canEdit: Bool = false, canReadFiles: Bool = false,
                 mediaOnly: Bool = false, reviewOnly: Bool = false,
                 canSeeMedia: Bool = false,
@@ -41,6 +43,7 @@ public struct AgentRegistration: Codable, Sendable, Equatable {
                 updatedAt: Date = Date()) {
         schemaVersion = 2; self.machineID = machineID; self.machineName = machineName
         self.runnerID = runnerID; self.platform = platform
+        self.quotaPoolID = quotaPoolID
         self.canConsult = canConsult; self.canEdit = canEdit
         self.canReadFiles = canReadFiles; self.mediaOnly = mediaOnly
         self.reviewOnly = reviewOnly; self.canSeeMedia = canSeeMedia
@@ -58,6 +61,7 @@ public struct AgentRegistration: Codable, Sendable, Equatable {
         machineName = try c.decodeIfPresent(String.self, forKey: .machineName) ?? "?"
         runnerID = try c.decodeIfPresent(String.self, forKey: .runnerID) ?? "unknown"
         platform = try c.decodeIfPresent(Platform.self, forKey: .platform) ?? .codex
+        quotaPoolID = try c.decodeIfPresent(String.self, forKey: .quotaPoolID)
         canConsult = try c.decodeIfPresent(Bool.self, forKey: .canConsult) ?? false
         canEdit = try c.decodeIfPresent(Bool.self, forKey: .canEdit) ?? false
         canReadFiles = try c.decodeIfPresent(Bool.self, forKey: .canReadFiles) ?? false
@@ -109,11 +113,17 @@ public enum AgentRegistry {
         let registrations = runners.filter { !$0.platform.isRetired && $0.isAvailable }.map {
             let role = AgentRoles.role(for: $0.platform)
             let quota = quotaFacts(for: $0.platform, dashboard: dashboard, now: now)
+            let platform = $0.platform
+            let quotaPoolID = dashboard.reports.first {
+                $0.platform == platform
+            }?.localQuotaPoolID
             let cooldown = CooldownLedger.active(
                 platform: $0.platform, runnerID: $0.runnerID,
-                capability: PlatformHealth.capability(for: $0).rawValue, now: now)
+                capability: PlatformHealth.capability(for: $0).rawValue,
+                quotaPoolID: quotaPoolID, now: now)
             return AgentRegistration(machineID: machineID, machineName: machineName,
                               runnerID: $0.runnerID, platform: $0.platform,
+                              quotaPoolID: quotaPoolID,
                               canConsult: AgentConsultation.supportsReadOnlyConsultation($0),
                               canEdit: $0.canEdit, canReadFiles: $0.canReadFiles,
                               mediaOnly: $0.mediaOnly, reviewOnly: $0.reviewOnly,
@@ -166,12 +176,13 @@ public enum AgentRegistry {
         guard let report = dashboard.reports.first(where: { $0.platform == platform }) else {
             return (nil, nil)
         }
-        if let exhausted = report.statuses.first(where: {
+        let statuses = report.localQuotaStatuses
+        if let exhausted = statuses.first(where: {
             $0.isFresh(now: now) && $0.health == .exhausted && !$0.advisory
         }) {
             return (0, "\(exhausted.label)额度已用尽")
         }
-        let configured = report.statuses.compactMap { status -> (QuotaStatus, Double)? in
+        let configured = statuses.compactMap { status -> (QuotaStatus, Double)? in
             guard !status.advisory, status.isFresh(now: now),
                   let used = status.usedFraction else { return nil }
             return (status, used)

@@ -220,7 +220,7 @@ final class ContextPackTests: XCTestCase {
         downstream.dependsOn = ["t1"]
         downstream.state = .done
         downstream.outputs = ["fire-rate.md"]
-        var all: [WorkTask] = [source, downstream, review]
+        let all: [WorkTask] = [source, downstream, review]
         try publishEvent(id: "q-hold", project: repoA, taskID: nil,
                          sender: "human", kind: .question,
                          summary: "QHOLD-导出按钮这轮到底保不保留")
@@ -728,9 +728,6 @@ final class ContextPackTests: XCTestCase {
     /// 文本 Runner 读不了引用：依赖语义装不下时必须派发前拒绝。
     func testTextRunnerRefusedWhenDependencySemanticsCannotFit() throws {
         let probe = task("probe", prompt: "探针", repo: repoA)
-        let contracts = build(task: probe, all: [probe], runnerID: "claude.code",
-                              platform: .claude, canReadFiles: true)
-            .manifest.charactersBySection["contracts"] ?? 623
 
         var upstream = task("t-up", prompt: "上游步骤的标题比较长一点", repo: repoA)
         upstream.state = .done

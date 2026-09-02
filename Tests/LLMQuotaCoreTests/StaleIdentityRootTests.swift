@@ -27,10 +27,14 @@ final class StaleIdentityRootTests: XCTestCase {
             let obj: [String: Any] = ["machineID": id, "machineName": name, "updatedAt": at]
             try JSONSerialization.data(withJSONObject: obj).write(to: dir.appendingPathComponent(id + ".json"))
         }
-        // 同名两份:OLD 旧、NEW 新;两边目录都有。
+        let iso = ISO8601DateFormatter()
+        let oldStamp = iso.string(from: Date().addingTimeInterval(
+            -(StaleIdentitySweep.staleMachineRetention + 3600)))
+        let newStamp = iso.string(from: Date())
+        // 同名两份:OLD 超过保留期、NEW 刚更新;两边目录都有。
         for d in [local, cloud] {
-            try write(d, "OLD", "MacBook Pro", "2026-08-22T23:00:00Z")
-            try write(d, "NEW", "MacBook Pro", "2026-08-23T05:00:00Z")
+            try write(d, "OLD", "MacBook Pro", oldStamp)
+            try write(d, "NEW", "MacBook Pro", newStamp)
         }
         let n = StaleIdentitySweep.run(sharedRoot: base.appendingPathComponent("local"),
                                        iCloudRoot: base.appendingPathComponent("cloud"),
@@ -59,8 +63,10 @@ final class StaleIdentityRootTests: XCTestCase {
             try JSONSerialization.data(withJSONObject: obj)
                 .write(to: localSnapshots.appendingPathComponent(id + ".json"))
         }
-        try write("D127-OLD", "2026-08-22T23:00:00Z")
-        try write("9FBD-NEW", "2026-09-01T12:00:00Z")
+        let iso = ISO8601DateFormatter()
+        try write("D127-OLD", iso.string(from: Date().addingTimeInterval(
+            -(StaleIdentitySweep.staleMachineRetention + 3600))))
+        try write("9FBD-NEW", iso.string(from: Date()))
 
         _ = StaleIdentitySweep.run(
             sharedRoot: Paths.sharedRoot, iCloudRoot: nil,
@@ -71,5 +77,35 @@ final class StaleIdentityRootTests: XCTestCase {
             "看板读取的是 appSupport/snapshots；只扫 shared/snapshots 会让旧机器永久展示")
         XCTAssertTrue(fm.fileExists(
             atPath: localSnapshots.appendingPathComponent("9FBD-NEW.json").path))
+    }
+
+    func test_云端独有的旧身份被镜像拉回后仍能一次收敛() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            "cloud-only-stale-\(UUID().uuidString)")
+        let local = base.appendingPathComponent("local", isDirectory: true)
+        let cloud = base.appendingPathComponent("cloud", isDirectory: true)
+        defer { try? fm.removeItem(at: base) }
+        SharedLayout.ensure(at: local)
+        SharedLayout.ensure(at: cloud)
+
+        let stale = #"{"machineID":"DEAD","machineName":"MacBook Pro","updatedAt":"2025-01-01T00:00:00Z"}"#
+        let cloudPresence = cloud.appendingPathComponent("presence/DEAD.json")
+        try stale.write(to: cloudPresence, atomically: true, encoding: .utf8)
+
+        _ = MirrorService.sync(
+            local: local, cloud: cloud, selfMachineID: "ME",
+            now: Date(timeIntervalSince1970: 1_788_000_000))
+        let localPresence = local.appendingPathComponent("presence/DEAD.json")
+        XCTAssertTrue(fm.fileExists(atPath: localPresence.path),
+                      "镜像会先把云端独有分片拉回本地")
+
+        _ = StaleIdentitySweep.run(
+            sharedRoot: local, iCloudRoot: cloud, localSnapshotsDir: nil,
+            olderThan: 2 * 3600, selfID: "ME")
+
+        XCTAssertFalse(fm.fileExists(atPath: localPresence.path))
+        XCTAssertFalse(fm.fileExists(atPath: cloudPresence.path),
+                       "云端孪生必须同步删除，否则下一轮还会复活")
     }
 }

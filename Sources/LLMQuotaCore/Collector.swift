@@ -460,6 +460,63 @@ public enum Paths {
             .first { $0.count == 36 && $0.filter { $0 == "-" }.count == 4 }
     }
 
+    /// 只用于展示设备型号，不把 macOS 本地“某某的 MacBook”里的用户姓名显示
+    /// 在手机或其它界面。内部仍保留原始 machineName 兼容历史路径和角色绑定，
+    /// 稳定身份由 machineID / cluster nodeName 负责。
+    public static func privacySafeMachineName(_ raw: String) -> String {
+        let compact = raw.lowercased().filter { $0.isLetter || $0.isNumber }
+        if compact.contains("macbookpro") { return "MacBook Pro" }
+        if compact.contains("macbookair") { return "MacBook Air" }
+        if compact.contains("macmini") { return "Mac mini" }
+        if compact.contains("macstudio") { return "Mac Studio" }
+        if compact.contains("macpro") { return "Mac Pro" }
+        if compact.contains("imac") { return "iMac" }
+        return "Mac"
+    }
+
+    /// 供界面使用的匿名且可区分机器标签。取稳定 ID 的尾部是为了避免
+    /// `machine-A` / `machine-B` 这类共享长前缀的身份仍显示成同一个后缀。
+    public static func privacySafeMachineLabel(_ raw: String, machineID: String) -> String {
+        let base = privacySafeMachineName(raw)
+        let compactID = machineID.filter { $0.isLetter || $0.isNumber }
+        guard !compactID.isEmpty else { return base }
+        return base + " · " + String(compactID.suffix(8)).uppercased()
+    }
+
+    /// 节点名是路由身份，不天然等于可公开显示名。用户可能沿用
+    /// `username-macbook-pro`，直接把 nodeName 放进手机/协作流仍会泄露姓名。
+    /// 安全的 ASCII 别名原样显示；疑似带本机登录名、电脑所有者前缀或非 ASCII
+    /// 内容时，退回“机型 + 稳定 ID”，不改协议里的真实 nodeName。
+    public static func privacySafeMachineDisplayName(
+        nodeName: String?, machineName: String, machineID: String
+    ) -> String {
+        guard let rawNode = nodeName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawNode.isEmpty else {
+            return privacySafeMachineLabel(machineName, machineID: machineID)
+        }
+        let asciiOnly = rawNode.unicodeScalars.allSatisfy { $0.value < 128 }
+        let compactNode = rawNode.lowercased().filter { $0.isLetter || $0.isNumber }
+        let loginNames = [NSUserName(), ProcessInfo.processInfo.environment["USER"],
+                          ProcessInfo.processInfo.environment["LOGNAME"]]
+            .compactMap { $0?.lowercased().filter { $0.isLetter || $0.isNumber } }
+            .filter { $0.count >= 3 }
+        let deviceMarkers = ["macbook", "mac mini", "macmini", "mac studio",
+                             "macstudio", "mac pro", "macpro", "imac"]
+        let lowerMachine = machineName.lowercased()
+        let markerStart = deviceMarkers.compactMap {
+            lowerMachine.range(of: $0)?.lowerBound
+        }.min()
+        let ownerPrefix = markerStart.map {
+            String(lowerMachine[..<$0]).filter { $0.isLetter || $0.isNumber }
+        } ?? ""
+        let containsOwner = loginNames.contains { compactNode.contains($0) }
+            || (ownerPrefix.count >= 3 && compactNode.contains(ownerPrefix))
+        guard asciiOnly, !containsOwner else {
+            return privacySafeMachineLabel(machineName, machineID: machineID)
+        }
+        return rawNode
+    }
+
     public static func machineName() -> String {
         Host.current().localizedName ?? ProcessInfo.processInfo.hostName
     }
@@ -508,10 +565,13 @@ public final class Collector {
     public static let retentionDays = 32
 
     private let adapters: [UsageAdapter]
+    private let quotaConfig: PlansConfig
     private let fm = FileManager.default
 
-    public init(adapters: [UsageAdapter] = AdapterRegistry.all) {
+    public init(adapters: [UsageAdapter] = AdapterRegistry.all,
+                quotaConfig: PlansConfig? = nil) {
         self.adapters = adapters
+        self.quotaConfig = quotaConfig ?? PlansStore.load()
     }
 
     public func collect(now: Date = Date()) throws -> CollectResult {
@@ -641,7 +701,9 @@ public final class Collector {
                     platform: platform, detected: false, installed: installed,
                     note: installed
                         ? "已安装，但最近 \(Self.retentionDays) 天没有用量"
-                        : (notes[platform] ?? "本机未检测到数据源")
+                        : (notes[platform] ?? "本机未检测到数据源"),
+                    quotaPoolID: quotaConfig.quotaPoolID(
+                        for: platform, machineID: Paths.machineID())
                 ))
                 continue
             }
@@ -654,7 +716,9 @@ public final class Collector {
                 buckets: buckets.values.sorted { $0.start < $1.start },
                 officialQuotas: quotas,
                 lastActivity: lastActivity,
-                note: notes[platform]
+                note: notes[platform],
+                quotaPoolID: quotaConfig.quotaPoolID(
+                    for: platform, machineID: Paths.machineID())
             ))
         }
 

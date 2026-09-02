@@ -196,21 +196,192 @@ public struct PlatformPlan: Codable, Sendable {
     }
 }
 
+/// 一份真实订阅/凭据对应的额度池。
+///
+/// `Platform` 只说明调用哪家服务，不能充当账号身份。同一平台在不同机器上
+/// 可以配置不同订阅；反过来，多台机器也可能共用同一订阅。只有 poolID 相同
+/// 才允许聚合额度与冷却状态。
+public struct QuotaPoolBinding: Codable, Sendable {
+    public var poolID: String
+    public var platform: Platform
+    public var displayName: String?
+    public var machineID: String?
+    public var runnerID: String?
+    /// 该订阅与平台默认套餐不同时，只覆盖这份池的窗口上限。
+    public var limits: [QuotaLimit]?
+
+    public init(poolID: String, platform: Platform, displayName: String? = nil,
+                machineID: String? = nil, runnerID: String? = nil,
+                limits: [QuotaLimit]? = nil) {
+        self.poolID = poolID
+        self.platform = platform
+        self.displayName = displayName
+        self.machineID = machineID
+        self.runnerID = runnerID
+        self.limits = limits
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case poolID, platform, displayName, machineID, runnerID, limits
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        poolID = try c.decodeIfPresent(String.self, forKey: .poolID) ?? ""
+        platform = try c.decodeIfPresent(Platform.self, forKey: .platform) ?? .codex
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        machineID = try c.decodeIfPresent(String.self, forKey: .machineID)
+        runnerID = try c.decodeIfPresent(String.self, forKey: .runnerID)
+        limits = try c.decodeIfPresent([QuotaLimit].self, forKey: .limits)
+    }
+}
+
 public struct PlansConfig: Codable, Sendable {
     public var plans: [PlatformPlan]
     /// 用量低于这个比例且窗口已过半，就判为"正在浪费"。
     public var wasteThreshold: Double
     /// 预测用量超过这个比例，就判为"有超额风险"。
     public var riskThreshold: Double
+    /// 订阅/凭据身份映射。nil 是旧配置，按平台共用一个 legacy 池处理。
+    public var quotaPools: [QuotaPoolBinding]?
 
-    public init(plans: [PlatformPlan], wasteThreshold: Double = 0.6, riskThreshold: Double = 0.95) {
+    public init(plans: [PlatformPlan], wasteThreshold: Double = 0.6,
+                riskThreshold: Double = 0.95,
+                quotaPools: [QuotaPoolBinding]? = nil) {
         self.plans = plans
         self.wasteThreshold = wasteThreshold
         self.riskThreshold = riskThreshold
+        self.quotaPools = quotaPools
     }
 
     public func plan(for platform: Platform) -> PlatformPlan? {
         plans.first { $0.platform == platform }
+    }
+
+    public func hasExplicitQuotaPool(for platform: Platform) -> Bool {
+        (quotaPools ?? []).contains {
+            $0.platform == platform
+                && !$0.poolID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    public func isSyntheticDefaultPool(_ poolID: String, for platform: Platform) -> Bool {
+        !hasExplicitQuotaPool(for: platform) && poolID == "\(platform.rawValue):default"
+    }
+
+    /// 找到某个真实执行器消费的额度池。越具体的绑定优先；没有配置时保持
+    /// 历史语义，同平台所有机器共用一个池。
+    public func quotaPoolID(for platform: Platform, machineID: String,
+                            runnerID: String? = nil) -> String {
+        let candidates = (quotaPools ?? []).filter {
+            $0.platform == platform && !$0.poolID.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        func score(_ item: QuotaPoolBinding) -> Int? {
+            if let boundMachine = item.machineID, boundMachine != machineID { return nil }
+            if let boundRunner = item.runnerID, boundRunner != runnerID { return nil }
+            return (item.machineID == nil ? 0 : 2) + (item.runnerID == nil ? 0 : 1)
+        }
+        return candidates.compactMap { item -> (QuotaPoolBinding, Int)? in
+            score(item).map { (item, $0) }
+        }.max { lhs, rhs in
+            if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
+            // 已经落盘的旧坏配置也必须稳定读取，不能让 JSON 数组顺序改变额度归属。
+            return lhs.0.poolID < rhs.0.poolID
+        }?.0.poolID
+            ?? "\(platform.rawValue):default"
+    }
+
+    /// 同一个平台、机器和 runner 选择器只能指向一个真实额度池。
+    ///
+    /// 同一 pool 可写多条（例如多台机器共用订阅）；冲突仅指完全相同的选择器
+    /// 被指向多个 pool。更宽泛的默认绑定和更具体的机器/runner 绑定可以共存，
+    /// 由上面的 specificity 规则决定。
+    public func quotaPoolBindingConflicts() -> [String] {
+        struct Selector: Hashable {
+            let platform: Platform
+            let machineID: String?
+            let runnerID: String?
+        }
+        func normalized(_ value: String?) -> String? {
+            guard let value else { return nil }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        var poolsBySelector: [Selector: Set<String>] = [:]
+        for binding in quotaPools ?? [] where !binding.platform.isRetired {
+            let poolID = binding.poolID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !poolID.isEmpty else { continue }
+            let selector = Selector(
+                platform: binding.platform,
+                machineID: normalized(binding.machineID),
+                runnerID: normalized(binding.runnerID))
+            poolsBySelector[selector, default: []].insert(poolID)
+        }
+        return poolsBySelector.compactMap { selector, pools in
+            guard pools.count > 1 else { return nil }
+            return "\(selector.platform.rawValue) / machine="
+                + "\(selector.machineID ?? "*") / runner=\(selector.runnerID ?? "*")"
+                + " 同时绑定到 [\(pools.sorted().joined(separator: ", "))]"
+        }.sorted()
+    }
+
+    public func quotaPoolDisplayName(for platform: Platform, poolID: String) -> String {
+        (quotaPools ?? []).first {
+            $0.platform == platform && $0.poolID == poolID
+                && !($0.displayName ?? "").isEmpty
+        }?.displayName ?? poolID
+    }
+
+    public func plan(for platform: Platform, quotaPoolID: String) -> PlatformPlan? {
+        guard var result = plan(for: platform) else { return nil }
+        if let override = (quotaPools ?? []).first(where: {
+            $0.platform == platform && $0.poolID == quotaPoolID && $0.limits != nil
+        })?.limits {
+            result.limits = override
+        }
+        return result
+    }
+
+    /// 把人工校准值写进一份真实订阅，而不是平台公共套餐。
+    ///
+    /// 同一个 poolID 可由多台机器共享，窗口定义只在其中一条绑定上保存，
+    /// 其余绑定只负责身份映射。没有显式额度池的旧配置继续写平台默认值。
+    @discardableResult
+    public mutating func setQuotaLimit(
+        platform: Platform, poolID: String?, limitID: String,
+        limit: Double, hint: String
+    ) -> Bool {
+        guard let planIndex = plans.firstIndex(where: { $0.platform == platform }) else {
+            return false
+        }
+        let poolIndices = (quotaPools ?? []).indices.filter {
+            quotaPools?[$0].platform == platform && quotaPools?[$0].poolID == poolID
+        }
+        guard !poolIndices.isEmpty, let poolID else {
+            guard let limitIndex = plans[planIndex].limits.firstIndex(where: {
+                $0.id == limitID
+            }) else { return false }
+            plans[planIndex].limits[limitIndex].limit = limit
+            plans[planIndex].limits[limitIndex].hint = hint
+            return true
+        }
+
+        var limits = plan(for: platform, quotaPoolID: poolID)?.limits
+            ?? plans[planIndex].limits
+        guard let limitIndex = limits.firstIndex(where: { $0.id == limitID }) else {
+            return false
+        }
+        limits[limitIndex].limit = limit
+        limits[limitIndex].hint = hint
+        // 如果旧数据里同一池意外保存了多份 override，在这里顺手收敛成一份，
+        // 避免数组顺序决定到底读到哪一个值。
+        let keeper = poolIndices.first(where: { quotaPools?[$0].limits != nil })
+            ?? poolIndices[0]
+        for index in poolIndices {
+            quotaPools?[index].limits = index == keeper ? limits : nil
+        }
+        return true
     }
 
     /// 生成一份包含全部平台的模板。
@@ -220,7 +391,16 @@ public struct PlansConfig: Codable, Sendable {
     /// 没填上限时工具仍然统计用量和活跃度，只是不显示剩余百分比。
     /// 有几条上限是真填了值的。用来判断「这份配置是不是空模板」。
     public var filledLimitCount: Int {
-        plans.reduce(0) { $0 + $1.limits.filter { $0.limit != nil }.count }
+        let defaults = plans.reduce(0) {
+            $0 + $1.limits.filter { $0.limit != nil }.count
+        }
+        var seen: Set<String> = []
+        let poolOverrides = (quotaPools ?? []).reduce(0) { total, binding in
+            let key = "\(binding.platform.rawValue)|\(binding.poolID)"
+            guard seen.insert(key).inserted else { return total }
+            return total + (binding.limits ?? []).filter { $0.limit != nil }.count
+        }
+        return defaults + poolOverrides
     }
 
     public static func template() -> PlansConfig {
@@ -561,6 +741,58 @@ public struct QuotaStatus: Codable, Sendable, Identifiable {
     }
 }
 
+/// 同一平台下的一份订阅额度。新旧 Mac 会互相读取看板，所以即使整个结构
+/// 是新加的，也显式容忍后续版本缺字段。
+public struct QuotaPoolReport: Codable, Sendable, Identifiable {
+    public var poolID: String
+    public var displayName: String
+    public var machineIDs: [String]
+    public var machines: [String]
+    public var detected: Bool
+    public var installed: Bool
+    public var lastActivity: Date?
+    public var statuses: [QuotaStatus]
+    public var cooldownUntil: Date?
+    public var cooldownReason: String?
+
+    public var id: String { poolID }
+
+    public init(poolID: String, displayName: String, machineIDs: [String],
+                machines: [String], detected: Bool, installed: Bool,
+                lastActivity: Date?, statuses: [QuotaStatus],
+                cooldownUntil: Date? = nil, cooldownReason: String? = nil) {
+        self.poolID = poolID
+        self.displayName = displayName
+        self.machineIDs = machineIDs
+        self.machines = machines
+        self.detected = detected
+        self.installed = installed
+        self.lastActivity = lastActivity
+        self.statuses = statuses
+        self.cooldownUntil = cooldownUntil
+        self.cooldownReason = cooldownReason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case poolID, displayName, machineIDs, machines, detected, installed
+        case lastActivity, statuses, cooldownUntil, cooldownReason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        poolID = try c.decodeIfPresent(String.self, forKey: .poolID) ?? ""
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName) ?? poolID
+        machineIDs = try c.decodeIfPresent([String].self, forKey: .machineIDs) ?? []
+        machines = try c.decodeIfPresent([String].self, forKey: .machines) ?? []
+        detected = try c.decodeIfPresent(Bool.self, forKey: .detected) ?? false
+        installed = try c.decodeIfPresent(Bool.self, forKey: .installed) ?? false
+        lastActivity = try c.decodeIfPresent(Date.self, forKey: .lastActivity)
+        statuses = try c.decodeIfPresent([QuotaStatus].self, forKey: .statuses) ?? []
+        cooldownUntil = try c.decodeIfPresent(Date.self, forKey: .cooldownUntil)
+        cooldownReason = try c.decodeIfPresent(String.self, forKey: .cooldownReason)
+    }
+}
+
 /// 一个平台的汇总视图。
 public struct PlatformReport: Codable, Sendable, Identifiable {
     public var platform: Platform
@@ -609,6 +841,11 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
     /// 关掉的平台不该出现在「办公室」和「员工」里 —— 比如 Gemini，
     /// 账号被平台方停了之后已经用不了，还画一个打盹的小人在那儿纯属噪音。
     public var enabled: Bool = true
+    /// 安装这个平台的稳定机器身份。`machines` 只保留给旧客户端和人类展示；
+    /// 两台电脑允许同名，跨端关联必须优先使用这里的 machineID。
+    ///
+    /// 可选是为了让新 Mac 继续读取没有该字段的旧 dashboard 快照。
+    public var machineIDs: [String]?
     public var machines: [String]
     public var lastActivity: Date?
     public var statuses: [QuotaStatus]
@@ -639,6 +876,10 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
     /// 把它显示成「在漏的」，会让人去给一个正在限流的平台塞更多活。
     public var cooldownUntil: Date?
     public var cooldownReason: String?
+    /// 同平台存在多份订阅时的真实额度分组。旧看板没有该字段，继续读取上面的
+    /// 聚合 statuses；新调度器必须读取本机对应池，不能拿平台聚合值做决定。
+    public var quotaPools: [QuotaPoolReport]?
+    public var localQuotaPoolID: String?
 
     public var id: String { platform.rawValue }
 
@@ -653,6 +894,16 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         }
     }
 
+    public func quotaPool(id: String) -> QuotaPoolReport? {
+        quotaPools?.first { $0.poolID == id }
+    }
+
+    public var localQuotaStatuses: [QuotaStatus] {
+        guard let localQuotaPoolID,
+              let pool = quotaPool(id: localQuotaPoolID) else { return statuses }
+        return pool.statuses
+    }
+
     public init(
         platform: Platform,
         planName: String,
@@ -665,6 +916,7 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         lastHumanActivityHere: Date? = nil,
         agentName: String = "",
         agentBinary: String = "",
+        machineIDs: [String]? = nil,
         machines: [String],
         lastActivity: Date?,
         statuses: [QuotaStatus],
@@ -674,7 +926,9 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         topModels: [ModelUsage],
         idleWindows: [WasteMeter.Report] = [],
         cooldownUntil: Date? = nil,
-        cooldownReason: String? = nil
+        cooldownReason: String? = nil,
+        quotaPools: [QuotaPoolReport]? = nil,
+        localQuotaPoolID: String? = nil
     ) {
         self.platform = platform
         self.planName = planName
@@ -694,6 +948,7 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         self.agentName = agentName.isEmpty ? AgentIdentity.name(for: platform) : agentName
         self.agentBinary = agentBinary.isEmpty
             ? AgentIdentity.binaryName(for: platform) : agentBinary
+        self.machineIDs = machineIDs
         self.machines = machines
         self.lastActivity = lastActivity
         self.statuses = statuses
@@ -704,6 +959,8 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
         self.idleWindows = idleWindows
         self.cooldownUntil = cooldownUntil
         self.cooldownReason = cooldownReason
+        self.quotaPools = quotaPools
+        self.localQuotaPoolID = localQuotaPoolID
     }
 }
 
@@ -951,16 +1208,28 @@ public struct MachineInfo: Codable, Sendable, Hashable, Identifiable {
     public var repoAliases: [String]
     public var automaticRepoAliases: [String]
     public var runningRepoAliases: [String]
+    public var coordinatorState: String?
+    public var coordinatorSummary: String?
+    public var coordinatorUpdatedAt: Date?
     public var lastSeen: Date
     /// 快照太久没更新，说明那台机器没在跑采集。
     public var isStale: Bool
 
     public var id: String { machineID }
 
+    /// 人看到的稳定名称。配置过节点名时直接使用；旧数据没有节点名时用
+    /// 隐私安全的机型加短硬件 ID，避免两台同型号机器再次混成一台。
+    public var displayName: String {
+        Paths.privacySafeMachineDisplayName(
+            nodeName: nodeName, machineName: machineName, machineID: machineID)
+    }
+
     public init(machineID: String, machineName: String, nodeName: String? = nil,
                 maxConcurrentTasks: Int = 0, runningTaskCount: Int = 0,
                 repoAliases: [String] = [], automaticRepoAliases: [String] = [],
                 runningRepoAliases: [String] = [],
+                coordinatorState: String? = nil, coordinatorSummary: String? = nil,
+                coordinatorUpdatedAt: Date? = nil,
                 lastSeen: Date, isStale: Bool) {
         self.machineID = machineID
         self.machineName = machineName
@@ -970,6 +1239,9 @@ public struct MachineInfo: Codable, Sendable, Hashable, Identifiable {
         self.repoAliases = repoAliases
         self.automaticRepoAliases = automaticRepoAliases
         self.runningRepoAliases = runningRepoAliases
+        self.coordinatorState = coordinatorState
+        self.coordinatorSummary = coordinatorSummary
+        self.coordinatorUpdatedAt = coordinatorUpdatedAt
         self.lastSeen = lastSeen
         self.isStale = isStale
     }
@@ -988,6 +1260,9 @@ public struct MachineInfo: Codable, Sendable, Hashable, Identifiable {
             [String].self, forKey: .automaticRepoAliases) ?? []
         runningRepoAliases = try c.decodeIfPresent(
             [String].self, forKey: .runningRepoAliases) ?? []
+        coordinatorState = try c.decodeIfPresent(String.self, forKey: .coordinatorState)
+        coordinatorSummary = try c.decodeIfPresent(String.self, forKey: .coordinatorSummary)
+        coordinatorUpdatedAt = try c.decodeIfPresent(Date.self, forKey: .coordinatorUpdatedAt)
         lastSeen = try c.decode(Date.self, forKey: .lastSeen)
         isStale = try c.decode(Bool.self, forKey: .isStale)
     }

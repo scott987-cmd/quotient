@@ -423,6 +423,9 @@ final class TaskBoardTests: XCTestCase {
         obj.removeValue(forKey: "tasksTruncated")
         if var machines = obj["machines"] as? [[String: Any]], !machines.isEmpty {
             machines[0].removeValue(forKey: "nodeName")
+            machines[0].removeValue(forKey: "coordinatorState")
+            machines[0].removeValue(forKey: "coordinatorSummary")
+            machines[0].removeValue(forKey: "coordinatorUpdatedAt")
             obj["machines"] = machines
         }
         XCTAssertNil(obj["tasks"])
@@ -434,6 +437,9 @@ final class TaskBoardTests: XCTestCase {
         XCTAssertFalse(decoded.tasksTruncated)
         XCTAssertEqual(decoded.machines.first?.machineName, "老 Mac")
         XCTAssertNil(decoded.machines.first?.nodeName)
+        XCTAssertNil(decoded.machines.first?.coordinatorState)
+        XCTAssertNil(decoded.machines.first?.coordinatorSummary)
+        XCTAssertNil(decoded.machines.first?.coordinatorUpdatedAt)
     }
 
     func testDashboardTasksRoundTrip() throws {

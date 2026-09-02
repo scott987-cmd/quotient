@@ -78,6 +78,10 @@ public struct WorkTask: Codable, Sendable {
     public var retryNotBefore: Date?
     /// 入队时分析一次的画像。拿不到就是 nil，调度退化成纯额度排序。
     public var profile: TaskProfile?
+    /// 目标机器必须真实发布的工具能力，以及同一台机器不能并发占用的资源。
+    /// 由确定性规则从任务文本提取；旧记录解码时也会补齐。
+    public var requiredCapabilities: [String] = []
+    public var resourceClaims: [String] = []
     /// 已经在这个任务上失败过的平台，避免接力时又转回去。
     ///
     /// **提问不算失败**：agent 问了问题就退出的话，这个平台要从这里摘掉，
@@ -272,6 +276,9 @@ public struct WorkTask: Codable, Sendable {
         self.repo = repo
         self.state = .queued
         self.createdAt = Date()
+        let resources = TaskResourcePolicy.infer(prompt: prompt)
+        self.requiredCapabilities = resources.capabilities
+        self.resourceClaims = resources.claims
     }
 
     // 旧记录没有这两个字段。
@@ -294,6 +301,11 @@ public struct WorkTask: Codable, Sendable {
             TerminalFailureKind.self, forKey: .terminalFailureKind)
         retryNotBefore = try c.decodeIfPresent(Date.self, forKey: .retryNotBefore)
         profile = try c.decodeIfPresent(TaskProfile.self, forKey: .profile)
+        let inferredResources = TaskResourcePolicy.infer(prompt: prompt)
+        requiredCapabilities = try c.decodeIfPresent(
+            [String].self, forKey: .requiredCapabilities) ?? inferredResources.capabilities
+        resourceClaims = try c.decodeIfPresent(
+            [String].self, forKey: .resourceClaims) ?? inferredResources.claims
         triedPlatforms = try c.decodeIfPresent([Platform].self, forKey: .triedPlatforms) ?? []
         ownerPlatform = try c.decodeIfPresent(Platform.self, forKey: .ownerPlatform)
         ownerRunnerID = try c.decodeIfPresent(String.self, forKey: .ownerRunnerID)
@@ -453,10 +465,28 @@ public enum TaskStore {
     private static var cachedLatest: [String: WorkTask] = [:]
     private static var cachedSkippedLines = 0
 
+    /// 跨进程最新状态索引。JSONL 仍是完整审计账本；checkpoint 只是可重建的
+    /// 物化视图，冷启动从它的 offset 往后读，不再反复扫几百 MB 历史。
+    private struct Checkpoint: Codable {
+        var version: Int
+        var ledgerPath: String
+        var ledgerFileID: UInt64?
+        var ledgerSize: Int64
+        var skippedLines: Int
+        var latest: [WorkTask]
+    }
+
+    private static var checkpointFile: URL {
+        Paths.appSupport.appendingPathComponent("tasks-current-v1.json")
+    }
+    private static let checkpointTailThreshold: Int64 = 2 * 1_024 * 1_024
+
     public static var file: URL { Paths.appSupport.appendingPathComponent("tasks.jsonl") }
 
     /// 上一次 all() 里有几行没解出来。非 0 说明任务记录有损坏。
     public private(set) static var skippedLines = 0
+    /// 上一次真正解码了多少账本字节。用于 doctor/性能回归，不含 checkpoint。
+    public private(set) static var bytesParsedLastLoad: Int64 = 0
 
     public static func all() -> [WorkTask] {
         writeLock.lock(); defer { writeLock.unlock() }
@@ -474,6 +504,49 @@ public enum TaskStore {
         return (attrs?[.size] as? NSNumber)?.int64Value ?? -1
     }
 
+    private static func fileID() -> UInt64? {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: file.path)
+        return (attrs?[.systemFileNumber] as? NSNumber)?.uint64Value
+    }
+
+    private static func readLedger(from offset: Int64, through size: Int64) -> Data? {
+        guard offset >= 0, size >= offset,
+              let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        do {
+            try handle.seek(toOffset: UInt64(offset))
+            return try handle.read(upToCount: Int(size - offset)) ?? Data()
+        } catch {
+            return nil
+        }
+    }
+
+    /// 调用方必须持有 writeLock。checkpoint 写坏/写丢不影响账本正确性；下次
+    /// 会退回完整扫描并重建。只有路径、inode、offset 都吻合才采信。
+    private static func loadCheckpointLocked(path: String, size: Int64,
+                                             id: UInt64?) -> Int64? {
+        guard let data = ICloudSafe.read(checkpointFile),
+              let saved = try? SnapshotCoding.decoder().decode(Checkpoint.self, from: data),
+              saved.version == 1, saved.ledgerPath == path,
+              saved.ledgerSize >= 0, saved.ledgerSize <= size,
+              saved.ledgerFileID == id else { return nil }
+        cachedLatest = Dictionary(saved.latest.map { ($0.id, $0) },
+                                  uniquingKeysWith: { a, b in a.rev >= b.rev ? a : b })
+        cachedSkippedLines = saved.skippedLines
+        return saved.ledgerSize
+    }
+
+    /// 调用方必须持有 writeLock。它是优化，不是新的事实源。
+    private static func saveCheckpointLocked(path: String, size: Int64,
+                                             id: UInt64?) {
+        let saved = Checkpoint(
+            version: 1, ledgerPath: path, ledgerFileID: id, ledgerSize: size,
+            skippedLines: cachedSkippedLines,
+            latest: cachedLatest.values.sorted { $0.id < $1.id })
+        guard let data = try? SnapshotCoding.encoder().encode(saved) else { return }
+        _ = ICloudSafe.write(data, to: checkpointFile)
+    }
+
     /// 调用方必须持有 writeLock。
     private static func loadCacheLocked() {
         let path = file.path
@@ -483,11 +556,12 @@ public enum TaskStore {
         cachedSize = size
         cachedLatest = [:]
         cachedSkippedLines = 0
-        // 走 ICloudSafe：这个文件今天在本地（appSupport 不同步、也不受 TCC 管），
-        // 它认出本地路径就直接读、零开销。但**看板现在每次构建都要读它**，
-        // 而看板在工作循环里每轮都构建 —— 万一哪天这条路径挪到 iCloud 下，
-        // 一次不返回的 open() 就足够把整条流水线冻住，和之前那四次一模一样。
-        guard let data = ICloudSafe.read(file) else { return }
+        bytesParsedLastLoad = 0
+        guard size >= 0 else { return }
+        let identity = fileID()
+        let start = loadCheckpointLocked(path: path, size: size, id: identity) ?? 0
+        guard let data = readLedger(from: start, through: size) else { return }
+        bytesParsedLastLoad = Int64(data.count)
         let dec = SnapshotCoding.decoder()
         for line in data.split(separator: UInt8(ascii: "\n")) {
             guard let t = try? dec.decode(WorkTask.self, from: Data(line)) else {
@@ -515,6 +589,11 @@ public enum TaskStore {
             if let current = cachedLatest[t.id], current.rev > t.rev { continue }
             cachedLatest[t.id] = t
         }
+        // 首次完整构建一定落盘；之后每多 2MB 刷一次。短尾巴即使暂未刷，
+        // 下个短命进程也只重读这段尾巴，不会退化成全文件扫描。
+        if start == 0 || size - start >= checkpointTailThreshold {
+            saveCheckpointLocked(path: path, size: size, id: identity)
+        }
     }
 
     /// 这个进程给每条任务写过的最新 rev。
@@ -533,6 +612,7 @@ public enum TaskStore {
         cachedSize = -1
         cachedLatest = [:]
         cachedSkippedLines = 0
+        bytesParsedLastLoad = 0
     }
 
     /// 谁的写入被判过期了。**必须出声**，不能静默丢：
@@ -603,6 +683,66 @@ public enum TaskStore {
         }
     }
 
+    /// 修复进程被 kill -9 时留下的最后半条 JSON。
+    ///
+    /// 文件锁已经拿到，因此这里和下一次 append 是一个临界区。末尾若其实是
+    /// 完整 JSON、只是还没来得及写换行，就补一个换行；否则只截掉最后一个
+    /// 换行之后的半截。历史完整记录和中间的坏行都不动。
+    @discardableResult
+    static func repairIncompleteTail(fd: Int32) throws -> Bool {
+        let end = lseek(fd, 0, SEEK_END)
+        guard end > 0 else { return false }
+        var last: UInt8 = 0
+        guard pread(fd, &last, 1, end - 1) == 1 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
+                          userInfo: [NSLocalizedDescriptionKey: "无法检查任务账本末尾"])
+        }
+        guard last != UInt8(ascii: "\n") else { return false }
+
+        let chunkSize = 64 * 1_024
+        var cursor = end
+        var tailStart: off_t = 0
+        while cursor > 0 {
+            let count = Int(min(off_t(chunkSize), cursor))
+            let start = cursor - off_t(count)
+            var chunk = [UInt8](repeating: 0, count: count)
+            let readCount = chunk.withUnsafeMutableBytes {
+                pread(fd, $0.baseAddress, count, start)
+            }
+            guard readCount == count else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
+                              userInfo: [NSLocalizedDescriptionKey: "无法读取任务账本末尾"])
+            }
+            if let newline = chunk.lastIndex(of: UInt8(ascii: "\n")) {
+                tailStart = start + off_t(newline + 1)
+                break
+            }
+            cursor = start
+        }
+
+        let tailLength = Int(end - tailStart)
+        var tail = Data(count: tailLength)
+        let readTail = tail.withUnsafeMutableBytes {
+            pread(fd, $0.baseAddress, tailLength, tailStart)
+        }
+        guard readTail == tailLength else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
+                          userInfo: [NSLocalizedDescriptionKey: "无法恢复任务账本末条"])
+        }
+        if (try? SnapshotCoding.decoder().decode(WorkTask.self, from: tail)) != nil {
+            var newline = UInt8(ascii: "\n")
+            guard write(fd, &newline, 1) == 1 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
+                              userInfo: [NSLocalizedDescriptionKey: "无法补全任务账本换行"])
+            }
+        } else if ftruncate(fd, tailStart) != 0 {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
+                          userInfo: [NSLocalizedDescriptionKey: "无法移除任务账本半截记录"])
+        }
+        cachedSize = -1
+        return true
+    }
+
     /// 在同一个进程锁和跨进程文件锁内重读最新任务、修改并落下一条新 revision。
     ///
     /// 闭包只能做快速、确定性的字段修改，不能在里面跑测试、网络或其它 I/O；
@@ -617,7 +757,7 @@ public enum TaskStore {
         writeLock.lock()
         defer { writeLock.unlock() }
 
-        let fd = open(file.path, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
+        let fd = open(file.path, O_RDWR | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
         guard fd >= 0 else { throw NSError(
             domain: "TaskStore", code: 1,
             userInfo: [NSLocalizedDescriptionKey: "任务库打不开：\(file.path)"]) }
@@ -627,6 +767,7 @@ public enum TaskStore {
             userInfo: [NSLocalizedDescriptionKey: "任务库加锁失败"]) }
         defer { flock(fd, LOCK_UN) }
 
+        try repairIncompleteTail(fd: fd)
         // 获取文件锁之后再刷新：别的进程可能刚在我们等锁时追加了新 revision。
         loadCacheLocked()
         guard var task = cachedLatest[id] else { throw MissingTask(id: id) }
@@ -809,7 +950,7 @@ public enum TaskStore {
         // 原来这里只有进程内的 NSLock，挡不住第二个进程；而读取端是
         // 「后写覆盖先写」，所以任何攥着旧快照的写入者只要写得晚就赢。
         // 见 WorkTask.rev 的文档注释里 2026-08-25 的现场记录。
-        let lockFD = open(file.path, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
+        let lockFD = open(file.path, O_RDWR | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
         guard lockFD >= 0 else { throw NSError(
             domain: "TaskStore", code: 1,
             userInfo: [NSLocalizedDescriptionKey: "任务库打不开：\(file.path)"]) }
@@ -819,6 +960,7 @@ public enum TaskStore {
             userInfo: [NSLocalizedDescriptionKey: "任务库加锁失败"]) }
         defer { flock(lockFD, LOCK_UN) }
 
+        try repairIncompleteTail(fd: lockFD)
         let onDisk = currentRev(of: task.id)
         if requireMissing, onDisk >= 0 {
             throw DuplicateTask(id: task.id)
@@ -1118,9 +1260,12 @@ public struct WorkScheduler: Sendable {
             // 冷却优先于一切判断：撞过的墙不再撞。
             // 这是唯一对「上限数值查不到」的平台也有效的避让手段。
             let runnerCapability = PlatformHealth.capability(for: runner).rawValue
+            let localQuotaPoolID = dashboard.reports.first {
+                $0.platform == p
+            }?.localQuotaPoolID
             if let cd = CooldownLedger.active(
                 platform: p, runnerID: runner.runnerID,
-                capability: runnerCapability, now: now) {
+                capability: runnerCapability, quotaPoolID: localQuotaPoolID, now: now) {
                 rejected.append(Rejection(
                     platform: p,
                     reason: "\(cd.cause.displayName)，\(Format.duration(cd.remaining))后重试"
@@ -1163,6 +1308,7 @@ public struct WorkScheduler: Sendable {
                 rejected.append(Rejection(platform: p, reason: "没有这个平台的用量数据"))
                 continue
             }
+            let quotaStatuses = report.localQuotaStatuses
 
             // 用尽 = 硬排除。「预计超额」（atRisk）不再一票否决 ——
             // 它是把突发烧速外推成整周常态的**预测**，实测把只用了 27% 的
@@ -1172,7 +1318,7 @@ public struct WorkScheduler: Sendable {
             // advisory 的不算 —— MiniMax 的视频额度用光了，不代表
             // 跑不了文本任务。不排除的话，「今天生了 3 张图」就会把
             // 整个平台拦在场外，而它还是本机的分诊器。
-            if let bad = report.statuses.first(where: {
+            if let bad = quotaStatuses.first(where: {
                 $0.isFresh(now: now) && $0.health == .exhausted && !$0.advisory
             }) {
                 rejected.append(Rejection(
@@ -1228,7 +1374,7 @@ public struct WorkScheduler: Sendable {
             // **advisory 的不算。** MiniMax 的视频额度天天打满（生图就是
             // 在用它），拿它当「剩余最少的那条」，整个平台就永远够不着 ——
             // 实测评审任务因此一直派不出去，而评审根本不消耗视频额度。
-            let configured = report.statuses.compactMap { s -> (QuotaStatus, Double)? in
+            let configured = quotaStatuses.compactMap { s -> (QuotaStatus, Double)? in
                 guard !s.advisory, let f = s.usedFraction else { return nil }
                 return (s, f)
             }
@@ -3488,7 +3634,7 @@ public enum Elsewhere {
     /// 哪些别的机器接得了这个风险等级的活。
     ///
     /// 判据全部按**那台机器**算：角色的 maxRisk 够、在那台没被静音、
-    /// 在那台不是指挥。三者都按机器名存，所以本机算得出来，
+    /// 在那台不是指挥。机器选择器优先按 machineID，并兼容节点名和历史机器名，
     /// 不需要去问对端 —— 而「问对端」在对端不可达时就给不出建议了，
     /// 恰恰那种时候人最需要知道该往哪儿挪。
     /// - Parameter presentOn: 每个平台在哪些机器上**真的装了**。
@@ -3504,18 +3650,25 @@ public enum Elsewhere {
     public static func options(
         risk: TaskProfile.Risk,
         presences: [ClusterPresence] = ClusterPresenceStore.all(),
-        me: String = Paths.machineName(),
+        me: String = Paths.machineID(),
         presentOn: [Platform: Set<String>] = Elsewhere.detectedByMachine()
     ) -> [Option] {
         let roles = AgentRoles.all()
         var out: [Option] = []
-        for p in presences where p.machineName != me {
+        for p in presences where p.machineID != me && p.machineName != me && p.nodeName != me {
             guard let node = p.nodeName, !node.isEmpty else { continue }
             let ok = roles.values.filter { r in
-                risk <= r.maxRisk
-                    && !r.mutedOn.contains(p.machineName)
-                    && !r.dispatcherOn.contains(p.machineName)
-                    && (presentOn[r.platform]?.contains(p.machineName) ?? false)
+                let installed = Array(presentOn[r.platform] ?? [])
+                return risk <= r.maxRisk
+                    && !AgentRoles.matchesMachine(
+                        r.mutedOn, machineID: p.machineID,
+                        machineName: p.machineName, nodeName: p.nodeName)
+                    && !AgentRoles.matchesMachine(
+                        r.dispatcherOn, machineID: p.machineID,
+                        machineName: p.machineName, nodeName: p.nodeName)
+                    && AgentRoles.matchesMachine(
+                        installed, machineID: p.machineID,
+                        machineName: p.machineName, nodeName: p.nodeName)
             }.map { $0.platform }.sorted { $0.rawValue < $1.rawValue }
             if !ok.isEmpty {
                 out.append(Option(node: node, machine: p.machineName, platforms: ok))
@@ -3531,7 +3684,7 @@ public enum Elsewhere {
         let d = dashboard ?? LLMQuota.dashboard()
         var out: [Platform: Set<String>] = [:]
         for r in d.reports where r.detected || r.installed {
-            out[r.platform] = Set(r.machines)
+            out[r.platform] = Set((r.machineIDs ?? []) + r.machines)
         }
         return out
     }

@@ -33,6 +33,8 @@ public enum ClusterDispatchPlanner {
         repoAlias: String,
         lane: TaskCapabilityLane,
         profile: TaskProfile?,
+        requiredCapabilities: [String] = [],
+        resourceClaims: [String] = [],
         preferredRunnerID: String? = nil,
         preferredPlatform: Platform? = nil,
         currentMachineID: String = Paths.machineID(),
@@ -84,6 +86,19 @@ public enum ClusterDispatchPlanner {
             }
             guard machine.automaticRepoAliases.contains(repoAlias) else {
                 reject("该机的项目执行作用域未允许 \(repoAlias)")
+                continue
+            }
+            let missingCapabilities = Set(requiredCapabilities)
+                .subtracting(machine.capabilities)
+            guard missingCapabilities.isEmpty else {
+                reject("缺少任务所需机器能力："
+                    + missingCapabilities.sorted().joined(separator: "、"))
+                continue
+            }
+            let resourceConflicts = Set(resourceClaims)
+                .intersection(machine.runningResourceClaims)
+            guard resourceConflicts.isEmpty else {
+                reject("独占资源正在使用：" + resourceConflicts.sorted().joined(separator: "、"))
                 continue
             }
             guard !machine.runningRepoAliases.contains(repoAlias) else {

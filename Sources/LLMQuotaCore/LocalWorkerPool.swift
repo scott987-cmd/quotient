@@ -127,6 +127,9 @@ public enum LocalWorkerSlotPlanner {
         })
         var busyOwnerRunnerIDs = Set(running.compactMap(\.ownerRunnerID))
         busyOwnerRunnerIDs.formUnion(active.compactMap { ownerByTaskID[$0.taskID] })
+        let taskByID = Dictionary(uniqueKeysWithValues: allTasks.map { ($0.id, $0) })
+        var busyResources = Set(running.flatMap(\.resourceClaims))
+        busyResources.formUnion(active.flatMap { taskByID[$0.taskID]?.resourceClaims ?? [] })
         var selected: [WorkTask] = []
         var decisions: [Decision] = []
         for task in ready {
@@ -149,6 +152,13 @@ public enum LocalWorkerSlotPlanner {
                     taskID: task.id, selected: false, reason: "同项目已有任务执行中"))
                 continue
             }
+            let conflicts = Set(task.resourceClaims).intersection(busyResources)
+            guard conflicts.isEmpty else {
+                decisions.append(Decision(
+                    taskID: task.id, selected: false,
+                    reason: "独占资源正在使用：" + conflicts.sorted().joined(separator: "、")))
+                continue
+            }
             guard selected.count < capacity else {
                 decisions.append(Decision(
                     taskID: task.id, selected: false, reason: "本轮可用执行槽已分配完"))
@@ -158,6 +168,7 @@ public enum LocalWorkerSlotPlanner {
             decisions.append(Decision(
                 taskID: task.id, selected: true, reason: "项目、Owner 与执行槽均可用"))
             busyRepos.insert(repo)
+            busyResources.formUnion(task.resourceClaims)
             if let owner = task.ownerRunnerID { busyOwnerRunnerIDs.insert(owner) }
         }
         return Plan(selected: selected, decisions: decisions)
@@ -170,7 +181,7 @@ public enum LocalWorkerSlotPlanner {
 /// queued。这里用内核 `flock` 补上那一小段竞态窗口。进程被 kill -9 后锁也会
 /// 自动释放，不会留下永久“占用中”。
 public final class LocalExecutionLease {
-    public enum Scope: String, Sendable { case repo, runner }
+    public enum Scope: String, Sendable { case repo, runner, resource }
 
     private let url: URL
     private var handle: FileHandle?

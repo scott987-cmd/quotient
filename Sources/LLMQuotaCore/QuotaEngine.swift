@@ -62,6 +62,8 @@ public struct QuotaEngine: Sendable {
             let presence = presenceByMachineID[$0.machineID]
             return MachineInfo(
                 machineID: $0.machineID,
+                // 协议层保留原名，避免破坏历史 machineName 路径/角色映射；
+                // 所有用户界面统一读取 displayName 做隐私安全展示。
                 machineName: $0.machineName,
                 nodeName: nodeNames[$0.machineID],
                 maxConcurrentTasks: presence?.maxConcurrentTasks ?? 0,
@@ -69,6 +71,9 @@ public struct QuotaEngine: Sendable {
                 repoAliases: presence?.repoAliases ?? [],
                 automaticRepoAliases: presence?.automaticRepoAliases ?? [],
                 runningRepoAliases: presence?.runningRepoAliases ?? [],
+                coordinatorState: presence?.coordinatorState,
+                coordinatorSummary: presence?.coordinatorSummary,
+                coordinatorUpdatedAt: presence?.coordinatorUpdatedAt,
                 lastSeen: $0.generatedAt,
                 isStale: now.timeIntervalSince($0.generatedAt) > machineStaleAfter
             )
@@ -78,14 +83,82 @@ public struct QuotaEngine: Sendable {
             return lhs.machineID < rhs.machineID
         }
 
-        let cooling = cooldowns ?? CooldownLedger.active(now: now)
+        // 注入 cooldowns 是测试/离线入口；生产读取完整池级账本。旧版平台级
+        // 记录没有 poolID，会保守作用于该平台所有池，直到下一次真实结果迁移它。
+        let coolingEntries: [Cooldown] = cooldowns.map { Array($0.values) }
+            ?? CooldownLedger.activeEntries(now: now, config: config)
         var reports: [PlatformReport] = []
         for platform in Platform.activeCases {
             guard let plan = config.plan(for: platform), plan.enabled else { continue }
-            // 用去重后的 —— 否则旧身份的用量被重复计算,额度百分比虚高。
-            reports.append(buildReport(
+            var poolIDs = Set((config.quotaPools ?? [])
+                .filter { $0.platform == platform && !$0.poolID.isEmpty }
+                .map(\.poolID))
+            for snapshot in deduped {
+                guard let item = snapshot.platforms.first(where: { $0.platform == platform })
+                else { continue }
+                poolIDs.insert(effectivePoolID(item, snapshot: snapshot))
+            }
+            let localPoolID = config.quotaPoolID(
+                for: platform, machineID: machineID)
+            poolIDs.insert(localPoolID)
+
+            let poolReports: [QuotaPoolReport] = poolIDs.sorted().map { poolID in
+                let matchingCooldown = latestCooldown(
+                    coolingEntries, platform: platform, poolID: poolID)
+                let poolPlan = config.plan(for: platform, quotaPoolID: poolID) ?? plan
+                let report = buildReport(
+                    plan: poolPlan, snapshots: deduped, localMachineID: machineID,
+                    cooldown: matchingCooldown, quotaPoolID: poolID, now: now)
+                let matchingMachineIDs = deduped.compactMap { snapshot -> String? in
+                    guard let item = snapshot.platforms.first(where: {
+                        $0.platform == platform
+                    }), effectivePoolID(item, snapshot: snapshot) == poolID else { return nil }
+                    return snapshot.machineID
+                }.sorted()
+                return QuotaPoolReport(
+                    poolID: poolID,
+                    displayName: config.quotaPoolDisplayName(
+                        for: platform, poolID: poolID),
+                    machineIDs: matchingMachineIDs,
+                    machines: report.machines,
+                    detected: report.detected,
+                    installed: report.installed,
+                    lastActivity: report.lastActivity,
+                    statuses: report.statuses,
+                    cooldownUntil: report.cooldownUntil,
+                    cooldownReason: report.cooldownReason)
+            }
+
+            // 旧客户端继续读平台汇总；新客户端和调度器读 quotaPools。多池时
+            // 汇总状态不能再按相同 official id 去重，否则会把一个订阅吞掉。
+            var aggregate = buildReport(
                 plan: plan, snapshots: deduped, localMachineID: machineID,
-                cooldown: cooling[platform], now: now))
+                cooldown: nil, quotaPoolID: nil, now: now)
+            if poolReports.count == 1 {
+                aggregate.statuses = poolReports[0].statuses
+                aggregate.cooldownUntil = poolReports[0].cooldownUntil
+                aggregate.cooldownReason = poolReports[0].cooldownReason
+            } else {
+                aggregate.statuses = poolReports.flatMap { pool in
+                    pool.statuses.map { status in
+                        var labeled = status
+                        labeled.limitID = pool.poolID + "|" + status.limitID
+                        labeled.label = pool.displayName + " · " + status.label
+                        return labeled
+                    }
+                }
+                // 只要还有一个池可用，整个平台就不能标成冷却。
+                if poolReports.allSatisfy({ $0.cooldownUntil != nil }),
+                   let latest = poolReports.max(by: {
+                       ($0.cooldownUntil ?? .distantPast) < ($1.cooldownUntil ?? .distantPast)
+                   }) {
+                    aggregate.cooldownUntil = latest.cooldownUntil
+                    aggregate.cooldownReason = latest.cooldownReason
+                }
+            }
+            aggregate.quotaPools = poolReports
+            aggregate.localQuotaPoolID = localPoolID
+            reports.append(aggregate)
         }
 
         // TaskStore.all() 每个 id 只留最新一条，正是这里要的。
@@ -113,22 +186,31 @@ public struct QuotaEngine: Sendable {
         snapshots: [MachineSnapshot],
         localMachineID: String,
         cooldown: Cooldown?,
+        quotaPoolID: String?,
         now: Date
     ) -> PlatformReport {
         var byMachineBuckets: [String: [UsageBucket]] = [:]
+        // machineNames 是跨端匹配协议；machineLabels 只是人看的额度拆分标签。
+        // 两者不能混用，否则“隐藏姓名”的 UI 改动会让办公室找不到这台机器。
+        var machineNames: [String: String] = [:]
         var machineLabels: [String: String] = [:]
         var allBuckets: [UsageBucket] = []
         var officials: [OfficialQuota] = []
         var detected = false
         var installed = false
         var lastActivity: Date?
+        var matchingRetentionStarts: [Date] = []
 
         for snap in snapshots {
             guard let ps = snap.platforms.first(where: { $0.platform == plan.platform }) else { continue }
+            if let quotaPoolID,
+               effectivePoolID(ps, snapshot: snap) != quotaPoolID { continue }
+            matchingRetentionStarts.append(snap.retentionStart)
             if ps.installed { installed = true }
             guard ps.detected else { continue }
             detected = true
-            machineLabels[snap.machineID] = snap.machineName
+            machineNames[snap.machineID] = snap.machineName
+            machineLabels[snap.machineID] = Paths.privacySafeMachineName(snap.machineName)
             byMachineBuckets[snap.machineID, default: []].append(contentsOf: ps.buckets)
             allBuckets.append(contentsOf: ps.buckets)
             officials.append(contentsOf: ps.officialQuotas)
@@ -219,10 +301,12 @@ public struct QuotaEngine: Sendable {
             enabled: plan.enabled,
             lastHumanActivity: humanLast,
             lastHumanActivityHere: humanLastHere,
-            machines: machineLabels.keys.map { id in
+            machineIDs: machineNames.keys.sorted(),
+            machines: machineNames.keys.map { id in
+                let rawName = machineNames[id] ?? id
                 let name = machineLabels[id] ?? id
-                let duplicate = machineLabels.values.filter { $0 == name }.count > 1
-                return duplicate ? name + " · " + id : name
+                let duplicate = machineNames.values.filter { $0 == rawName }.count > 1
+                return duplicate ? Paths.privacySafeMachineLabel(rawName, machineID: id) : name
             }.sorted(),
             lastActivity: lastActivity,
             statuses: statuses,
@@ -240,7 +324,7 @@ public struct QuotaEngine: Sendable {
             idleWindows: WasteMeter.measureAll(
                 buckets: allBuckets,
                 windows: plan.limits.map(\.windowMinutes),
-                since: snapshots.map(\.retentionStart).min() ?? now.addingTimeInterval(-30 * 86400),
+                since: matchingRetentionStarts.min() ?? now.addingTimeInterval(-30 * 86400),
                 now: now),
             // 冷却状态要跟着发出去 —— 手机上看不到它的话，
             // 「连续空 19 个窗口」会被当成「快去塞活」，
@@ -251,6 +335,20 @@ public struct QuotaEngine: Sendable {
                     + ($0.strikes > 1 ? "（连续第 \($0.strikes) 次）" : "")
             }
         )
+    }
+
+    private func effectivePoolID(_ snapshot: PlatformSnapshot,
+                                 snapshot machine: MachineSnapshot) -> String {
+        snapshot.quotaPoolID ?? config.quotaPoolID(
+            for: snapshot.platform, machineID: machine.machineID)
+    }
+
+    private func latestCooldown(_ entries: [Cooldown], platform: Platform,
+                                poolID: String) -> Cooldown? {
+        entries.filter {
+            $0.platform == platform && ($0.quotaPoolID == poolID
+                || (!config.hasExplicitQuotaPool(for: platform) && $0.quotaPoolID == nil))
+        }.max { $0.until < $1.until }
     }
 
     // MARK: - Status from platform-reported quota
@@ -396,7 +494,8 @@ public struct QuotaEngine: Sendable {
             if v > 0 {
                 let name = machineLabels[machineID] ?? machineID
                 let duplicate = machineLabels.values.filter { $0 == name }.count > 1
-                let label = duplicate ? name + " · " + machineID : name
+                let label = duplicate
+                    ? Paths.privacySafeMachineLabel(name, machineID: machineID) : name
                 machineSplit[label] = v
             }
         }

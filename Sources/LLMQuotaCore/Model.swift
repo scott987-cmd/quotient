@@ -429,6 +429,9 @@ public struct OfficialQuota: Codable, Sendable, Hashable {
 /// 单个平台在某台机器上的采集结果。
 public struct PlatformSnapshot: Codable, Sendable {
     public var platform: Platform
+    /// 这份用量属于哪一份真实订阅/凭据。旧快照没有时由 PlansConfig 按
+    /// machineID 解析，不能回退成“平台名就是账号”。
+    public var quotaPoolID: String?
     /// 保留窗口内有没有实际用量。
     public var detected: Bool
     /// 这台机器上装没装这个平台的 CLI。
@@ -451,9 +454,11 @@ public struct PlatformSnapshot: Codable, Sendable {
         buckets: [UsageBucket] = [],
         officialQuotas: [OfficialQuota] = [],
         lastActivity: Date? = nil,
-        note: String? = nil
+        note: String? = nil,
+        quotaPoolID: String? = nil
     ) {
         self.platform = platform
+        self.quotaPoolID = quotaPoolID
         self.detected = detected
         self.installed = installed
         self.sources = sources
@@ -467,6 +472,7 @@ public struct PlatformSnapshot: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         platform = try c.decode(Platform.self, forKey: .platform)
+        quotaPoolID = try c.decodeIfPresent(String.self, forKey: .quotaPoolID)
         detected = try c.decode(Bool.self, forKey: .detected)
         installed = try c.decodeIfPresent(Bool.self, forKey: .installed) ?? false
         sources = try c.decodeIfPresent([String].self, forKey: .sources) ?? []

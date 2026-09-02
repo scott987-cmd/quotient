@@ -146,6 +146,14 @@ final class AutoRefillFocusTests: XCTestCase {
             "后台执行槽和单任务执行入口都必须过滤非专注项目")
         XCTAssertTrue(main.contains("ProjectExecutionScope.setFocusedRepo(all[i].localPath)"),
                       "repo focus 必须落本机硬作用域，不能只改共享补活提示")
+        let focusStart = try XCTUnwrap(main.range(of: "case \"focus\":"))
+        let ownerStart = try XCTUnwrap(main.range(of: "case \"owner\":",
+                                                  range: focusStart.upperBound..<main.endIndex))
+        let focusCommand = String(main[focusStart.lowerBound..<ownerStart.lowerBound])
+        XCTAssertFalse(focusCommand.contains("coordinatorMachineID = Paths.machineID()"),
+                       "切换本机专注项目不能顺手篡改共享协调机")
+        XCTAssertTrue(main.contains("case \"coordinator\":"),
+                      "共享协调机必须有独立、显式的管理入口")
         XCTAssertFalse(main.contains("all[j].autoRefill = (j == i)"),
                        "共享 autoRefill 不能继续冒充本机项目专注")
         XCTAssertEqual(

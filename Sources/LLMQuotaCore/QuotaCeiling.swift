@@ -25,6 +25,7 @@ public enum QuotaCeiling {
 
     public struct Observation: Codable, Sendable {
         public var platform: Platform
+        public var quotaPoolID: String?
         public var at: Date
         public var windowMinutes: Int
         public var windowLabel: String
@@ -35,6 +36,31 @@ public enum QuotaCeiling {
         /// 所以全都留着，交给上限学习器去比。
         public var usage: [String: Double]
         public var detail: String
+
+        private enum CodingKeys: String, CodingKey {
+            case platform, quotaPoolID, at, windowMinutes, windowLabel
+            case windowStart, usage, detail
+        }
+
+        public init(platform: Platform, quotaPoolID: String? = nil, at: Date,
+                    windowMinutes: Int, windowLabel: String, windowStart: Date,
+                    usage: [String: Double], detail: String) {
+            self.platform = platform; self.quotaPoolID = quotaPoolID; self.at = at
+            self.windowMinutes = windowMinutes; self.windowLabel = windowLabel
+            self.windowStart = windowStart; self.usage = usage; self.detail = detail
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            platform = try c.decodeIfPresent(Platform.self, forKey: .platform) ?? .codex
+            quotaPoolID = try c.decodeIfPresent(String.self, forKey: .quotaPoolID)
+            at = try c.decodeIfPresent(Date.self, forKey: .at) ?? .distantPast
+            windowMinutes = try c.decodeIfPresent(Int.self, forKey: .windowMinutes) ?? 0
+            windowLabel = try c.decodeIfPresent(String.self, forKey: .windowLabel) ?? ""
+            windowStart = try c.decodeIfPresent(Date.self, forKey: .windowStart) ?? .distantPast
+            usage = try c.decodeIfPresent([String: Double].self, forKey: .usage) ?? [:]
+            detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        }
     }
 
     static var path: URL {
@@ -57,13 +83,23 @@ public enum QuotaCeiling {
     /// - Returns: 这次新记下的观测（已存在的窗口不重复记）。
     @discardableResult
     public static func capture(dashboard: Dashboard, now: Date = Date()) -> [Observation] {
-        let cooling = CooldownLedger.active(now: now)
-        var existing = Set(all().map { key($0.platform, $0.windowStart, $0.windowMinutes) })
+        let cooling = CooldownLedger.activeEntries(now: now)
+        var existing = Set(all().map {
+            key($0.platform, $0.quotaPoolID, $0.windowStart, $0.windowMinutes)
+        })
         var fresh: [Observation] = []
 
         for report in dashboard.reports {
-            guard let cd = cooling[report.platform], cd.cause == .quotaExhausted else { continue }
-            for s in report.statuses {
+            let poolID = report.localQuotaPoolID
+            let statuses = poolID.flatMap { report.quotaPool(id: $0)?.statuses }
+                ?? report.statuses
+            guard let cd = cooling.filter({
+                $0.platform == report.platform
+                    && ($0.quotaPoolID == poolID
+                        || (poolID == "\(report.platform.rawValue):default"
+                            && $0.quotaPoolID == nil))
+            }).max(by: { $0.until < $1.until }), cd.cause == .quotaExhausted else { continue }
+            for s in statuses {
                 // **只记真正打满的那个窗口。** 冷却是平台级的，打满的却是
                 // 某一个窗口：Claude 5 小时窗打满时周窗可能才用了三成，
                 // 把周窗也记成撞顶，学出来的周上限会比真值低一大截。
@@ -82,14 +118,14 @@ public enum QuotaCeiling {
                 let start = s.windowStart
                 let minutes = windowMinutes(s, now: now)
                 guard minutes > 0 else { continue }
-                let k = key(report.platform, start, minutes)
+                let k = key(report.platform, poolID, start, minutes)
                 guard !existing.contains(k) else { continue }
                 // 用量为 0 说明这个窗口根本没跑过东西 —— 打满的是别的窗口，
                 // 记下来只会污染样本。
                 guard s.used > 0 else { continue }
                 existing.insert(k)
                 fresh.append(Observation(
-                    platform: report.platform, at: now,
+                    platform: report.platform, quotaPoolID: poolID, at: now,
                     windowMinutes: minutes, windowLabel: s.label,
                     windowStart: start,
                     usage: [s.metric.rawValue: s.used],
@@ -125,8 +161,9 @@ public enum QuotaCeiling {
         windowMinutes(s, now: now)
     }
 
-    static func key(_ p: Platform, _ start: Date, _ minutes: Int) -> String {
-        "\(p.rawValue)|\(Int(start.timeIntervalSince1970))|\(minutes)"
+    static func key(_ p: Platform, _ poolID: String?, _ start: Date,
+                    _ minutes: Int) -> String {
+        "\(p.rawValue)|\(poolID ?? "legacy")|\(Int(start.timeIntervalSince1970))|\(minutes)"
     }
 
     /// 窗口长度。有重置时间就用「重置 − 起点」，否则退回状态自带的标签解析。
@@ -161,11 +198,21 @@ public enum QuotaCeiling {
     ///
     /// 多次撞顶取**最大值**：每次观测都是真实上限的下界（我们可能漏采了一部分
     /// 用量），取最大的那个最接近真相。取平均反而会被漏采的那几次拉低。
-    public static func estimates() -> [(platform: Platform, windowMinutes: Int,
+    public static func estimates(quotaPoolIDs: [Platform: String] = [:])
+        -> [(platform: Platform, windowMinutes: Int,
                                         windowLabel: String, metric: String,
                                         value: Double, samples: Int)] {
         var best: [String: (Platform, Int, String, String, Double, Int)] = [:]
         for o in all() {
+            // 一旦配置了真实额度池，无法归属的 legacy 样本宁可不用，也不能
+            // 猜给当前订阅；否则另一账号过去的撞顶值会把本池上限抬高几十倍。
+            if let expectedPool = quotaPoolIDs[o.platform] {
+                let syntheticDefault = expectedPool == "\(o.platform.rawValue):default"
+                guard o.quotaPoolID == expectedPool
+                        || (syntheticDefault && o.quotaPoolID == nil) else { continue }
+            } else {
+                guard o.quotaPoolID == nil else { continue }
+            }
             for (metric, value) in o.usage {
                 let k = "\(o.platform.rawValue)|\(o.windowMinutes)|\(metric)"
                 if let cur = best[k] {

@@ -16,6 +16,7 @@ public enum LowValueDelegationPolicy {
         public var stage: Stage
         public var questionID: String
         public var recipientRunnerID: String
+        public var recipientMachineID: String?
         public var clause: String
     }
 
@@ -47,6 +48,7 @@ public enum LowValueDelegationPolicy {
                 + " --sender " + shellQuote(runnerID)
                 + " --task " + shellQuote(task.id)
                 + " --to " + shellQuote(helperRunnerID)
+                + " --machine " + shellQuote(helper.machineID)
                 + " --id " + shellQuote(questionID)
                 + " --question '请只读仓库，为当前任务完成一个低价值辅助产出："
                 + "从测试矩阵、日志归因、文档差异、验收清单中选最有价值的一项，"
@@ -62,7 +64,8 @@ public enum LowValueDelegationPolicy {
                 + "直接继续，不要为了展示协作而提问。收到答复后必须 ack 说明采用情况。\n"
                 + command
             return Instruction(stage: .delegate, questionID: questionID,
-                               recipientRunnerID: helperRunnerID, clause: clause)
+                               recipientRunnerID: helperRunnerID,
+                               recipientMachineID: helper.machineID, clause: clause)
         }
 
         guard let helperRunnerID = question.recipientRunnerID else { return nil }
@@ -75,6 +78,7 @@ public enum LowValueDelegationPolicy {
             return Instruction(
                 stage: .waitingForAnswer, questionID: questionID,
                 recipientRunnerID: helperRunnerID,
+                recipientMachineID: question.recipientMachineID,
                 clause: "\n\n【只读辅助委派 · 等待结果】\(questionID) 已交给 \(helperRunnerID)。"
                     + "不要重复委派、不要停下主线；只在结果到达后读取并判断是否采用。")
         }
@@ -91,6 +95,7 @@ public enum LowValueDelegationPolicy {
         return Instruction(
             stage: .acknowledgeAnswer, questionID: questionID,
             recipientRunnerID: helperRunnerID,
+            recipientMachineID: question.recipientMachineID,
             clause: "\n\n【只读辅助委派 · 必须闭环】\(helperRunnerID) 已返回辅助结果。"
                 + "继续收尾前必须确认采用情况；它只提供建议，主任务 Owner 仍对实现负责。\n"
                 + command)
@@ -102,11 +107,16 @@ public enum LowValueDelegationPolicy {
     ) -> [Platform: Double] {
         var result: [Platform: Double] = [:]
         for report in dashboard.reports {
-            if report.cooldownUntil.map({ $0 > now }) == true {
+            let localPool = report.localQuotaPoolID.flatMap { report.quotaPool(id: $0) }
+            // 有本机额度池时只读本池冷却；平台聚合冷却可能来自另一台机器的
+            // 同平台订阅，不能因此把本机可用执行器一起封死。
+            let cooldownUntil = localPool == nil
+                ? report.cooldownUntil : localPool?.cooldownUntil
+            if cooldownUntil.map({ $0 > now }) == true {
                 result[report.platform] = 0
                 continue
             }
-            let known = report.statuses.compactMap { status -> Double? in
+            let known = report.localQuotaStatuses.compactMap { status -> Double? in
                 guard status.isFresh(now: now), let used = status.usedFraction else { return nil }
                 return max(0, min(1, 1 - used))
             }
@@ -122,23 +132,34 @@ public enum LowValueDelegationPolicy {
         let eligible = candidates.filter {
             $0.canConsult && $0.runnerID != senderRunnerID
                 && $0.platform != AgentRoles.architectPlatform()
-                && !AgentRoles.isMuted($0.platform, machine: $0.machineName)
-                && !AgentRoles.isDispatcher($0.platform, machine: $0.machineName)
-                && (headroom[$0.platform]
-                    ?? (1 - AgentRoles.reserve(for: $0.platform, default: 0.25))) > 0.05
+                && !AgentRoles.isMuted($0.platform, machineID: $0.machineID,
+                                       machineName: $0.machineName)
+                && !AgentRoles.isDispatcher($0.platform, machineID: $0.machineID,
+                                            machineName: $0.machineName)
+                && candidateHeadroom($0, fallback: headroom) > 0.05
         }
         return eligible.sorted {
-            // 调度器若已有额度事实就用；没有时只按岗位留白排序，绝不为了
-            // 选辅助 Agent 同步重算整张看板、反过来卡住主任务。
-            let lhs = headroom[$0.platform]
-                ?? (1 - AgentRoles.reserve(for: $0.platform, default: 0.25))
-            let rhs = headroom[$1.platform]
-                ?? (1 - AgentRoles.reserve(for: $1.platform, default: 0.25))
+            // 优先使用目标机器自己发布的额度池事实。同平台不同订阅时，平台
+            // 汇总值只可作为旧注册记录的兼容回退，不能覆盖接收方自报状态。
+            let lhs = candidateHeadroom($0, fallback: headroom)
+            let rhs = candidateHeadroom($1, fallback: headroom)
             if lhs != rhs { return lhs > rhs }
             if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
             if $0.runnerID != $1.runnerID { return $0.runnerID < $1.runnerID }
             return $0.machineID < $1.machineID
         }.first
+    }
+
+    private static func candidateHeadroom(
+        _ candidate: AgentRegistration, fallback: [Platform: Double]
+    ) -> Double {
+        if candidate.quotaBlockedReason != nil { return 0 }
+        if let available = candidate.quotaAvailableFraction {
+            return max(0, min(1, available))
+        }
+        // schema v1 注册记录没有额度池字段；只为这些旧记录保留平台级回退。
+        return fallback[candidate.platform]
+            ?? (1 - AgentRoles.reserve(for: candidate.platform, default: 0.25))
     }
 
     private static func normalizedProject(_ path: String) -> String {

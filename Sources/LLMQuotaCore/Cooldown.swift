@@ -42,6 +42,9 @@ public struct Cooldown: Codable, Sendable {
     }
 
     public var platform: Platform
+    /// nil 是旧版平台级记录；新记录落到真实订阅池，避免一份账号撞限额后
+    /// 冻结同平台的其他账号。
+    public var quotaPoolID: String? = nil
     /// nil 表示旧版平台级记录。新记录必须尽量落到具体 Runner + 能力。
     public var runnerID: String? = nil
     public var capability: String? = nil
@@ -52,10 +55,11 @@ public struct Cooldown: Codable, Sendable {
     public var strikes: Int
     public var detail: String
 
-    public init(platform: Platform, runnerID: String? = nil,
+    public init(platform: Platform, quotaPoolID: String? = nil, runnerID: String? = nil,
                 capability: String? = nil, cause: Cause,
                 since: Date, until: Date, strikes: Int, detail: String) {
         self.platform = platform
+        self.quotaPoolID = quotaPoolID
         self.runnerID = runnerID
         self.capability = capability
         self.cause = cause
@@ -66,12 +70,13 @@ public struct Cooldown: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case platform, runnerID, capability, cause, since, until, strikes, detail
+        case platform, quotaPoolID, runnerID, capability, cause, since, until, strikes, detail
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         platform = try c.decode(Platform.self, forKey: .platform)
+        quotaPoolID = try c.decodeIfPresent(String.self, forKey: .quotaPoolID)
         runnerID = try c.decodeIfPresent(String.self, forKey: .runnerID)
         capability = try c.decodeIfPresent(String.self, forKey: .capability)
         cause = try c.decode(Cause.self, forKey: .cause)
@@ -100,6 +105,81 @@ public enum CooldownLedger {
             ?? Paths.appSupport.appendingPathComponent("cooldowns.json")
     }
 
+    /// 多机事实来源。每次变化一份不可变事件，由镜像做集合并集；
+    /// `cooldowns.json` 只保留给旧二进制和手机读取的兼容视图。
+    static var eventDirectory: URL {
+        Paths.sharedRoot.appendingPathComponent("cooldown-events", isDirectory: true)
+    }
+
+    struct Event: Codable, Sendable {
+        enum Action: String, Codable, Sendable { case upsert, clear }
+
+        var schemaVersion: Int
+        var id: String
+        var action: Action
+        var writerMachineID: String
+        var createdAt: Date
+        var platform: Platform
+        var quotaPoolID: String?
+        var runnerID: String?
+        var capability: String?
+        var platformWide: Bool
+        var includeLegacyPool: Bool
+        var cooldown: Cooldown?
+
+        init(action: Action, platform: Platform, quotaPoolID: String? = nil,
+             runnerID: String? = nil, capability: String? = nil,
+             platformWide: Bool = false, includeLegacyPool: Bool = false,
+             cooldown: Cooldown? = nil, createdAt: Date = Date(),
+             writerMachineID: String = Paths.machineID()) {
+            schemaVersion = 1
+            id = UUID().uuidString.lowercased()
+            self.action = action
+            self.writerMachineID = writerMachineID
+            self.createdAt = createdAt
+            self.platform = platform
+            self.quotaPoolID = quotaPoolID
+            self.runnerID = runnerID
+            self.capability = capability
+            self.platformWide = platformWide
+            self.includeLegacyPool = includeLegacyPool
+            self.cooldown = cooldown
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion, id, action, writerMachineID, createdAt
+            case platform, quotaPoolID, runnerID, capability, platformWide
+            case includeLegacyPool, cooldown
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+            id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+            action = try c.decodeIfPresent(Action.self, forKey: .action) ?? .upsert
+            writerMachineID = try c.decodeIfPresent(
+                String.self, forKey: .writerMachineID) ?? "unknown"
+            createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? .distantPast
+            platform = try c.decode(Platform.self, forKey: .platform)
+            quotaPoolID = try c.decodeIfPresent(String.self, forKey: .quotaPoolID)
+            runnerID = try c.decodeIfPresent(String.self, forKey: .runnerID)
+            capability = try c.decodeIfPresent(String.self, forKey: .capability)
+            platformWide = try c.decodeIfPresent(Bool.self, forKey: .platformWide) ?? false
+            includeLegacyPool = try c.decodeIfPresent(
+                Bool.self, forKey: .includeLegacyPool) ?? false
+            cooldown = try c.decodeIfPresent(Cooldown.self, forKey: .cooldown)
+        }
+
+        func clears(_ item: Cooldown) -> Bool {
+            guard item.platform == platform else { return false }
+            if platformWide { return true }
+            let poolMatches = item.quotaPoolID == quotaPoolID
+                || (includeLegacyPool && item.quotaPoolID == nil)
+            return poolMatches && item.runnerID == runnerID
+                && item.capability == capability
+        }
+    }
+
     /// 退避梯度。第一次撞墙只等一小会儿（可能只是瞬时抖动），
     /// 连续撞就越等越久，避免把时间耗在一个已经躺平的平台上。
     static let backoff: [TimeInterval] = [
@@ -116,10 +196,46 @@ public enum CooldownLedger {
     /// `active()`、`record()`、`resume()`、`clear()` 都先调它拿到当前账本再改。
     public static func loadEntries() -> [Cooldown] {
         // `file` 可能在 iCloud 上。这一行卡死过整个菜单栏 App。
-        guard let data = ICloudSafe.read(file),
-              let list = try? SnapshotCoding.decoder().decode([Cooldown].self, from: data)
-        else { return [] }
-        return list
+        let legacy = ICloudSafe.read(file).flatMap {
+            try? SnapshotCoding.decoder().decode([Cooldown].self, from: $0)
+        } ?? []
+        let events = loadEvents().sorted(by: eventOrder)
+        guard !events.isEmpty else { return legacy }
+
+        // 兼容文件可能刚被另一台旧机器用不完整视图覆盖。凡是事件账已经
+        // 接管的 key，都不能再让兼容文件复活；其余旧 key 继续兼容读取。
+        var byKey = Dictionary(legacy.map { (key($0), $0) },
+                               uniquingKeysWith: { a, b in a.since >= b.since ? a : b })
+        let platformWide = Set(events.filter(\.platformWide).map(\.platform))
+        var ownedKeys = Set<String>()
+        for event in events where !event.platformWide {
+            ownedKeys.insert(eventKey(event))
+            // 没有显式账号池时，`platform:default` 是旧版 nil-pool 记录的稳定身份。
+            // 离线旧机器可能在事件写入后又同步回 nil-pool 兼容视图；若不把这两个
+            // key 视为同一条，手机会同时看到“旧额度未恢复”和“新额度已更新”。
+            if event.includeLegacyPool
+                || event.quotaPoolID == "\(event.platform.rawValue):default" {
+                ownedKeys.insert([
+                    event.platform.rawValue, "legacy",
+                    event.runnerID ?? "*", event.capability ?? "*",
+                ].joined(separator: "|"))
+            }
+        }
+        byKey = byKey.filter { key, value in
+            !platformWide.contains(value.platform) && !ownedKeys.contains(key)
+        }
+
+        for event in events {
+            switch event.action {
+            case .upsert:
+                if let cooldown = event.cooldown { byKey[key(cooldown)] = cooldown }
+            case .clear:
+                byKey = byKey.filter { _, cooldown in
+                    !event.clears(cooldown)
+                }
+            }
+        }
+        return Array(byKey.values)
     }
 
     /// 旧消费端仍按平台看冷却时，选该平台当前最晚结束的一条；不再用
@@ -139,6 +255,9 @@ public enum CooldownLedger {
             .encode(entries.sorted {
                 if $0.platform != $1.platform {
                     return $0.platform.sortIndex < $1.platform.sortIndex
+                }
+                if ($0.quotaPoolID ?? "") != ($1.quotaPoolID ?? "") {
+                    return ($0.quotaPoolID ?? "") < ($1.quotaPoolID ?? "")
                 }
                 if ($0.runnerID ?? "") != ($1.runnerID ?? "") {
                     return ($0.runnerID ?? "") < ($1.runnerID ?? "")
@@ -194,12 +313,24 @@ public enum CooldownLedger {
     /// 只查询指定执行器能力。旧版没有 Runner 维度的记录仍作为平台兜底，
     /// 但绝不会拿同平台另一个 Runner 的故障来挡当前候选。
     public static func active(platform: Platform, runnerID: String, capability: String,
+                              quotaPoolID: String? = nil,
                               now: Date = Date(), config: PlansConfig? = nil) -> Cooldown? {
-        let entries = activeEntries(now: now, config: config)
+        let plans = config ?? PlansStore.load()
+        let resolvedPoolID = quotaPoolID ?? plans.quotaPoolID(
+            for: platform, machineID: Paths.machineID(), runnerID: runnerID)
+        let entries = activeEntries(now: now, config: plans)
+        let exact = entries.first {
+            $0.platform == platform && $0.quotaPoolID == resolvedPoolID
+                && $0.runnerID == runnerID && $0.capability == capability
+        }
+        guard exact == nil, !plans.hasExplicitQuotaPool(for: platform) else { return exact }
         return entries.first {
-            $0.platform == platform && $0.runnerID == runnerID && $0.capability == capability
+            // 滚动升级：旧 Runner 级记录没有 poolID，只作为当前执行器的兜底。
+            $0.platform == platform && $0.quotaPoolID == nil
+                && $0.runnerID == runnerID && $0.capability == capability
         } ?? entries.first {
-            $0.platform == platform && $0.runnerID == nil && $0.capability == nil
+            $0.platform == platform && $0.quotaPoolID == nil
+                && $0.runnerID == nil && $0.capability == nil
         }
     }
 
@@ -230,13 +361,25 @@ public enum CooldownLedger {
     @discardableResult
     public static func record(
         platform: Platform, runnerID: String? = nil, capability: String? = nil,
+        quotaPoolID: String? = nil,
         cause: Cooldown.Cause, detail: String,
         knownResetAt: Date? = nil, now: Date = Date()
     ) -> Cooldown {
         var entries = loadEntries()
+        let plans = PlansStore.load()
+        let resolvedPoolID = quotaPoolID ?? plans.quotaPoolID(
+            for: platform, machineID: Paths.machineID(), runnerID: runnerID)
+        let allowLegacyFallback = !plans.hasExplicitQuotaPool(for: platform)
         // 上一次的记录还没过期就算连续失败；已经过期说明中间恢复过，重新计数。
-        let priorIndex = entries.firstIndex {
-            $0.platform == platform && $0.runnerID == runnerID && $0.capability == capability
+        var priorIndex = entries.firstIndex {
+            $0.platform == platform && $0.quotaPoolID == resolvedPoolID
+                && $0.runnerID == runnerID && $0.capability == capability
+        }
+        if priorIndex == nil, allowLegacyFallback {
+            priorIndex = entries.firstIndex {
+                $0.platform == platform && $0.quotaPoolID == nil
+                    && $0.runnerID == runnerID && $0.capability == capability
+            }
         }
         let prior = priorIndex.map { entries[$0] }
         let strikes = (prior?.isActive(now: now) == true || prior?.cause == cause)
@@ -273,11 +416,15 @@ public enum CooldownLedger {
         }
 
         let cd = Cooldown(
-            platform: platform, runnerID: runnerID, capability: capability,
+            platform: platform, quotaPoolID: resolvedPoolID,
+            runnerID: runnerID, capability: capability,
             cause: cause, since: now, until: until,
             strikes: strikes, detail: String(detail.prefix(200))
         )
         if let priorIndex { entries[priorIndex] = cd } else { entries.append(cd) }
+        append(Event(action: .upsert, platform: platform,
+                     quotaPoolID: resolvedPoolID, runnerID: runnerID,
+                     capability: capability, cooldown: cd, createdAt: now))
         save(entries)
         return cd
     }
@@ -291,9 +438,9 @@ public enum CooldownLedger {
         var entries = loadEntries()
         let before = entries.count
         entries.removeAll { $0.platform == platform }
-        guard entries.count != before else { return false }
+        append(Event(action: .clear, platform: platform, platformWide: true))
         save(entries)
-        return true
+        return entries.count != before
     }
 
     /// 跑成功了就清掉，让计数从头开始。
@@ -301,20 +448,70 @@ public enum CooldownLedger {
     /// `runOneTask()` 真实任务成功时调用；一次成功只清理对应 Runner 能力，
     /// 不得顺手清掉同平台其他执行器的故障。
     public static func clear(_ platform: Platform, runnerID: String? = nil,
-                             capability: String? = nil) {
+                             capability: String? = nil, quotaPoolID: String? = nil) {
         var entries = loadEntries()
-        let before = entries.count
         if let runnerID {
+            let plans = PlansStore.load()
+            let resolvedPoolID = quotaPoolID ?? plans.quotaPoolID(
+                for: platform, machineID: Paths.machineID(), runnerID: runnerID)
+            let includeLegacy = !plans.hasExplicitQuotaPool(for: platform)
             entries.removeAll {
                 $0.platform == platform && $0.runnerID == runnerID
                     && $0.capability == capability
+                    && ($0.quotaPoolID == resolvedPoolID
+                        || (includeLegacy && $0.quotaPoolID == nil))
             }
+            append(Event(action: .clear, platform: platform,
+                         quotaPoolID: resolvedPoolID, runnerID: runnerID,
+                         capability: capability, includeLegacyPool: includeLegacy))
         } else {
             // 手动恢复和旧调用保留平台级语义。
             entries.removeAll { $0.platform == platform }
+            append(Event(action: .clear, platform: platform, platformWide: true))
         }
-        guard entries.count != before else { return }
         save(entries)
+    }
+
+    private static func key(_ cooldown: Cooldown) -> String {
+        [cooldown.platform.rawValue, cooldown.quotaPoolID ?? "legacy",
+         cooldown.runnerID ?? "*", cooldown.capability ?? "*"]
+            .joined(separator: "|")
+    }
+
+    private static func eventKey(_ event: Event) -> String {
+        [event.platform.rawValue, event.quotaPoolID ?? "legacy",
+         event.runnerID ?? "*", event.capability ?? "*"]
+            .joined(separator: "|")
+    }
+
+    private static func loadEvents() -> [Event] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: eventDirectory, includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])) ?? []
+        return files.compactMap { file -> Event? in
+            guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true,
+                  let data = ICloudSafe.read(file) else { return nil }
+            return try? SnapshotCoding.decoder().decode(Event.self, from: data)
+        }
+    }
+
+    private static func eventOrder(_ lhs: Event, _ rhs: Event) -> Bool {
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        if lhs.writerMachineID != rhs.writerMachineID {
+            return lhs.writerMachineID < rhs.writerMachineID
+        }
+        return lhs.id < rhs.id
+    }
+
+    private static func append(_ event: Event) {
+        try? FileManager.default.createDirectory(
+            at: eventDirectory, withIntermediateDirectories: true)
+        guard let data = try? SnapshotCoding.prettyEncoder().encode(event) else { return }
+        let safeWriter = event.writerMachineID.map {
+            $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_"
+        }
+        let filename = "event--\(String(safeWriter))--\(event.id).json"
+        _ = ICloudSafe.write(data, to: eventDirectory.appendingPathComponent(filename))
     }
 
     /// 从 agent 的报错文本里判断该不该进冷却、进哪种。

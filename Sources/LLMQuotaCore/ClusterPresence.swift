@@ -113,6 +113,14 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
     public var maxConcurrentTasks: Int
     public var runningTaskCount: Int
     public var runningRepoAliases: [String]
+    /// 目标机自检通过的工具能力，以及真实运行任务正在占用的同机资源。
+    public var capabilities: [String]
+    public var runningResourceClaims: [String]
+    /// 最近一轮协调器的权威状态与原因。nil 表示对端仍是旧版本，不能据此
+    /// 推断“空闲”或“卡住”。
+    public var coordinatorState: String?
+    public var coordinatorSummary: String?
+    public var coordinatorUpdatedAt: Date?
 
     /// 自己连自己**的 LAN 地址**通不通。
     ///
@@ -137,6 +145,11 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
     public var version: String
 
     public var id: String { machineID }
+
+    public var displayName: String {
+        Paths.privacySafeMachineDisplayName(
+            nodeName: nodeName, machineName: machineName, machineID: machineID)
+    }
 
     /// 容错解码。
     ///
@@ -174,6 +187,12 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
         runningTaskCount = try c.decodeIfPresent(Int.self, forKey: .runningTaskCount) ?? 0
         runningRepoAliases = try c.decodeIfPresent(
             [String].self, forKey: .runningRepoAliases) ?? []
+        capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities) ?? []
+        runningResourceClaims = try c.decodeIfPresent(
+            [String].self, forKey: .runningResourceClaims) ?? []
+        coordinatorState = try c.decodeIfPresent(String.self, forKey: .coordinatorState)
+        coordinatorSummary = try c.decodeIfPresent(String.self, forKey: .coordinatorSummary)
+        coordinatorUpdatedAt = try c.decodeIfPresent(Date.self, forKey: .coordinatorUpdatedAt)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast
         version = try c.decodeIfPresent(String.self, forKey: .version) ?? "?"
     }
@@ -187,7 +206,10 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
                 installedRelease: String? = nil,
                 repoAliases: [String] = [], automaticRepoAliases: [String] = [],
                 maxConcurrentTasks: Int = 0, runningTaskCount: Int = 0,
-                runningRepoAliases: [String] = []) {
+                runningRepoAliases: [String] = [], capabilities: [String] = [],
+                runningResourceClaims: [String] = [],
+                coordinatorState: String? = nil, coordinatorSummary: String? = nil,
+                coordinatorUpdatedAt: Date? = nil) {
         self.lastLogLines = lastLogLines
         self.restartsLastHour = restartsLastHour
         self.installedRelease = installedRelease
@@ -196,6 +218,11 @@ public struct ClusterPresence: Codable, Sendable, Identifiable {
         self.maxConcurrentTasks = maxConcurrentTasks
         self.runningTaskCount = runningTaskCount
         self.runningRepoAliases = runningRepoAliases
+        self.capabilities = capabilities
+        self.runningResourceClaims = runningResourceClaims
+        self.coordinatorState = coordinatorState
+        self.coordinatorSummary = coordinatorSummary
+        self.coordinatorUpdatedAt = coordinatorUpdatedAt
         self.machineID = machineID
         self.machineName = machineName
         self.nodeName = nodeName
@@ -256,6 +283,7 @@ public enum ClusterPresenceStore {
         // 没有真实、近期心跳的 work loop 就没有执行容量。不能用机型默认值
         // 冒充在线 worker，否则协调机可能把任务派给一台根本没人消费队列的机器。
         let slots = WorkerCapacityStore.current() ?? 0
+        let scheduler = SchedulerSnapshotStore.latest()
         let p = ClusterPresence(
             machineID: Paths.machineID(),
             machineName: Paths.machineName(),
@@ -284,7 +312,14 @@ public enum ClusterPresenceStore {
                 .map(\.alias).sorted(),
             maxConcurrentTasks: slots,
             runningTaskCount: running.count,
-            runningRepoAliases: Array(Set(running.compactMap { alias(for: $0.repo) })).sorted())
+            runningRepoAliases: Array(Set(running.compactMap { alias(for: $0.repo) })).sorted(),
+            capabilities: MachineCapabilities.detect(),
+            runningResourceClaims: Array(Set(running.flatMap(\.resourceClaims))).sorted(),
+            coordinatorState: slots > 0 ? (scheduler?.state.rawValue ?? "starting") : "offline",
+            coordinatorSummary: slots > 0
+                ? (scheduler?.summary ?? "协调器刚启动，尚未完成首轮调度")
+                : "没有真实、近期的协调器心跳",
+            coordinatorUpdatedAt: scheduler?.createdAt)
         guard let data = try? SnapshotCoding.prettyEncoder().encode(p) else { return }
         ICloudSafe.write(data, to: dir.appendingPathComponent("\(p.machineID).json"))
     }
