@@ -1091,17 +1091,27 @@ func cmdWork(_ args: [String]) throws {
         guard matches.count == 1, let current = matches.first else {
             print(Ansi.red(matches.isEmpty ? "找不到任务 " + id : "任务前缀不唯一")); exit(1)
         }
-        guard current.production?.requiresExperienceApproval == true else {
-            print(Ansi.red("只有需要体验验收的生产任务能用 reject；普通任务请用 discard")); exit(1)
-        }
         guard let branch = current.branch else {
             print(Ansi.red("任务没有可继续整改的分支")); exit(1)
         }
         let reason = rest.count > 1
             ? rest.dropFirst().joined(separator: " ")
             : "人工复核未通过"
-        guard Review.reject(repo: current.repo, branch: branch, reason: reason) else {
-            print(Ansi.red("拒绝失败：生产分支不存在或任务状态无法更新")); exit(1)
+        guard GitWorkspace.branchExists(branch, in: current.repo) else {
+            print(Ansi.red("拒绝失败：要继续整改的分支已经不存在")); exit(1)
+        }
+        let head = GitWorkspace.git(["rev-parse", branch], in: current.repo)
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !head.isEmpty else {
+            print(Ansi.red("拒绝失败：无法读取整改分支的当前提交")); exit(1)
+        }
+        let retry = Review.requeuedAfterHumanRejection(
+            current, reason: reason, head: head)
+        do {
+            _ = try TaskStore.transition(
+                retry, actor: "human-review", reason: "人工视觉复核未通过并交回原任务整改")
+        } catch {
+            print(Ansi.red("拒绝失败：\(error)")); exit(1)
         }
         Review.markDecided(repo: current.repo, branch: branch)
         _ = TaskBoardStore.publishNow()
