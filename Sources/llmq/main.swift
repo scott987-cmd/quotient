@@ -1083,6 +1083,31 @@ func cmdWork(_ args: [String]) throws {
             + (source?.displayName ?? "原负责人") + " → " + target.displayName)
         print(Ansi.dim("  分支 \(targetBranch) · 基线 \(targetHead.prefix(12)) · 已有 \(files.count) 个文件"))
 
+    case "reject":
+        guard let id = rest.first else {
+            print("用法：llmq work reject <任务id> [拒绝原因]"); exit(2)
+        }
+        let matches = TaskStore.all().filter { $0.id == id || $0.id.hasPrefix(id) }
+        guard matches.count == 1, let current = matches.first else {
+            print(Ansi.red(matches.isEmpty ? "找不到任务 " + id : "任务前缀不唯一")); exit(1)
+        }
+        guard current.production?.requiresExperienceApproval == true else {
+            print(Ansi.red("只有需要体验验收的生产任务能用 reject；普通任务请用 discard")); exit(1)
+        }
+        guard let branch = current.branch else {
+            print(Ansi.red("任务没有可继续整改的分支")); exit(1)
+        }
+        let reason = rest.count > 1
+            ? rest.dropFirst().joined(separator: " ")
+            : "人工复核未通过"
+        guard Review.reject(repo: current.repo, branch: branch, reason: reason) else {
+            print(Ansi.red("拒绝失败：生产分支不存在或任务状态无法更新")); exit(1)
+        }
+        Review.markDecided(repo: current.repo, branch: branch)
+        _ = TaskBoardStore.publishNow()
+        print(Ansi.green("已拒绝并交回整改 ") + current.id)
+        print(Ansi.dim("  保留分支、Owner 和上下文；最新反馈已写入任务提示词并重新排队"))
+
     case "pause":
         guard let id = rest.first else {
             print("用法：llmq work pause <任务id> [--reason <原因>]"); exit(2)
@@ -2233,7 +2258,7 @@ func cmdWork(_ args: [String]) throws {
             : Ansi.dim("\(p.displayName) 本来就不在冷却中"))
 
     default:
-        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|approve-sample|handoff|pause|unpause|architecture-review|retry|discard|progress|attempts|log]")
+        print("用法：llmq work [add|list|run|loop|install-loop|probe|cooldowns|resume|review|reserve|stale|idle|land|why|approve|approve-sample|handoff|reject|pause|unpause|architecture-review|retry|discard|progress|attempts|log]")
         exit(2)
     }
 }
