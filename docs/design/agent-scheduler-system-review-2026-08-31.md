@@ -590,4 +590,20 @@ runner/account identity 纳入采集协议，再允许同机多个 pool；不能
 - 云端调度心跳、移动端投影写入和陈旧身份删除均统一走 ICloudSafe；源码级守卫及相关
   37 项定向回归通过。
 - 最终 `swift build && swift test` 全量 1357 项通过（2 项按环境跳过，0 失败）。
-- 当前工作区未提交、未安装、未发布，也未创建、重试、合并或修改 Flint 任务。
+- 未创建、重试、合并或修改 Flint 任务。
+
+### 10.4 2026-09-03 发布实录
+
+- Mac 源提交 `30cf61e`，iOS 源提交 `568fb13`。
+- Mac 签名通用版 `f0057c732317ade313f7e76d6a2c30b42ef6bea53cbb4a44d3e3bbafa4fac141`
+  已安装到 Mac mini、Intel MacBook Pro、ARM MacBook Pro；逐台 SSH 核对安装标记、
+  CLI/App 文件哈希与常驻进程启动时间。三台 CLI 均为
+  `1ef7790e345e1787ed35b0227e6f988fc9bbcb437f01858cf267db363648bc8f`，App 均为
+  `3da8e5481694dbd0b80e34024d2315d95528d8d82f90d6ae14a1496bb5fe8d74`。
+- 首轮云盘回执等待超时，不算全机完成；M2 仍见旧清单时，通过 SSH 传送同一签名包，
+  再由其正常 `llmq update` 验签安装，未强制杀模型或绕过签名。
+- 随后 `llmq release verify --wait-seconds 30` 退出码 0，输出“所有在线机器已确认
+  f0057c732317”，云盘集群回执也已收齐。
+- TestFlight `202609030202`（构建 ID `7427b12b-f4c7-4e78-950a-5180a592371a`）
+  实查 `VALID/IN_BETA_TESTING`，内部测试组中复查到同一构建。用户手机是否已更新
+  和实际显示效果尚未代替用户确认。
