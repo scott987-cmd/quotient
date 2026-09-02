@@ -104,4 +104,98 @@ final class MilestoneTests: XCTestCase {
             "milestone:reject:/flint|abc1234",
         ])
     }
+
+    func testLegacyMilestoneDecodesAsLandedResult() throws {
+        let data = Data(#"{"repo":"/flint","repoName":"Flint","branch":"b","mergeSHA":"abc","subject":"旧成果","landedAt":"2026-08-22T00:00:00Z","evidenceFiles":[],"verdict":null}"#.utf8)
+        let item = try SnapshotCoding.decoder().decode(Milestone.Item.self, from: data)
+        XCTAssertFalse(item.isCheckpoint)
+        XCTAssertNil(item.taskID)
+    }
+
+    func testRunningCheckpointCanBeReviewedWithoutCreatingAnotherTask() throws {
+        let item = Milestone.Item(
+            repo: "/flint", repoName: "Flint", branch: "agent/kimi/live1",
+            mergeSHA: "def5678", subject: "人物母版三机位", landedAt: Date(),
+            evidenceFiles: ["front.jpg", "side.jpg"], verdict: nil,
+            taskID: "live1", isCheckpoint: true)
+        Milestone.save([item])
+        var source = WorkTask(id: "live1", prompt: "制作人物母版", repo: "/flint")
+        source.state = .running
+        source.branch = item.branch
+        source.platform = .kimi
+        source.ownerPlatform = .kimi
+        source.ownerRunnerID = "kimi.code"
+
+        XCTAssertTrue(Milestone.decide(
+            repo: "/flint", mergeSHA: "def5678", approved: false,
+            note: "45 度机位有白色遮挡，脸部近景拍成了胸口", tasks: [source]))
+
+        XCTAssertTrue(TaskStore.all().isEmpty,
+                      "运行中 checkpoint 被拒应反馈原会话，不能再拆整改任务")
+        let feedback = try XCTUnwrap(CollaborationStore.all().last)
+        XCTAssertEqual(feedback.taskID, "live1")
+        XCTAssertEqual(feedback.recipientRunnerID, "kimi.code")
+        XCTAssertEqual(feedback.kind, .finding)
+        XCTAssertTrue(feedback.summary.contains("白色遮挡"))
+    }
+
+    func testRunningCheckpointDirectoryBecomesOneHumanReviewItem() throws {
+        let repo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("checkpoint-repo-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let evidenceDir = repo.appendingPathComponent("Production/evidence/M0")
+        try FileManager.default.createDirectory(at: evidenceDir, withIntermediateDirectories: true)
+        let png = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+        try png.write(to: evidenceDir.appendingPathComponent("front.png"))
+        XCTAssertEqual(Proc.run("/usr/bin/git", ["init"], cwd: repo.path,
+                                env: [:], timeout: 10).exitCode, 0)
+        XCTAssertEqual(Proc.run("/usr/bin/git", ["add", "."], cwd: repo.path,
+                                env: [:], timeout: 10).exitCode, 0)
+        XCTAssertEqual(Proc.run("/usr/bin/git", ["-c", "user.name=Test", "-c",
+            "user.email=test@example.invalid", "commit", "-m", "checkpoint"],
+            cwd: repo.path, env: [:], timeout: 10).exitCode, 0)
+        var task = WorkTask(id: "live1", prompt: "制作人物母版", repo: repo.path)
+        task.state = .running
+        task.branch = "agent/kimi/live1"
+        let progress = WorkProgress(
+            taskID: task.id, sequence: 1, phase: "M0", summary: "三机位渲染完成",
+            evidence: ["Production/evidence/M0"], evidenceFingerprint: "fp",
+            requestedMinutes: 20, updatedAt: Date())
+
+        let item = try XCTUnwrap(Milestone.recordCheckpoint(
+            task: task, progress: progress, repo: repo.path))
+        XCTAssertTrue(item.isCheckpoint)
+        XCTAssertEqual(item.taskID, task.id)
+        XCTAssertEqual(item.evidenceFiles.count, 1)
+        XCTAssertEqual(Milestone.unreviewed().count, 1,
+                       "一个提交无论声明目录里有几份证据，都只能形成一张复核卡")
+    }
+
+    func testReviewPageLabelsRunningCheckpointHonestly() {
+        Milestone.save([Milestone.Item(
+            repo: "/flint", repoName: "Flint", branch: "agent/kimi/live1",
+            mergeSHA: "def5678", subject: "人物母版三机位", landedAt: Date(),
+            evidenceFiles: ["front.jpg"], verdict: nil,
+            taskID: "live1", isCheckpoint: true)])
+        let page = ViewFeed.reviewPage()
+        let section = page.sections.first { ($0.cards ?? []).contains { $0.id == "/flint|def5678" } }
+        let card = section?.cards?.first { $0.id == "/flint|def5678" }
+        XCTAssertEqual(section?.title, "待你复核成果（1）")
+        XCTAssertTrue(card?.body?.contains("任务仍在运行") == true)
+        XCTAssertFalse(card?.body?.contains("已合入 main") == true)
+    }
+
+    func testScreenshotOnlyCheckpointNotificationDoesNotClaimThereIsVideo() {
+        Milestone.save([Milestone.Item(
+            repo: "/flint", repoName: "Flint", branch: "agent/kimi/live1",
+            mergeSHA: "def5678", subject: "人物母版三机位", landedAt: Date(),
+            evidenceFiles: ["front.jpg", "side.jpg"], verdict: nil,
+            taskID: "live1", isCheckpoint: true)])
+        let notice = Nudge.pending(tasks: [], publishedAsks: []).first {
+            $0.key.hasPrefix("milestone-")
+        }
+        XCTAssertTrue(notice?.body.contains("2 张图片") == true)
+        XCTAssertFalse(notice?.body.contains("录屏") == true)
+    }
 }

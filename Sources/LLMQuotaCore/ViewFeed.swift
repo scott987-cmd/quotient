@@ -1091,13 +1091,17 @@ extension ViewFeed {
         var sections: [Section] = []
         if !milestones.isEmpty {
             sections.append(Section(
-                kind: "cards", title: "已落地成果（\(milestones.count)）",
-                note: "看实际截图或录屏；不满意会自动交回原 Agent 项目会话整改",
+                kind: "cards", title: "待你复核成果（\(milestones.count)）",
+                note: "看实际截图或录屏；运行中成果的意见直接回到原任务，不另拆任务",
                 cards: milestones.sorted { $0.landedAt > $1.landedAt }.map { item in
                     Card(id: item.id,
                          title: item.subject,
-                         body: item.repoName + " · 已合入 main，等你看实际效果",
-                         detail: "来源分支：\(item.branch)\n提交：\(item.mergeSHA)",
+                         body: item.repoName + (item.isCheckpoint
+                            ? " · 任务仍在运行，等你看阶段效果"
+                            : " · 已合入 main，等你看实际效果"),
+                         detail: "来源分支：\(item.branch)\n"
+                            + (item.isCheckpoint ? "阶段提交：" : "提交：")
+                            + item.mergeSHA,
                          tone: .neutral, icon: "play.rectangle",
                          trailing: Review.evidenceSummary(item.evidenceFiles),
                          images: item.evidenceFiles,
@@ -1105,7 +1109,9 @@ extension ViewFeed {
                             Action(id: "milestone:approve:" + item.repo + "|" + item.mergeSHA,
                                    label: "满意", style: "primary"),
                             Action(id: "milestone:reject:" + item.repo + "|" + item.mergeSHA,
-                                   label: "不满意，交回整改", style: "destructive",
+                                   label: item.isCheckpoint
+                                    ? "不通过，反馈原任务" : "不满意，交回整改",
+                                   style: "destructive",
                                    needsNote: true),
                          ])
                 }))

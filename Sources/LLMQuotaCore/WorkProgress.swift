@@ -15,11 +15,15 @@ public struct WorkProgress: Codable, Sendable, Equatable {
     public var evidenceFingerprint: String
     public var requestedMinutes: Int
     public var updatedAt: Date
+    /// 最近一次真实 checkpoint 的时间。普通 diff 只能续租；显式里程碑或
+    /// 新提交里真实出现的证据文件才能刷新它。
+    public var checkpointAt: Date?
 
     public init(taskID: String, sequence: Int, phase: String, summary: String,
                 nextStep: String? = nil, evidence: [String] = [],
                 evidenceFingerprint: String, requestedMinutes: Int = 20,
-                updatedAt: Date = Date()) {
+                updatedAt: Date = Date(), checkpointAt: Date? = nil,
+                automatic: Bool = false) {
         self.taskID = taskID
         self.sequence = sequence
         self.phase = phase
@@ -29,6 +33,7 @@ public struct WorkProgress: Codable, Sendable, Equatable {
         self.evidenceFingerprint = evidenceFingerprint
         self.requestedMinutes = requestedMinutes
         self.updatedAt = updatedAt
+        self.checkpointAt = automatic ? checkpointAt : (checkpointAt ?? updatedAt)
     }
 
     public init(from decoder: Decoder) throws {
@@ -43,6 +48,14 @@ public struct WorkProgress: Codable, Sendable, Equatable {
             forKey: .evidenceFingerprint) ?? ""
         requestedMinutes = try c.decodeIfPresent(Int.self, forKey: .requestedMinutes) ?? 20
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast
+        if c.contains(.checkpointAt) {
+            checkpointAt = try c.decodeIfPresent(Date.self, forKey: .checkpointAt)
+        } else {
+            // 老版本没有来源字段。能识别出的 worker 自动文案不冒充 Agent；
+            // 其余旧记录按主动汇报兼容，避免升级瞬间制造一批假告警。
+            let looksAutomatic = phase == "持续实现" && summary.hasPrefix("检测到")
+            checkpointAt = looksAutomatic ? nil : updatedAt
+        }
     }
 }
 
@@ -86,10 +99,16 @@ public enum WorkProgressStore {
     public static func record(taskID: String, phase: String, summary: String,
                               nextStep: String?, evidence: [String],
                               requestedMinutes: Int, repo: String,
-                              now: Date = Date()) throws -> WorkProgress {
+                              now: Date = Date(), automatic: Bool = false) throws -> WorkProgress {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let old = load(taskID: taskID)
-        let cleanEvidence = evidence.prefix(12).map { String($0.prefix(240)) }
+        let incomingEvidence = evidence.prefix(12).map { String($0.prefix(240)) }
+        // worker 的客观 diff/commit 续期没有新的证据参数。它只能补一条进度，
+        // 不能把 Agent 已明确上报、正等着同步到手机的截图/录屏清空。
+        // 新的非空列表仍可替换旧列表，让 Agent 主动提交下一版证据。
+        let cleanEvidence = incomingEvidence.isEmpty
+            ? (old?.evidence ?? [])
+            : incomingEvidence
         let item = WorkProgress(
             taskID: taskID,
             sequence: (old?.sequence ?? 0) + 1,
@@ -101,7 +120,11 @@ public enum WorkProgressStore {
             evidence: cleanEvidence,
             evidenceFingerprint: fingerprint(repo: repo, evidence: cleanEvidence),
             requestedMinutes: min(60, max(10, requestedMinutes)),
-            updatedAt: now)
+            updatedAt: now,
+            checkpointAt: automatic
+                ? (incomingEvidence.isEmpty ? old?.checkpointAt : now)
+                : now,
+            automatic: automatic)
         let data = try SnapshotCoding.prettyEncoder().encode(item)
         guard ICloudSafe.write(data, to: file(taskID: taskID)) else {
             throw NSError(domain: "WorkProgress", code: 1,
@@ -183,7 +206,10 @@ public enum WorkProgressSentinel {
         guard let startedAt = isRunning ? task.startedAt : (task.endedAt ?? task.startedAt) else {
             return nil
         }
-        let lastProof = progress?.updatedAt ?? startedAt
+        // worker 看到文件变化会自动续租，但那不是 Agent 主动交出的阶段成果。
+        // 两者共用 updatedAt 会让一个一直改文件却从不交 checkpoint 的任务
+        // 永远逃过 20 分钟巡检。
+        let lastProof = progress?.checkpointAt ?? startedAt
         let age = now.timeIntervalSince(lastProof)
         guard age >= interval else { return nil }
         return Finding(taskID: task.id,

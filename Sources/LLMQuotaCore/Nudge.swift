@@ -91,6 +91,18 @@ public enum Nudge {
         try? enc.encode(h).write(to: path)
     }
 
+    /// 撤回本轮“准备发送”的账。只删同 key、正文和时间戳的最后一条，
+    /// 不碰更早的真实投递历史。
+    static func forgetFailedAttempt(_ key: String, body: String?, now: Date) {
+        var h = history()
+        guard let i = h.lastIndex(where: {
+            $0.key == key && $0.body == body && abs($0.at.timeIntervalSince(now)) < 2
+        }) else { return }
+        h.remove(at: i)
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        try? enc.encode(h).write(to: path)
+    }
+
     /// 现在有什么值得打扰人的。**每条都对应一个待决事项。**
     /// `tasks` 可注入，只为让测试能造出「搁浅」这种状态 ——
     /// 它是靠多个任务的组合才成立的，不注入就没法在测试里表达。
@@ -155,9 +167,14 @@ public enum Nudge {
         // 不再用空数组关闭提醒：那会让记录、页面和通知三条链互相矛盾。
         let fresh = Milestone.unreviewed()
         if !fresh.isEmpty {
-            let body = fresh.count == 1
-                ? "新成果:\(fresh[0].subject.prefix(28)) —— 录屏拍好了,你看一眼"
-                : "\(fresh.count) 件新成果做好了,录屏都在,等你看"
+            let body: String
+            if fresh.count == 1 {
+                let evidence = Review.evidenceSummary(fresh[0].evidenceFiles)
+                    ?? "可视证据"
+                body = "新成果:\(fresh[0].subject.prefix(28)) —— \(evidence)已就绪,你看一眼"
+            } else {
+                body = "\(fresh.count) 件新成果做好了,截图/录屏已就绪,等你看"
+            }
             out.append(("milestone-\(fresh.count)-\(fresh.last?.mergeSHA ?? "")",
                         .needsYou, body, fresh.count))
         }
@@ -355,6 +372,22 @@ public enum Nudge {
         return Array(repeating: total, count: items.count)
     }
 
+    /// 先占去重位，避免网络已投递但进程在记账前被终止时反复轰炸；如果发送端
+    /// 明确返回 0（缺配置、签名失败或所有设备被 APNs 拒绝），再撤回本轮占位，
+    /// 让下一轮在配置恢复后补发。
+    static func deliver(key: String, kind: Push.Kind, body: String, badge: Int,
+                        now: Date,
+                        send: (Push.Kind, String, Int) -> Int) -> Bool {
+        guard !recentlySent(key, body: body, now: now) else { return false }
+        guard hasSomethingToShow(key: key) else { return false }
+        remember(key, body: body, now: now)
+        guard send(kind, body, badge) > 0 else {
+            forgetFailedAttempt(key, body: body, now: now)
+            return false
+        }
+        return true
+    }
+
     public static func run(now: Date = Date(), synchronizeBadge: Bool = true) -> Int {
         let items = pending(now: now)
         let notificationBadges = notificationBadges(for: items)
@@ -368,37 +401,11 @@ public enum Nudge {
 
         var sent = 0
         for (item, appBadge) in zip(items, notificationBadges) {
-            guard !recentlySent(item.key, body: item.body, now: now) else { continue }
-            // **指向的页面是空的就别推。**
-            //
-            // 老板 2026-08-22 两次报同一件事:「收到消息说让我评审,进去就没有了」
-            // 「老是有一个消息让我审批,手机点进去就没有了」。
-            // 每次的具体原因都不同(成果页没做、拦截没按钮、搁浅没页面),
-            // 但形状是一个:**推了一件他点进去做不了的事**。
-            //
-            // 逐个修是打地鼠。这里做结构性的闸:推送的 key 前缀就是页面名,
-            // 发之前看那一页有没有卡片,没有就咽回去 —— 宁可漏一条,
-            // 也不要让通知变成「点开是空的」的代名词。那会毁掉所有通知的可信度。
-            guard hasSomethingToShow(key: item.key) else { continue }
-
-            // **先记账，再发送。**
-            //
-            // 原来的顺序是「发送 → 记账」，看着更合理（发失败就不该记）。
-            // 但这个环节挂在**20 秒预算**的 phase 里，而推送要走网络 ——
-            // 发出去了、记账那一步被掐断，于是下一轮又认为「没发过」，再发一次。
-            //
-            // 实测（2026-08-18，老板的原话「隔半个小时就推送一个 S7 验收取证」）：
-            // 「提醒」环节在最近 400 行日志里超时 **47 次**，
-            // 而 nudges.json 里只有一条记录 —— 发了很多次，一次都没记上。
-            //
-            // 两种错的代价不对称：
-            //   · 先记账后发送 → 发送失败时漏一条通知，人下次打开 App 照样看得见；
-            //   · 先发送后记账 → 每轮重发，人被持续骚扰，而且**越慢越吵**
-            //     （网络越差，掐断的概率越大，重发越频繁）。
-            // 所以宁可漏，不可重。
-            remember(item.key, body: item.body, now: now)
-            guard Push.send(item.kind, body: item.body, badge: appBadge) > 0 else { continue }
-            sent += 1
+            if deliver(key: item.key, kind: item.kind, body: item.body,
+                       badge: appBadge, now: now,
+                       send: { Push.send($0, body: $1, badge: $2) }) {
+                sent += 1
+            }
         }
         return sent
     }

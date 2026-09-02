@@ -37,6 +37,41 @@ public enum Milestone {
         public var evidenceFiles: [String]
         /// 老板看完的结论:nil=还没看
         public var verdict: String?
+        /// 运行中阶段成果对应的原任务。旧的已落地记录没有这个字段。
+        public var taskID: String?
+        /// true = 尚未合入的运行中 checkpoint；false = 已落地主线成果。
+        public var isCheckpoint: Bool
+
+        public init(repo: String, repoName: String, branch: String, mergeSHA: String,
+                    subject: String, landedAt: Date, evidenceFiles: [String],
+                    verdict: String? = nil, taskID: String? = nil,
+                    isCheckpoint: Bool = false) {
+            self.repo = repo
+            self.repoName = repoName
+            self.branch = branch
+            self.mergeSHA = mergeSHA
+            self.subject = subject
+            self.landedAt = landedAt
+            self.evidenceFiles = evidenceFiles
+            self.verdict = verdict
+            self.taskID = taskID
+            self.isCheckpoint = isCheckpoint
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            repo = try c.decode(String.self, forKey: .repo)
+            repoName = try c.decode(String.self, forKey: .repoName)
+            branch = try c.decode(String.self, forKey: .branch)
+            mergeSHA = try c.decode(String.self, forKey: .mergeSHA)
+            subject = try c.decode(String.self, forKey: .subject)
+            landedAt = try c.decode(Date.self, forKey: .landedAt)
+            evidenceFiles = try c.decodeIfPresent([String].self,
+                                                   forKey: .evidenceFiles) ?? []
+            verdict = try c.decodeIfPresent(String.self, forKey: .verdict)
+            taskID = try c.decodeIfPresent(String.self, forKey: .taskID)
+            isCheckpoint = try c.decodeIfPresent(Bool.self, forKey: .isCheckpoint) ?? false
+        }
     }
 
     static var file: URL {
@@ -68,6 +103,13 @@ public enum Milestone {
         files.contains(where: EvidenceGate.isEvidenceFile)
     }
 
+    /// 人能在复核卡里直接看的证据。文本日志仍是有效测试证据，但不能被
+    /// 当成截图/视频送进媒体抽取链。
+    public static func isVisualEvidenceFile(_ path: String) -> Bool {
+        EvidenceGate.isEvidenceFile(path)
+            && (Review.isImageName(path) || Review.isVideoName(path))
+    }
+
     /// 落地时记一笔。由 `Review.merge` 成功后调用。
     /// - Returns: 记下的那条(不值得展示时返回 nil)
     @discardableResult
@@ -89,6 +131,76 @@ public enum Milestone {
         items.append(item)
         // 只留最近 30 条 —— 手机上翻不动更多,老的看完就没用了。
         save(items.suffix(30).map { $0 })
+        return item
+    }
+
+    /// 把 Agent 显式声明的证据路径展开成当前提交里真实存在的视觉文件。
+    /// 允许声明一个目录，但只收 Git 已提交的图片/视频；临时文件和口头路径
+    /// 不能进入人的复核队列。
+    static func committedVisualEvidence(repo: String, revision: String,
+                                        declared: [String]) -> [String] {
+        let root = URL(fileURLWithPath: repo).standardizedFileURL.path
+        var seen = Set<String>()
+        var files: [String] = []
+        for raw in declared {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let absolute = URL(fileURLWithPath: trimmed,
+                               relativeTo: URL(fileURLWithPath: repo)).standardizedFileURL.path
+            let relative: String
+            if absolute == root {
+                relative = "."
+            } else if absolute.hasPrefix(root + "/") {
+                relative = String(absolute.dropFirst(root.count + 1))
+            } else {
+                continue
+            }
+            let listed = GitWorkspace.git(
+                ["ls-tree", "-r", "--name-only", revision, "--", relative], in: repo)
+                .stdout.split(separator: "\n").map(String.init)
+            for path in listed where isVisualEvidenceFile(path)
+                && seen.insert(path).inserted {
+                files.append(path)
+            }
+        }
+        return files
+    }
+
+    /// 运行中任务一旦显式上报了已提交的视觉证据，就在合入前创建一张复核卡。
+    /// 它和最终 merge review 是两条链：这里看阶段效果，不批准合并，也不拆任务。
+    @discardableResult
+    public static func recordCheckpoint(task: WorkTask, progress: WorkProgress,
+                                        repo: String, now: Date = Date()) -> Item? {
+        guard task.state == .running, task.id == progress.taskID,
+              !progress.evidence.isEmpty,
+              let revision = GitWorkspace.headSHA(in: repo) else { return nil }
+        let visual = committedVisualEvidence(
+            repo: repo, revision: revision, declared: progress.evidence)
+        guard !visual.isEmpty else { return nil }
+        let branch = task.branch ?? GitWorkspace.git(
+            ["rev-parse", "--abbrev-ref", "HEAD"], in: repo).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let digestID = repo + "|" + branch
+        let extracted = Review.extractEvidence(
+            repo: repo, branch: revision, files: visual, digestID: digestID,
+            revision: String(revision.prefix(12)), context: progress.summary,
+            preferredFiles: Set(visual))
+        guard !extracted.isEmpty else { return nil }
+        let item = Item(
+            repo: repo,
+            repoName: URL(fileURLWithPath: repo).lastPathComponent,
+            branch: branch,
+            mergeSHA: revision,
+            subject: progress.summary,
+            landedAt: now,
+            evidenceFiles: extracted,
+            verdict: nil,
+            taskID: task.id,
+            isCheckpoint: true)
+        var items = all()
+        guard !items.contains(where: { $0.id == item.id }) else { return nil }
+        items.append(item)
+        guard save(items.suffix(30).map { $0 }) else { return nil }
         return item
     }
 
@@ -145,7 +257,8 @@ public enum Milestone {
         all().filter { $0.verdict == nil }
     }
 
-    /// 记录老板对已落地成果的结论；不满意时立即生成整改任务。
+    /// 记录老板对成果的结论。运行中 checkpoint 的意见回到原任务会话；
+    /// 已落地成果不满意时才生成整改任务。
     ///
     /// 整改任务是新任务，但 owner 精确继承原实现者。会话本身按
     /// `稳定工作区 × runner × 能力泳道` 保存，所以新任务 ID 不会丢项目上下文；
@@ -161,6 +274,37 @@ public enum Milestone {
         // 不能再造第二条整改任务。
         if items[index].verdict != nil { return true }
         let item = items[index]
+
+        if item.isCheckpoint {
+            let source = tasks.last(where: { $0.id == item.taskID })
+                ?? tasks.last(where: { $0.repo == repo && $0.branch == item.branch })
+            let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let feedback = (trimmed?.isEmpty == false ? trimmed : nil)
+                ?? (approved
+                    ? "阶段成果已确认，保持原任务与 Owner，继续下一质量门。"
+                    : "阶段成果未通过；请先完整查看证据，对照质量契约修正后再交下一版。")
+            let verb = approved ? "用户已确认阶段成果：" : "用户未通过阶段成果："
+            do {
+                _ = try CollaborationStore.publish(CollaborationEvent(
+                    id: "checkpoint-verdict:\(mergeSHA):\(approved ? "approved" : "rejected")",
+                    project: repo,
+                    taskID: item.taskID ?? source?.id,
+                    graphID: source?.graphID,
+                    lane: source.map { TaskCapabilityLane.classify($0.prompt) },
+                    senderRunnerID: "human",
+                    recipientRunnerID: source?.ownerRunnerID,
+                    kind: approved ? .decision : .finding,
+                    summary: verb + feedback,
+                    details: "阶段：\(item.subject)\n分支：\(item.branch)\n提交：\(mergeSHA)",
+                    branch: item.branch,
+                    commitSHA: mergeSHA,
+                    artifacts: item.evidenceFiles))
+            } catch {
+                return false
+            }
+            items[index].verdict = approved ? "approved" : "rejected"
+            return save(items)
+        }
 
         if !approved {
             let origin = "milestone-remediation:" + mergeSHA

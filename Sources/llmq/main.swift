@@ -1327,7 +1327,23 @@ func cmdWork(_ args: [String]) throws {
             taskID: taskID, phase: phase, summary: summary,
             nextStep: option("--next"), evidence: evidence,
             requestedMinutes: requested, repo: workspace)
-        _ = Watchdog.run("progress.publish", timeout: 8) { TaskBoardStore.publishNow() }
+        let checkpoint = Milestone.recordCheckpoint(
+            task: progressTask, progress: item, repo: workspace)
+        if let checkpoint {
+            _ = Milestone.dispatchVisualCheck(checkpoint, repoPath: workspace)
+            // 重大阶段成果不能只写进本机账本等下一轮采集。先发布有媒体的复核卡，
+            // 再发提醒；否则用户点进通知时页面仍为空。
+            _ = Watchdog.run("progress.publish", timeout: 20) {
+                _ = TaskBoardStore.publishNow()
+                _ = ViewFeed.publish(ViewFeed.reviewPage())
+                _ = ViewFeed.publishMenu(ViewFeed.menu())
+                return Nudge.run(synchronizeBadge: false)
+            }
+        } else {
+            _ = Watchdog.run("progress.publish", timeout: 8) {
+                TaskBoardStore.publishNow()
+            }
+        }
         print(Ansi.green("已汇报里程碑 #\(item.sequence) ")
               + Ansi.dim("\(item.phase)：\(item.summary)"))
 
@@ -3209,12 +3225,34 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 } else {
                     summary = "检测到工作区有新改动（\(changed) 个文件），服务端自动保持当前会话"
                 }
+                // Agent 忘记显式报 progress 时，新提交里的截图/录屏仍然是客观的
+                // 阶段成果。只看这一提交改动的媒体，不能把历史证据带到每个新 SHA
+                // 上重复生成复核卡。
+                let committedEvidence: [String]
+                if automatic.headChanged, let currentHead {
+                    committedEvidence = GitWorkspace.git([
+                        "diff-tree", "--no-commit-id", "--name-only", "-r", currentHead
+                    ], in: ws.path).stdout.split(separator: "\n").map(String.init)
+                        .filter(Milestone.isVisualEvidenceFile)
+                } else {
+                    committedEvidence = []
+                }
                 if let item = try? WorkProgressStore.record(
                     taskID: task.id, phase: "持续实现", summary: summary,
-                    nextStep: "继续当前任务", evidence: [], requestedMinutes: 20,
-                    repo: ws.path),
+                    nextStep: "继续当前任务", evidence: committedEvidence,
+                    requestedMinutes: 20,
+                    repo: ws.path, automatic: true),
                    let verified = leaseGate.renewal(progress: item) {
                     ProjectionInvalidation.markDirty()
+                    if !committedEvidence.isEmpty {
+                        DispatchQueue.global(qos: .utility).async {
+                            guard let checkpoint = Milestone.recordCheckpoint(
+                                task: task, progress: item, repo: ws.path) else { return }
+                            _ = Milestone.dispatchVisualCheck(checkpoint, repoPath: ws.path)
+                            _ = Showcase.refresh(force: true)
+                            _ = Nudge.run(synchronizeBadge: false)
+                        }
+                    }
                     print(Ansi.cyan("  自动续期 \(Int(verified.seconds / 60)) 分钟：")
                           + Ansi.dim(summary))
                     return Proc.DeadlineExtension(

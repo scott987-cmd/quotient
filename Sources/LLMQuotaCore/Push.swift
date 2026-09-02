@@ -40,6 +40,31 @@ public enum Push {
         public var device: String
         public var environment: String
         public var updatedAt: String?
+        /// APNs topic。新客户端随 device token 一起登记；旧记录没有时退回配置值。
+        public var bundleID: String?
+
+        public init(token: String, device: String, environment: String,
+                    updatedAt: String? = nil, bundleID: String? = nil) {
+            self.token = token
+            self.device = device
+            self.environment = environment
+            self.updatedAt = updatedAt
+            self.bundleID = bundleID
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case token, device, environment, updatedAt, bundleID
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            token = try c.decode(String.self, forKey: .token)
+            device = try c.decodeIfPresent(String.self, forKey: .device) ?? "未知设备"
+            environment = try c.decodeIfPresent(String.self, forKey: .environment)
+                ?? "production"
+            updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
+            bundleID = try c.decodeIfPresent(String.self, forKey: .bundleID)
+        }
     }
 
     /// 通知的分类。**决定要不要打扰人**，所以是个显式的类型而不是随手传字符串。
@@ -124,7 +149,8 @@ public enum Push {
             let payload: [String: Any] = ["aps": aps, "kind": kind.rawValue]
             guard let data = try? JSONSerialization.data(withJSONObject: payload) else { continue }
             if post(token: d.token, environment: d.environment,
-                    payload: data, jwt: jwt, cfg: cfg) { ok += 1 }
+                    payload: data, jwt: jwt, cfg: cfg,
+                    topic: topic(for: d, config: cfg)) { ok += 1 }
         }
         return ok
     }
@@ -151,9 +177,18 @@ public enum Push {
         var ok = 0
         for d in list {
             if post(token: d.token, environment: d.environment,
-                    payload: data, jwt: jwt, cfg: cfg, pushType: "alert") { ok += 1 }
+                    payload: data, jwt: jwt, cfg: cfg,
+                    topic: topic(for: d, config: cfg), pushType: "alert") { ok += 1 }
         }
         return ok
+    }
+
+    /// 每个 device token 使用登记时的 Bundle ID。这样新旧 TestFlight 包并存时
+    /// 不会让一份全局配置把其中一批设备静默打到错误的 topic。
+    static func topic(for device: Device, config: Config) -> String {
+        let registered = device.bundleID?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return registered.isEmpty ? config.bundleID : registered
     }
 
     /// 一次 APNs 投递。用 curl 而不是 URLSession ——
@@ -161,6 +196,7 @@ public enum Push {
     /// 取决于系统版本，curl 是确定的。
     static func post(token: String, environment: String,
                      payload: Data, jwt: String, cfg: Config,
+                     topic: String? = nil,
                      pushType: String = "alert") -> Bool {
         let host = environment == "sandbox"
             ? "api.sandbox.push.apple.com" : "api.push.apple.com"
@@ -173,7 +209,7 @@ public enum Push {
             "-s", "-o", "/dev/null", "-w", "%{http_code}",
             "--http2", "-X", "POST",
             "-H", "authorization: bearer " + jwt,
-            "-H", "apns-topic: " + cfg.bundleID,
+            "-H", "apns-topic: " + (topic ?? cfg.bundleID),
             "-H", "apns-push-type: " + pushType,
             // 静默推送必须用低优先级，用 10 会被 APNs 直接拒（BadPriority）。
             "-H", "apns-priority: " + (pushType == "background" ? "5" : "10"),

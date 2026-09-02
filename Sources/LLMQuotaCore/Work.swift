@@ -2594,6 +2594,7 @@ public enum Proc {
 
         var timedOut = false
         var deadline = Date().addingTimeInterval(timeout)
+        var hasExtendedDeadline = false
         var nextExtensionCheck = Date()
         while p.isRunning && Date() < deadline {
             // Agent 已经把结构化人工问题写出来时，继续让模型在后台等待登录
@@ -2608,10 +2609,14 @@ public enum Proc {
             if now >= nextExtensionCheck {
                 nextExtensionCheck = now.addingTimeInterval(1)
                 if let ext = deadlineExtension?(deadline), ext.seconds > 0 {
-                    // 一次真实里程碑就是给当前会话追加一段执行租约。
-                    // 不能从 `now` 重算，否则提前汇报只会被吞掉，等临近截止时
-                    // 这条汇报又可能已经过了新鲜期。
-                    let proposed = deadline.addingTimeInterval(ext.seconds)
+                    // 第一份真实里程碑给基础时限追加一整段，避免刚开工就完成的
+                    // 进展被基础租约吞掉。之后改成“最近进展 + 本次租约”的滑动
+                    // 窗口：Blender 导出大文件时指纹会连续变化，若每次都继续累加，
+                    // 几分钟 I/O 就能预支数小时，模型随后挂死也迟迟不会超时。
+                    let proposed = hasExtendedDeadline
+                        ? now.addingTimeInterval(ext.seconds)
+                        : deadline.addingTimeInterval(ext.seconds)
+                    hasExtendedDeadline = true
                     if proposed > deadline { deadline = proposed }
                 }
             }

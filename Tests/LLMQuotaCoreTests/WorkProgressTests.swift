@@ -188,6 +188,86 @@ final class WorkProgressTests: XCTestCase {
         XCTAssertEqual(WorkProgressStore.load(taskID: "task"), second)
     }
 
+    func testAutomaticProgressDoesNotErasePreviouslyReportedEvidence() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("llmq-progress-evidence-\(UUID().uuidString)")
+        let repo = root.appendingPathComponent("repo")
+        let progressDir = root.appendingPathComponent("progress")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer {
+            WorkProgressStore.dirOverride = nil
+            try? FileManager.default.removeItem(at: root)
+        }
+        WorkProgressStore.dirOverride = progressDir
+        XCTAssertEqual(Proc.run("/usr/bin/git", ["init"], cwd: repo.path,
+                                env: [:], timeout: 10).exitCode, 0)
+        try Data("image".utf8).write(to: repo.appendingPathComponent("evidence.png"))
+
+        _ = try WorkProgressStore.record(
+            taskID: "task", phase: "取证", summary: "已生成三机位截图", nextStep: "继续优化",
+            evidence: ["evidence.png"], requestedMinutes: 20, repo: repo.path, now: now)
+        let automatic = try WorkProgressStore.record(
+            taskID: "task", phase: "持续实现", summary: "检测到工作区有新改动",
+            nextStep: "继续当前任务", evidence: [], requestedMinutes: 20,
+            repo: repo.path, now: now.addingTimeInterval(60))
+
+        XCTAssertEqual(automatic.evidence, ["evidence.png"],
+                       "自动续期只能更新进度，不能把已上报给人的证据清空")
+    }
+
+    func testAutomaticWorkspaceChangesDoNotSilenceTwentyMinuteInspection() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("llmq-progress-inspection-\(UUID().uuidString)")
+        let repo = root.appendingPathComponent("repo")
+        let progressDir = root.appendingPathComponent("progress")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer {
+            WorkProgressStore.dirOverride = nil
+            try? FileManager.default.removeItem(at: root)
+        }
+        WorkProgressStore.dirOverride = progressDir
+        XCTAssertEqual(Proc.run("/usr/bin/git", ["init"], cwd: repo.path,
+                                env: [:], timeout: 10).exitCode, 0)
+        var task = WorkTask(id: "task", prompt: "长任务", repo: repo.path)
+        task.state = .running
+        task.startedAt = now
+
+        try Data("wip".utf8).write(to: repo.appendingPathComponent("wip.txt"))
+        let automatic = try WorkProgressStore.record(
+            taskID: task.id, phase: "持续实现", summary: "检测到工作区有新改动",
+            nextStep: "继续当前任务", evidence: [], requestedMinutes: 20,
+            repo: repo.path, now: now.addingTimeInterval(1_200), automatic: true)
+
+        XCTAssertNil(automatic.checkpointAt)
+        XCTAssertNotNil(WorkProgressSentinel.finding(
+            for: task, progress: automatic, now: now.addingTimeInterval(1_201)),
+            "文件一直在变不等于 Agent 交了阶段成果；20 分钟巡检不能被自动心跳骗过")
+    }
+
+    func testCommittedVisualEvidenceCountsAsARealCheckpoint() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("llmq-progress-visual-\(UUID().uuidString)")
+        let repo = root.appendingPathComponent("repo")
+        let progressDir = root.appendingPathComponent("progress")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer {
+            WorkProgressStore.dirOverride = nil
+            try? FileManager.default.removeItem(at: root)
+        }
+        WorkProgressStore.dirOverride = progressDir
+        XCTAssertEqual(Proc.run("/usr/bin/git", ["init"], cwd: repo.path,
+                                env: [:], timeout: 10).exitCode, 0)
+        try Data("image".utf8).write(to: repo.appendingPathComponent("evidence.png"))
+
+        let checkpoint = try WorkProgressStore.record(
+            taskID: "task", phase: "持续实现", summary: "检测到新提交",
+            nextStep: "继续当前任务", evidence: ["evidence.png"],
+            requestedMinutes: 20, repo: repo.path, now: now, automatic: true)
+
+        XCTAssertEqual(checkpoint.checkpointAt, now,
+                       "提交里真的新增了视觉证据时，自动检测也应算可核验 checkpoint")
+    }
+
     func testProcAddsAnEarlyLeaseWithoutRestartingProcess() {
         var used = false
         let result = Proc.run(
@@ -200,6 +280,21 @@ final class WorkProgressTests: XCTestCase {
         XCTAssertFalse(result.timedOut)
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(used)
+    }
+
+    func testDenseProgressDoesNotAccumulateFutureLease() {
+        var extensionCount = 0
+        let result = Proc.run(
+            "/bin/sleep", ["2.6"], cwd: "/tmp", env: [:], timeout: 1.1,
+            deadlineExtension: { _ in
+                guard extensionCount < 2 else { return nil }
+                extensionCount += 1
+                return Proc.DeadlineExtension(seconds: 1, reason: "dense file writes")
+            })
+
+        XCTAssertTrue(result.timedOut,
+                      "密集进展只能把租约滑到最近进展之后，不能逐次叠加")
+        XCTAssertEqual(extensionCount, 2)
     }
 
     func testLegacyProgressRecordDecodesWithSafeDefaults() throws {

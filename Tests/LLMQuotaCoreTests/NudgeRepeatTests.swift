@@ -100,4 +100,25 @@ final class NudgeRepeatTests: XCTestCase {
         XCTAssertGreaterThan(48 * 3600.0, Nudge.repeatSameAfter,
                              "保留期必须严格长于比对窗口，否则边界上会漏判")
     }
+
+    /// 发送端没配置、所有 token 都失败时，不能把提醒永久吃掉。
+    func testFailedDeliveryDoesNotConsumeReminder() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+
+        XCTAssertFalse(Nudge.deliver(
+            key: key, kind: .trouble, body: body, badge: 0, now: now,
+            send: { _, _, _ in 0 }))
+        XCTAssertFalse(Nudge.recentlySent(key, body: body, now: now),
+                       "发送失败后下一轮必须还能重试")
+    }
+
+    func testSuccessfulDeliveryConsumesReminder() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+
+        XCTAssertTrue(Nudge.deliver(
+            key: key, kind: .trouble, body: body, badge: 0, now: now,
+            send: { _, _, _ in 1 }))
+        XCTAssertTrue(Nudge.recentlySent(key, body: body, now: now),
+                      "真实投递成功后才进入去重窗口")
+    }
 }
