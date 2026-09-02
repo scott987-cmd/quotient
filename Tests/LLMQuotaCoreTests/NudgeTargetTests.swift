@@ -40,6 +40,58 @@ final class NudgeTargetTests: XCTestCase {
         XCTAssertTrue(Nudge.hasSomethingToShow(key: "review-2"))
     }
 
+    func testMilestoneNotificationTargetsReviewPage() {
+        publish("review", cards: 1)
+        XCTAssertEqual(Nudge.targetPage(for: "milestone-1-deadbeef"), "review")
+        XCTAssertTrue(Nudge.hasSomethingToShow(key: "milestone-1-deadbeef"))
+    }
+
+    func testMilestoneWaitsUntilCardAndEvidenceReachMobileRoot() throws {
+        let local = tmp()
+        let mobile = tmp()
+        let image = "checkpoint.jpg"
+        let card = ViewFeed.Card(id: "repo|deadbeef", title: "阶段成果",
+                                 images: [image])
+        let page = ViewFeed.Page(page: "review", sections: [
+            ViewFeed.Section(kind: "cards", cards: [card])
+        ])
+        XCTAssertTrue(ViewFeed.publish(page, root: local))
+        XCTAssertFalse(Nudge.mobileContentReady(
+            key: "milestone-1-deadbeef", localRoot: local, mobileRoot: mobile))
+
+        XCTAssertTrue(ViewFeed.publish(page, root: mobile))
+        XCTAssertFalse(Nudge.mobileContentReady(
+            key: "milestone-1-deadbeef", localRoot: local, mobileRoot: mobile),
+            "页面先到、证据没到时也不能提前推送")
+
+        let evidence = mobile.appendingPathComponent("evidence", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        try Data("image".utf8).write(to: evidence.appendingPathComponent(image))
+        XCTAssertTrue(Nudge.mobileContentReady(
+            key: "milestone-1-deadbeef", localRoot: local, mobileRoot: mobile))
+    }
+
+    func testMilestoneReadinessIgnoresUnrelatedOldCardWithMissingEvidence() throws {
+        let local = tmp()
+        let mobile = tmp()
+        let current = ViewFeed.Card(id: "repo|deadbeef", title: "本次成果",
+                                    images: ["current.jpg"])
+        let old = ViewFeed.Card(id: "repo|old", title: "旧成果",
+                                images: ["already-cleaned.jpg"])
+        let page = ViewFeed.Page(page: "review", sections: [
+            ViewFeed.Section(kind: "cards", cards: [current, old])
+        ])
+        XCTAssertTrue(ViewFeed.publish(page, root: local))
+        XCTAssertTrue(ViewFeed.publish(page, root: mobile))
+        let evidence = mobile.appendingPathComponent("evidence", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        try Data("image".utf8).write(to: evidence.appendingPathComponent("current.jpg"))
+
+        XCTAssertTrue(Nudge.mobileContentReady(
+            key: "milestone-2-deadbeef", localRoot: local, mobileRoot: mobile),
+            "旧卡片的证据已清理时，不能拦住本次成果通知")
+    }
+
     /// 没有对应页面的推送(比如搁浅)一律拦下 —— 那正是他第二次报的那条。
     func testUnpublishedPageIsSuppressed() {
         XCTAssertFalse(Nudge.hasSomethingToShow(key: "blocked-1"))

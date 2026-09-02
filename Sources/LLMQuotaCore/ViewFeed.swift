@@ -168,8 +168,10 @@ public enum ViewFeed {
 
     // MARK: - 写出去
 
-    static var dir: URL {
-        Paths.sharedRoot.appendingPathComponent("views", isDirectory: true)
+    static var dir: URL { dir(at: Paths.sharedRoot) }
+
+    static func dir(at root: URL) -> URL {
+        root.appendingPathComponent("views", isDirectory: true)
     }
 
     @discardableResult
@@ -222,14 +224,21 @@ public enum ViewFeed {
     }
 
     /// 读回已经发出去的那一页 —— 推送前要拿它核对「点进去有没有东西」。
-    public static func published(page: String) -> Page? {
-        let url = dir.appendingPathComponent(page + ".json")
-        guard let d = try? Data(contentsOf: url) else { return nil }
+    public static func published(
+        page: String, root: URL = Paths.sharedRoot,
+        read: ((URL) -> Data?)? = nil
+    ) -> Page? {
+        let url = dir(at: root).appendingPathComponent(page + ".json")
+        let data: Data?
+        if let read { data = read(url) }
+        else { data = try? Data(contentsOf: url) }
+        guard let d = data else { return nil }
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
         return try? dec.decode(Page.self, from: d)
     }
 
-    public static func publish(_ page: Page) -> Bool {
+    public static func publish(_ page: Page, root: URL = Paths.sharedRoot) -> Bool {
+        let dir = dir(at: root)
         try? FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent(page.page + ".json")
@@ -242,7 +251,7 @@ public enum ViewFeed {
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
         guard let d = try? enc.encode(page) else { return false }
-        return (try? d.write(to: url)) != nil
+        return (try? d.write(to: url, options: .atomic)) != nil
     }
 
     // MARK: - 收动作

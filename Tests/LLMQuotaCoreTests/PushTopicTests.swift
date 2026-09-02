@@ -23,4 +23,16 @@ final class PushTopicTests: XCTestCase {
         XCTAssertEqual(Push.topic(for: device, config: config),
                        "com.example.legacy")
     }
+
+    func testNotificationPayloadCarriesDestinationPage() throws {
+        let data = try XCTUnwrap(Push.notificationPayload(
+            .needsYou, body: "阶段成果等你确认", badge: 1, page: "review"))
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(json["page"] as? String, "review")
+        XCTAssertEqual(json["kind"] as? String, Push.Kind.needsYou.rawValue)
+        let aps = try XCTUnwrap(json["aps"] as? [String: Any])
+        XCTAssertEqual(aps["badge"] as? Int, 1)
+    }
 }

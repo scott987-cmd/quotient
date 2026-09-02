@@ -122,6 +122,19 @@ public enum Push {
 
     // MARK: - 发送
 
+    static func notificationPayload(_ kind: Kind, body: String,
+                                    subtitle: String? = nil,
+                                    badge: Int? = nil,
+                                    page: String? = nil) -> Data? {
+        var alert: [String: Any] = ["title": kind.title, "body": body]
+        if let subtitle { alert["subtitle"] = subtitle }
+        var aps: [String: Any] = ["alert": alert, "sound": "default"]
+        if let badge { aps["badge"] = badge }
+        var payload: [String: Any] = ["aps": aps, "kind": kind.rawValue]
+        if let page { payload["page"] = page }
+        return try? JSONSerialization.data(withJSONObject: payload)
+    }
+
     /// 推一条通知给所有登记过的设备。
     ///
     /// - Returns: 成功推送的设备数。0 表示没配置、没设备，或者全失败 ——
@@ -129,7 +142,8 @@ public enum Push {
     @discardableResult
     public static func send(_ kind: Kind, body: String,
                             subtitle: String? = nil,
-                            badge: Int? = nil) -> Int {
+                            badge: Int? = nil,
+                            page: String? = nil) -> Int {
         guard let cfg = Config.load() else { return 0 }
         let list = devices()
         guard !list.isEmpty else { return 0 }
@@ -137,17 +151,10 @@ public enum Push {
 
         var ok = 0
         for d in list {
-            var aps: [String: Any] = [
-                "alert": [
-                    "title": kind.title,
-                    "subtitle": subtitle as Any,
-                    "body": body,
-                ].compactMapValues { $0 is NSNull ? nil : $0 },
-                "sound": "default",
-            ]
-            if let badge { aps["badge"] = badge }
-            let payload: [String: Any] = ["aps": aps, "kind": kind.rawValue]
-            guard let data = try? JSONSerialization.data(withJSONObject: payload) else { continue }
+            guard let data = notificationPayload(kind, body: body,
+                                                 subtitle: subtitle,
+                                                 badge: badge, page: page)
+            else { continue }
             if post(token: d.token, environment: d.environment,
                     payload: data, jwt: jwt, cfg: cfg,
                     topic: topic(for: d, config: cfg)) { ok += 1 }

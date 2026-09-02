@@ -353,11 +353,56 @@ public enum Nudge {
     /// `badge(prefix)` 是同一套约定。认不出页面的(比如额度类提醒,
     /// 它落在原生看板上)一律放行 —— 这道闸只拦「明确指向某一页、
     /// 而那一页是空的」这种。
-    static func hasSomethingToShow(key: String) -> Bool {
-        let page = key.split(separator: "-").first.map(String.init) ?? key
-        guard ["review", "blocked", "playbook"].contains(page) else { return true }
-        guard let p = ViewFeed.published(page: page) else { return false }
+    static func targetPage(for key: String) -> String? {
+        switch category(of: key) {
+        case "milestone", "review", "rejected": return "review"
+        case "blocked": return "blocked"
+        case "playbook": return "playbook"
+        default: return nil
+        }
+    }
+
+    static func hasSomethingToShow(key: String, root: URL = Paths.sharedRoot) -> Bool {
+        guard let page = targetPage(for: key) else { return true }
+        guard let p = ViewFeed.published(page: page, root: root) else { return false }
         return p.sections.contains { !($0.cards ?? []).isEmpty }
+    }
+
+    /// 推送发出去前，手机实际读取的 iCloud 页面必须已经包含本机刚发布的卡片，
+    /// 而且卡片引用的证据文件也已经到云端。只看本机页面会制造一个竞态：
+    /// 横幅秒到，镜像还要几十秒，人点进去只能看到旧页或空页。
+    static func mobileContentReady(key: String,
+                                   localRoot: URL = Paths.sharedRoot,
+                                   mobileRoot: URL = Push.mirrorDir) -> Bool {
+        guard let page = targetPage(for: key) else { return true }
+        guard let local = ViewFeed.published(page: page, root: localRoot),
+              let mobile = ViewFeed.published(
+                page: page, root: mobileRoot, read: { ICloudSafe.read($0) })
+        else { return false }
+
+        let allLocalCards = local.sections.flatMap { $0.cards ?? [] }
+        let localCards: [ViewFeed.Card]
+        if category(of: key) == "milestone",
+           let mergeSHA = key.split(separator: "-").last.map(String.init) {
+            localCards = allLocalCards.filter { $0.id.hasSuffix("|" + mergeSHA) }
+        } else {
+            localCards = allLocalCards
+        }
+        guard !localCards.isEmpty else { return false }
+        let mobileCards = Dictionary(
+            mobile.sections.flatMap { $0.cards ?? [] }.map { ($0.id, $0) },
+            uniquingKeysWith: { newer, _ in newer })
+        let evidence = mobileRoot.appendingPathComponent("evidence", isDirectory: true)
+        for card in localCards {
+            guard let mirrored = mobileCards[card.id],
+                  Set(card.images).isSubset(of: Set(mirrored.images))
+            else { return false }
+            for image in card.images where
+                !ICloudSafe.isRegularFile(evidence.appendingPathComponent(image)) {
+                return false
+            }
+        }
+        return true
     }
 
     /// 每条横幅都必须携带**全部**真实待办数。
@@ -377,9 +422,11 @@ public enum Nudge {
     /// 让下一轮在配置恢复后补发。
     static func deliver(key: String, kind: Push.Kind, body: String, badge: Int,
                         now: Date,
+                        contentReady: ((String) -> Bool)? = nil,
                         send: (Push.Kind, String, Int) -> Int) -> Bool {
         guard !recentlySent(key, body: body, now: now) else { return false }
-        guard hasSomethingToShow(key: key) else { return false }
+        let ready = contentReady ?? { hasSomethingToShow(key: $0) }
+        guard ready(key) else { return false }
         remember(key, body: body, now: now)
         guard send(kind, body, badge) > 0 else {
             forgetFailedAttempt(key, body: body, now: now)
@@ -403,7 +450,9 @@ public enum Nudge {
         for (item, appBadge) in zip(items, notificationBadges) {
             if deliver(key: item.key, kind: item.kind, body: item.body,
                        badge: appBadge, now: now,
-                       send: { Push.send($0, body: $1, badge: $2) }) {
+                       contentReady: { mobileContentReady(key: $0) },
+                       send: { Push.send($0, body: $1, badge: $2,
+                                         page: targetPage(for: item.key)) }) {
                 sent += 1
             }
         }
