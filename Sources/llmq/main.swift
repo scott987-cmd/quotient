@@ -3615,10 +3615,16 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             // 不是把平台冻起来。
             if case .timedOut = failure {
                 print(Ansi.dim("  超时，不记冷却 —— 半截输出判不了额度，换平台重试"))
-            } else if let cause = CooldownLedger.classify(failure.describe) {
+            } else if let cause = CooldownLedger.classify(
+                FailureClassifier.terminalDiagnostic(stdout: r.stdout, stderr: r.stderr)
+            ) {
                 // 报错原文里带确切重置时间就采信（「reset at 08-17 01:36 UTC」），
                 // 别按退避每小时白撞一次撞到周日。
-                let resetAt = CooldownLedger.parseResetTime(failure.describe)
+                // 这里必须解析原始诊断，不能解析 failure.describe 的 200 字摘要：
+                // 火山方舟会把 retry-after 放在长错误的中段，摘要会把它折掉。
+                let terminalDiagnostic = FailureClassifier.terminalDiagnostic(
+                    stdout: r.stdout, stderr: r.stderr)
+                let resetAt = CooldownLedger.parseResetTime(terminalDiagnostic)
                 switch cause {
                 case .quotaExhausted: task.terminalFailureKind = .quotaExhausted
                 case .authFailed: task.terminalFailureKind = .authenticationFailed

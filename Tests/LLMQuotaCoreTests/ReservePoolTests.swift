@@ -133,6 +133,28 @@ extension CooldownClassifyTests {
                       "失败摘要必须保留开头的分类证据，不能只截尾把 No 丢掉")
     }
 
+    /// 真实 OpenCode 错误前后还会夹 ANSI、模型信息和很长的 cooldown id。
+    /// retry-after 落在摘要被折叠的中段时，调度必须继续用原始 stderr 解析，
+    /// 否则任务会再次变成人工待确认。
+    func testLongDeploymentErrorKeepsRetryAfterOutsideDisplaySummary() throws {
+        let now = Date(timeIntervalSince1970: 1_788_000_000)
+        let message = "\u{001B}[91mError: No deployments available for selected model, "
+            + String(repeating: "diagnostic=busy;", count: 12)
+            + " Try again in 120 seconds. Passed model=volc-coding. "
+            + "cooldown_list=['" + String(repeating: "e", count: 160) + "']"
+        let failure = try XCTUnwrap(FailureClassifier.classify(
+            exitCode: 1, stdout: "embedded old quota text", stderr: message,
+            timedOut: false))
+
+        XCTAssertNil(CooldownLedger.parseResetTime(failure.describe, now: now),
+                     "用例必须确保显示摘要确实折掉了 retry-after")
+        let diagnostic = FailureClassifier.terminalDiagnostic(
+            stdout: "embedded old quota text", stderr: message)
+        XCTAssertEqual(CooldownLedger.classify(diagnostic), .environmentBroken)
+        let reset = try XCTUnwrap(CooldownLedger.parseResetTime(diagnostic, now: now))
+        XCTAssertEqual(reset.timeIntervalSince(now), 120, accuracy: 0.1)
+    }
+
     /// 超时不该判成额度用尽 —— 这是今天误冻两个平台的那条路径。
     ///
     /// 火山方舟 1 天 16 小时、Kimi 7 小时 45 分，两次的详情都明写着

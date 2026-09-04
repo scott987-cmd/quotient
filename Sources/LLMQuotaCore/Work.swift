@@ -3587,13 +3587,23 @@ public enum FailureClassifier {
         "command not found", "econnrefused", "enotfound",
     ]
 
+    /// 本次失败里可用于分类、冷却和 retry-after 解析的原始诊断。
+    ///
+    /// `FailureKind.describe` 是给终端和任务板看的定长摘要，中间内容可能被
+    /// 折叠；服务端的 `Try again in …` 恰好落在中段时，不能再拿摘要决定
+    /// 是否自动恢复。stdout 可能包含整份任务上下文，所以有 stderr 时只信
+    /// stderr，与 classify 的既有防误判边界保持一致。
+    public static func terminalDiagnostic(stdout: String, stderr: String) -> String {
+        (stderr.isEmpty ? stdout : stderr)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     public static func classify(exitCode: Int32, stdout: String, stderr: String,
                                 timedOut: Bool) -> FailureKind? {
         if timedOut { return .timedOut }
         guard exitCode != 0 else { return nil }
         let text = (stderr + "\n" + stdout).lowercased()
-        let msg = (stderr.isEmpty ? stdout : stderr)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let msg = terminalDiagnostic(stdout: stdout, stderr: stderr)
         let brief: String
         if msg.count <= 200 {
             brief = msg
