@@ -580,6 +580,7 @@ public enum CooldownLedger {
         if permanent.contains(where: { t.contains($0) }) { return .permanentlyUnsupported }
 
         let env = ["command not found", "enoent", "econnrefused", "enotfound",
+                   "no deployments available",
                    "cannot combine", "stream disconnected before completion",
                    "error sending request for url"]
         if env.contains(where: { t.contains($0) }) { return .environmentBroken }
@@ -599,9 +600,26 @@ extension CooldownLedger {
     /// 被按 59 分钟退避反复重试，整个周末每小时白撞一次，
     /// 手机上还一直显示「可调度」。
     ///
-    /// 只认两种高置信格式，解析不出就返回 nil 走退避 ——
+    /// 只认高置信的绝对时间，或服务端明确给出的 retry-after 时长；解析不出
+    /// 就返回 nil 走退避 ——
     /// 宁可退避也别把误解析的时间当真。
     public static func parseResetTime(_ text: String, now: Date = Date()) -> Date? {
+        // OpenCode/火山方舟："Try again in 120 seconds"。这是服务端给出的
+        // 明确 retry-after，按它恢复比统一冻结 15 分钟更准确。
+        let retryAfter = #"try again in\s+(\d+)\s*(second|minute|hour)s?\b"#
+        if let regex = try? NSRegularExpression(pattern: retryAfter,
+                                                 options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let amountRange = Range(match.range(at: 1), in: text),
+           let unitRange = Range(match.range(at: 2), in: text),
+           let amount = Double(text[amountRange]), amount > 0 {
+            let unit = text[unitRange].lowercased()
+            let multiplier: TimeInterval = unit == "hour" ? 3600
+                : (unit == "minute" ? 60 : 1)
+            let delay = amount * multiplier
+            if delay <= 7 * 86400 { return now.addingTimeInterval(delay) }
+        }
+
         // 形态一：ISO8601（带 T 或空格，带不带秒/时区都试）
         let isoLike = #"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)\s*(UTC|Z)?"#
         // 形态二：无年份 MM-dd HH:mm:ss UTC（Qwen 的写法）

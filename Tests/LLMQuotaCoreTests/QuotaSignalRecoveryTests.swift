@@ -69,4 +69,23 @@ final class QuotaSignalRecoveryTests: XCTestCase {
         XCTAssertNil(recovered.terminalFailureKind)
         XCTAssertNil(recovered.retryNotBefore)
     }
+
+    func testTemporaryEnvironmentFailureRecoversAfterBackoff() throws {
+        var task = WorkTask(id: "flint-env", prompt: "继续原任务", repo: "/tmp/Flint")
+        task.state = .failed
+        task.ownerPlatform = .volcark
+        task.ownerRunnerID = "opencode.volcark.code"
+        task.branch = "agent/volcark/flint-env"
+        task.terminalFailureKind = .environmentBroken
+        task.retryNotBefore = now.addingTimeInterval(120)
+
+        XCTAssertTrue(TaskGraph.reconcile([task], now: now).isEmpty)
+        let recovered = try XCTUnwrap(TaskGraph.reconcile(
+            [task], now: now.addingTimeInterval(121)).first)
+        XCTAssertEqual(recovered.state, .queued)
+        XCTAssertEqual(recovered.ownerRunnerID, "opencode.volcark.code")
+        XCTAssertEqual(recovered.branch, "agent/volcark/flint-env")
+        XCTAssertNil(recovered.terminalFailureKind)
+        XCTAssertNil(recovered.retryNotBefore)
+    }
 }

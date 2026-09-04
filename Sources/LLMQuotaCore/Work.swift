@@ -72,7 +72,7 @@ public struct WorkTask: Codable, Sendable {
     public var changedFiles: Int?
     public var note: String?
     public var terminalFailureKind: TerminalFailureKind?
-    /// 已知会自行恢复的终态（目前是额度）最早何时可以重新入队。
+    /// 已知会自行恢复的终态（额度或临时环境故障）最早何时可以重新入队。
     /// 与冷却账本同时落在任务上，避免账本暂时读不到时立刻重试，也避免到期后
     /// 任务永久躺在 failed。
     public var retryNotBefore: Date?
@@ -3594,17 +3594,25 @@ public enum FailureClassifier {
         let text = (stderr + "\n" + stdout).lowercased()
         let msg = (stderr.isEmpty ? stdout : stderr)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let brief = String(msg.suffix(200))
+        let brief: String
+        if msg.count <= 200 {
+            brief = msg
+        } else {
+            // 平台错误的分类词经常在首句，重置时间和 request id 常在末尾。
+            // 只截尾会把 "No deployments available" 的 No 丢掉，继而把一次
+            // 120 秒的服务退避误判成任务失败并弹窗问人。
+            brief = String(msg.prefix(100)) + " … " + String(msg.suffix(97))
+        }
         if platformMarkers.contains(where: { text.contains($0) }) {
             return .platformUnavailable(brief)
         }
         // 额度类走统一的双条件判定。放在这里而不是塞进 platformMarkers，
         // 是因为它需要区分「服务端说打满了」和「agent 随口提了句 quota」——
         // 单纯的字符串包含做不到这件事。
-        // 只让本次终端失败摘要参与额度判定。stdout 里会包含上下文、历史
+        // 只让本次终端失败原文参与额度判定。stdout 里会包含上下文、历史
         // 提交标题和被审报告；它们可能原样引用别的平台额度错误，不能拿来
         // 判断这一次 Runner 是否耗尽。
-        if CooldownLedger.classify(brief) != nil {
+        if CooldownLedger.classify(msg) != nil {
             return .platformUnavailable(brief)
         }
         return .agentFailed("退出码 \(exitCode)：" + brief)

@@ -773,7 +773,11 @@ public enum AgentConsultation {
         if let responseOverride {
             rawAnswer = try responseOverride(request)
         } else {
-            rawAnswer = try runTarget(target, request: request, project: question.project)
+            // question.project 是发送机的绝对路径。跨机咨询必须先通过共享别名表
+            // 换成本机路径；否则 MacBook 的 /Users/.../Developer/Flint 会让
+            // Mac mini 在建只读 worktree 前就报“目录不存在”。
+            let localProject = RepoRegistry.resolve(question.project) ?? question.project
+            rawAnswer = try runTarget(target, request: request, project: localProject)
         }
         let cleaned = rawAnswer.replacingOccurrences(
             of: "\u{001B}\\[[0-9;?]*[ -/]*[@-~]", with: "",
@@ -821,7 +825,7 @@ public enum AgentConsultation {
         let session = GraphSession.mode(
             context: context, support: target.sessionSupport, workspace: workspace.path)
         let briefing = CollaborationStore.briefing(
-            project: project, taskID: request.taskID, graphID: request.graphID,
+            project: request.project, taskID: request.taskID, graphID: request.graphID,
             runnerID: target.runnerID)
         let prompt = """
         【Agent 定向咨询｜只读】

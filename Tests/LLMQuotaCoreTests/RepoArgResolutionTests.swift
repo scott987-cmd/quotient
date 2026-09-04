@@ -53,4 +53,21 @@ final class RepoArgResolutionTests: XCTestCase {
         try registry(defaultPath: "/somewhere/else")
         XCTAssertEqual(RepoRegistry.resolveForCommand("other", cwd: repoA), "/somewhere/else")
     }
+
+    func testRemoteRegisteredPathMapsToThisMachinesPath() throws {
+        let f = sandbox.appendingPathComponent("repos.json")
+        let entry: [String: Any] = [
+            "alias": "flint", "path": "/Users/remote/Developer/Flint",
+            "isDefault": false,
+            "pathByMachine": [
+                Paths.machineID(): repoA!,
+                "remote-machine": "/Users/remote/Developer/Flint"
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: [entry]).write(to: f)
+        RepoRegistry.fileOverride = f
+
+        XCTAssertEqual(RepoRegistry.resolve("/Users/remote/Developer/Flint"), repoA,
+                       "跨机协作事件携带发送方路径时，应按同一别名换成本机路径")
+    }
 }

@@ -56,4 +56,13 @@ final class AskNudgeTests: XCTestCase {
 
         XCTAssertFalse(StuckAsk.raise(task: exhausted, reason: exhausted.note!))
     }
+
+    func testTemporaryEnvironmentCooldownDoesNotCreateRecoveryQuestion() {
+        var unavailable = task(state: .failed, ask: nil)
+        unavailable.terminalFailureKind = .environmentBroken
+        unavailable.retryNotBefore = Date().addingTimeInterval(120)
+        unavailable.note = "No deployments available; Try again in 120 seconds"
+
+        XCTAssertFalse(StuckAsk.raise(task: unavailable, reason: unavailable.note!))
+    }
 }

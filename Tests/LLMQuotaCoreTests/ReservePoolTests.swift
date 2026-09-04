@@ -119,6 +119,20 @@ final class CooldownClassifyTests: XCTestCase {
 }
 
 extension CooldownClassifyTests {
+    func testTemporaryDeploymentShortageIsEnvironmentFailure() {
+        let message = "No deployments available for selected model, Try again in 120 seconds. "
+            + "Passed model=volc-coding. pre-call-checks=False, cooldown_list=['abc']"
+        XCTAssertEqual(CooldownLedger.classify(message), .environmentBroken)
+
+        let failure = FailureClassifier.classify(
+            exitCode: 1, stdout: "", stderr: message, timedOut: false)
+        guard case .platformUnavailable(let detail) = failure else {
+            return XCTFail("临时无部署应让开平台并退避，实际是 \(String(describing: failure))")
+        }
+        XCTAssertTrue(detail.lowercased().contains("no deployments available"),
+                      "失败摘要必须保留开头的分类证据，不能只截尾把 No 丢掉")
+    }
+
     /// 超时不该判成额度用尽 —— 这是今天误冻两个平台的那条路径。
     ///
     /// 火山方舟 1 天 16 小时、Kimi 7 小时 45 分，两次的详情都明写着

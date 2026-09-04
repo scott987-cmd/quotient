@@ -522,7 +522,13 @@ public enum AskIngest {
                 out.append(Result(taskID: t.id, accepted: true, note: r.note))
                 continue
             }
-            if answer.abandon {
+            // 旧版手机把卡死问题里的“放弃这个任务”作为普通单选答案提交，
+            // abandon 字段仍是 false。精确识别这个系统选项，不能把明确放弃
+            // 拼进续写提示后又启动一轮 Agent。
+            let selectedAbandon = answer.answers.values.contains {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines) == "放弃这个任务"
+            }
+            if answer.abandon || selectedAbandon {
                 t.state = .failed
                 t.endedAt = Date()
                 t.note = "你选择了放弃这个任务"
@@ -586,9 +592,10 @@ public enum StuckAsk {
     @discardableResult
     public static func raise(task: WorkTask, reason: String) -> Bool {
         guard task.pendingAsk == nil else { return false }
-        // 已知额度冷却会自行到期，不是需要用户决策的“卡死”。即使调用方顺序
-        // 回归，也不能再给手机推一张无意义的重试/放弃问题。
-        guard task.terminalFailureKind != .quotaExhausted else { return false }
+        // 已知冷却会自行到期，不是需要用户决策的“卡死”。即使调用方顺序
+        // 回归，也不能再给手机推一张无意义的恢复问题。
+        guard task.terminalFailureKind != .quotaExhausted,
+              task.retryNotBefore == nil else { return false }
         var t = task
         let recovery = recoveryOption(for: t)
         let ask = Ask(
@@ -601,7 +608,9 @@ public enum StuckAsk {
             }?.alias ?? t.repo,
             questions: [Ask.Question(
                 text: "这个任务卡死了：\(String(reason.prefix(200)))。怎么处理？",
-                options: [recovery.label, "放弃这个任务"],
+                // 放弃是手机页底部带二次确认的危险按钮，不能再混进普通单选；
+                // 否则用户点中它再按“回复并继续”，旧客户端会把放弃当成续写。
+                options: [recovery.label],
                 suggestion: recovery.label)],
             progressNote: "系统代发：卡死等确认，不是 agent 在提问")
         t.pendingAsk = ask

@@ -3633,7 +3633,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 PlatformHealth.recordObservation(
                     runner: pick.runner, state: .unavailable,
                     detail: failure.describe, expiresAt: cd.until)
-                task.retryNotBefore = cause == .quotaExhausted ? cd.until : nil
+                // 临时环境故障只有服务端明确给出恢复时刻才自动重排。
+                // command not found 等无恢复时刻的环境错误仍需人修，不能无限循环。
+                let automaticallyRecovers = cause == .quotaExhausted
+                    || (cause == .environmentBroken && resetAt != nil)
+                task.retryNotBefore = automaticallyRecovers ? cd.until : nil
                 print(Ansi.yellow("  已记入冷却：" + cd.cause.displayName
                     + "，" + Format.duration(cd.remaining) + "内不再派给它"))
                 OfficeLog.record(OfficeEvent(
@@ -3697,9 +3701,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             task.changedFiles = touched.count
             task.handoff = handoff
             task.note = attempts.joined(separator: " | ")
-            // 有明确重置时间的额度失败不需要人拍板：保持 failed + 冷却信息，
+            // 能自动恢复的平台故障不需要人拍板：保持 failed + 冷却信息，
             // 到期由调度恢复。其余终局失败在最终状态写稳后再发布恢复问题。
-            if task.terminalFailureKind != .quotaExhausted {
+            if task.retryNotBefore == nil {
                 terminalRecoveryAskReason = "全部候选都试过仍失败："
                     + String((task.note ?? "无记录").prefix(160))
             }

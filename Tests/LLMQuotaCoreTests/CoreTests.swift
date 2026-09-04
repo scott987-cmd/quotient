@@ -826,6 +826,14 @@ final class CooldownTests: XCTestCase {
         XCTAssertEqual(reset, expected)
     }
 
+    func testTemporaryDeploymentShortageParsesServerRetryDelay() throws {
+        let now = Date(timeIntervalSince1970: 1_788_000_000)
+        let reset = try XCTUnwrap(CooldownLedger.parseResetTime(
+            "No deployments available for selected model. Try again in 120 seconds.",
+            now: now))
+        XCTAssertEqual(reset.timeIntervalSince(now), 120, accuracy: 0.1)
+    }
+
     /// 分类顺序有讲究：永久性故障的文本里也常带环境类关键词，
     /// 先判环境的话会把"账号被停"误判成"环境异常"，然后无限重试。
     func testPermanentIsCheckedBeforeEnvironment() {
@@ -1826,6 +1834,19 @@ final class AskTests: XCTestCase {
         var saved: WorkTask?
         let rs = AskIngest.run(machineID: machine, load: { [stored] }, save: { saved = $0 })
         XCTAssertEqual(rs.first?.accepted, true)
+        XCTAssertEqual(saved?.state, .failed)
+        XCTAssertNil(saved?.pendingAsk)
+    }
+
+    func testSelectingTheStuckAskAbandonOptionAlsoAbandons() throws {
+        let ask = makeAsk()
+        let stored = makeTask(state: .blocked, ask: ask)
+        try writeAnswer(AskAnswer(
+            askID: ask.id, taskID: "t1", machineID: machine,
+            answers: [ask.questions[0].id: "放弃这个任务"], abandon: false))
+        var saved: WorkTask?
+        let rs = AskIngest.run(machineID: machine, load: { [stored] }, save: { saved = $0 })
+        XCTAssertEqual(rs.first?.note, "已放弃")
         XCTAssertEqual(saved?.state, .failed)
         XCTAssertNil(saved?.pendingAsk)
     }

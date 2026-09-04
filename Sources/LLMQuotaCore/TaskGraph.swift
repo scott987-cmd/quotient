@@ -257,10 +257,13 @@ public enum TaskGraph {
             touched[candidate.id] = candidate
         }
 
-        // 额度失败不是人工重试，也不是视觉整改。冷却到期后只恢复原任务、原
-        // owner 和原分支；质量拒绝计数、上下文与交接证据全部保留。
+        // 会自行恢复的平台失败不是人工重试，也不是视觉整改。冷却到期后只恢复
+        // 原任务、原 owner 和原分支；质量拒绝计数、上下文与交接证据全部保留。
+        // environmentBroken 只有明确写入 retryNotBefore 才走这里；认证、永久下线
+        // 等需要人修的故障不会被误复活。
         for current in byID.values where current.state == .failed
-            && current.terminalFailureKind == .quotaExhausted
+            && (current.terminalFailureKind == .quotaExhausted
+                || current.terminalFailureKind == .environmentBroken)
             && current.pausedAt == nil && current.pendingAsk == nil {
             guard let retryAt = current.retryNotBefore, retryAt <= now else { continue }
             var ready = current
@@ -275,7 +278,7 @@ public enum TaskGraph {
             if let owner = ready.ownerPlatform ?? ready.platform {
                 ready.triedPlatforms.removeAll { $0 == owner }
             }
-            ready.note = "额度冷却已到期，沿用原 Owner、分支和上下文重新排队"
+            ready.note = "平台冷却已到期，沿用原 Owner、分支和上下文重新排队"
             byID[ready.id] = ready
             touched[ready.id] = ready
         }

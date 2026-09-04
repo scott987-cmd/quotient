@@ -301,7 +301,18 @@ public enum RepoRegistry {
         if let hit = list.first(where: { $0.alias == n }) { return hit.localPath }
         // 也允许直接给路径 —— 从 Mac 上派任务时更顺手。
         let expanded = NSString(string: n).expandingTildeInPath
-        return GitWorkspace.isRepo(expanded) ? expanded : nil
+        if GitWorkspace.isRepo(expanded) { return expanded }
+        // 协作事件由发送机写入，project 因而可能是发送机的绝对路径。它仍然
+        // 属于同一个已登记别名；按 pathByMachine 反查后换成本机路径。
+        // 只接受唯一命中，避免错误配置把同一路径映射到两个仓库时猜一个。
+        let normalized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        let matches = list.filter { repo in
+            ([repo.path] + Array(repo.pathByMachine.values)).contains { candidate in
+                URL(fileURLWithPath: NSString(string: candidate).expandingTildeInPath)
+                    .standardizedFileURL.path == normalized
+            }
+        }
+        return matches.count == 1 ? matches[0].localPath : nil
     }
 }
 
