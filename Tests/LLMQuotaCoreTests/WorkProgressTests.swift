@@ -5,11 +5,66 @@ final class WorkProgressTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
     private func progress(sequence: Int, fingerprint: String,
-                          minutes: Int = 20, updatedAt: Date? = nil) -> WorkProgress {
+                          minutes: Int = 20, updatedAt: Date? = nil,
+                          nextStep: String? = nil) -> WorkProgress {
         WorkProgress(taskID: "task", sequence: sequence, phase: "实现",
-                     summary: "完成一项可核验改动", evidence: ["test.log"],
+                     summary: "完成一项可核验改动", nextStep: nextStep,
+                     evidence: ["test.log"],
                      evidenceFingerprint: fingerprint, requestedMinutes: minutes,
                      updatedAt: updatedAt ?? now)
+    }
+
+    func testFreshDeclaredNextStepPreventsWholeTaskCompletion() {
+        func completedTask() -> WorkTask {
+            var task = WorkTask(id: "task", prompt: "完成完整项目", repo: "/tmp/repo")
+            task.state = .done
+            task.endedAt = now
+            task.runnerPID = 123
+            task.branch = "agent/volcark/task"
+            task.ownerRunnerID = "opencode.volcark.code"
+            return task
+        }
+        let fresh = progress(sequence: 8, fingerprint: "new",
+                             updatedAt: now, nextStep: "按原任务继续 M0 视觉复核")
+        var task = completedTask()
+        XCTAssertEqual(WorkContinuationGate.requeueIfNeeded(task: &task,
+            startedAt: now.addingTimeInterval(-60), baselineSequence: 7,
+            progress: fresh), "按原任务继续 M0 视觉复核")
+        XCTAssertEqual(task.state, .queued)
+        XCTAssertNil(task.endedAt)
+        XCTAssertNil(task.runnerPID)
+        XCTAssertEqual(task.branch, "agent/volcark/task")
+        XCTAssertEqual(task.ownerRunnerID, "opencode.volcark.code")
+
+        var sameSequence = completedTask()
+        XCTAssertNil(WorkContinuationGate.requeueIfNeeded(task: &sameSequence,
+            startedAt: now.addingTimeInterval(-60), baselineSequence: 8,
+            progress: fresh), "上一轮的进度不能重开已经完成的新一轮")
+        XCTAssertEqual(sameSequence.state, .done)
+
+        var oldProgress = completedTask()
+        XCTAssertNil(WorkContinuationGate.requeueIfNeeded(task: &oldProgress,
+            startedAt: now.addingTimeInterval(1), baselineSequence: 7,
+            progress: fresh), "开工前的旧进度不能影响本轮终态")
+        XCTAssertEqual(oldProgress.state, .done)
+
+        var noNextStep = completedTask()
+        XCTAssertNil(WorkContinuationGate.requeueIfNeeded(task: &noNextStep,
+            startedAt: now.addingTimeInterval(-60), baselineSequence: 7,
+            progress: progress(sequence: 8, fingerprint: "done", updatedAt: now)),
+            "本轮没有声明下一步时允许正常完成")
+        XCTAssertEqual(noNextStep.state, .done)
+
+        var automaticHeartbeat = completedTask()
+        let automatic = WorkProgress(
+            taskID: "task", sequence: 8, phase: "持续实现",
+            summary: "检测到新提交 abcdef12，服务端自动保持当前会话",
+            nextStep: "继续当前任务", evidenceFingerprint: "automatic",
+            updatedAt: now, automatic: true)
+        XCTAssertNil(WorkContinuationGate.requeueIfNeeded(task: &automaticHeartbeat,
+            startedAt: now.addingTimeInterval(-60), baselineSequence: 7,
+            progress: automatic), "worker 自动续期不是 Agent 声明的未完成事项")
+        XCTAssertEqual(automaticHeartbeat.state, .done)
     }
 
     func testLeaseRequiresFreshObjectiveProgress() {
@@ -124,6 +179,23 @@ final class WorkProgressTests: XCTestCase {
         XCTAssertNil(WorkProgressSentinel.finding(for: task, progress: fresh, now: now))
     }
 
+    func testResumedAttemptDoesNotInheritHoursOfOldCheckpointAge() throws {
+        var task = WorkTask(id: "task", prompt: "继续切片", repo: "/tmp/repo")
+        task.state = .running
+        task.startedAt = now.addingTimeInterval(-120)
+        task.ownerRunnerID = "kimi.code"
+        let old = progress(sequence: 4, fingerprint: "old", updatedAt: now.addingTimeInterval(-8 * 3600))
+        XCTAssertNil(WorkProgressSentinel.finding(for: task, progress: old, now: now))
+        let brief = try XCTUnwrap(TaskBoard.build(from: [task], machineName: "M2",
+            progressByTaskID: [task.id: old], now: now).tasks.first)
+        XCTAssertEqual(brief.progressPhase, "已恢复 · 等待本轮里程碑")
+        XCTAssertTrue(brief.progressSummary?.hasPrefix("上轮进展") == true)
+        XCTAssertEqual(brief.ownerRunnerID, "kimi.code")
+        let late = WorkProgressSentinel.finding(for: task, progress: old,
+                                               now: now.addingTimeInterval(1200))
+        XCTAssertEqual(late?.minutesWithoutProgress, 22, "20 分钟后仍没增量必须告警，不能无限重置")
+    }
+
     func testTwentyMinuteSentinelAlsoFindsStalledTechnicalDisposition() {
         var task = WorkTask(id: "task", prompt: "Flint 高危工程改动", repo: "/tmp/repo")
         task.state = .blocked
@@ -209,10 +281,50 @@ final class WorkProgressTests: XCTestCase {
         let automatic = try WorkProgressStore.record(
             taskID: "task", phase: "持续实现", summary: "检测到工作区有新改动",
             nextStep: "继续当前任务", evidence: [], requestedMinutes: 20,
-            repo: repo.path, now: now.addingTimeInterval(60))
+            repo: repo.path, now: now.addingTimeInterval(60), automatic: true)
 
         XCTAssertEqual(automatic.evidence, ["evidence.png"],
                        "自动续期只能更新进度，不能把已上报给人的证据清空")
+        XCTAssertTrue(automatic.automatic)
+        XCTAssertEqual(automatic.explicitNextStep, "继续优化",
+                       "自动续期不能覆盖 Agent 已声明但尚未完成的下一步")
+        XCTAssertEqual(automatic.explicitNextStepSequence, 1)
+        XCTAssertEqual(automatic.explicitNextStepAt, now)
+
+        var completed = WorkTask(id: "task", prompt: "完成完整项目", repo: repo.path)
+        completed.state = .done
+        completed.endedAt = now.addingTimeInterval(60)
+        XCTAssertEqual(WorkContinuationGate.requeueIfNeeded(
+            task: &completed,
+            startedAt: now.addingTimeInterval(-1),
+            baselineSequence: 0,
+            progress: automatic), "继续优化",
+            "显式下一步后的自动续期不能让整项任务被误报完成")
+        XCTAssertEqual(completed.state, .queued)
+
+        let nextAttemptStarted = now.addingTimeInterval(90)
+        let nextAttemptAutomatic = try WorkProgressStore.record(
+            taskID: "task", phase: "持续实现", summary: "检测到新提交 abcdef12",
+            nextStep: "继续当前任务", evidence: [], requestedMinutes: 20,
+            repo: repo.path, now: nextAttemptStarted.addingTimeInterval(30), automatic: true)
+        var nextAttemptCompleted = WorkTask(
+            id: "task", prompt: "完成完整项目", repo: repo.path)
+        nextAttemptCompleted.state = .done
+        nextAttemptCompleted.endedAt = nextAttemptStarted.addingTimeInterval(30)
+        XCTAssertNil(WorkContinuationGate.requeueIfNeeded(
+            task: &nextAttemptCompleted,
+            startedAt: nextAttemptStarted,
+            baselineSequence: automatic.sequence,
+            progress: nextAttemptAutomatic),
+            "上一轮声明不能被下一轮自动续期伪装成新声明，导致永久回队")
+        XCTAssertEqual(nextAttemptCompleted.state, .done)
+
+        let final = try WorkProgressStore.record(
+            taskID: "task", phase: "任务完成", summary: "全部门槛已经通过",
+            nextStep: nil, evidence: [], requestedMinutes: 20,
+            repo: repo.path, now: now.addingTimeInterval(120))
+        XCTAssertNil(final.explicitNextStep,
+                     "Agent 最终上报不带 next 时必须清除旧的后续工作")
     }
 
     func testAutomaticWorkspaceChangesDoNotSilenceTwentyMinuteInspection() throws {
@@ -304,5 +416,27 @@ final class WorkProgressTests: XCTestCase {
         XCTAssertEqual(item.evidence, [])
         XCTAssertEqual(item.requestedMinutes, 20)
         XCTAssertEqual(item.updatedAt, .distantPast)
+        XCTAssertFalse(item.automatic)
+        XCTAssertNil(item.explicitNextStep)
+        XCTAssertNil(item.explicitNextStepSequence)
+        XCTAssertNil(item.explicitNextStepAt)
+
+        let oldAutomaticData = Data(
+            #"{"taskID":"task","sequence":3,"phase":"持续实现","summary":"检测到工作区有新改动","nextStep":"继续当前任务"}"#.utf8)
+        let oldAutomatic = try SnapshotCoding.decoder().decode(
+            WorkProgress.self, from: oldAutomaticData)
+        XCTAssertTrue(oldAutomatic.automatic)
+        XCTAssertNil(oldAutomatic.explicitNextStep)
+        XCTAssertNil(oldAutomatic.explicitNextStepSequence)
+        XCTAssertNil(oldAutomatic.explicitNextStepAt)
+
+        let oldExplicitData = Data(
+            #"{"taskID":"task","sequence":4,"phase":"阶段收口","summary":"逻辑批完成","nextStep":"继续 M0"}"#.utf8)
+        let oldExplicit = try SnapshotCoding.decoder().decode(
+            WorkProgress.self, from: oldExplicitData)
+        XCTAssertFalse(oldExplicit.automatic)
+        XCTAssertEqual(oldExplicit.explicitNextStep, "继续 M0")
+        XCTAssertEqual(oldExplicit.explicitNextStepSequence, 4)
+        XCTAssertEqual(oldExplicit.explicitNextStepAt, .distantPast)
     }
 }

@@ -86,13 +86,14 @@ public enum ProductBrief {
     }
 
     /// 拼进提示词的那一段。**明确告诉 agent 这是背景约束、不是任务。**
-    public static func briefing(repo: String, registeredRepo: String? = nil) -> String {
+    public static func briefing(repo: String, registeredRepo: String? = nil,
+                                observationOnly: Bool = false) -> String {
         var sections: [String] = []
         if let facts = text(repo: repo) {
             sections.append(header(facts: facts))
         }
         if let quality = qualityText(repo: repo, registeredRepo: registeredRepo) {
-            sections.append(qualityHeader(quality: quality))
+            sections.append(qualityHeader(quality: quality, observationOnly: observationOnly))
         }
         return sections.joined()
     }
@@ -100,14 +101,15 @@ public enum ProductBrief {
     /// 未截断版本，专供 ContextPackBuilder：全文 / 折叠引用 / 拒绝由唯一
     /// 总预算统一裁决，per-file 截断不在这条通路上发生 —— AGENTS.md 和
     /// 质量契约都是 P0，谁都不许在这里先被咬掉尾巴。
-    public static func fullBriefing(repo: String, registeredRepo: String? = nil) -> String {
+    public static func fullBriefing(repo: String, registeredRepo: String? = nil,
+                                    observationOnly: Bool = false) -> String {
         var sections: [String] = []
         if let facts = fullText(repo: repo) {
             sections.append(header(facts: facts))
         }
         if let quality = qualityContent(repo: repo, registeredRepo: registeredRepo)
             .map(\.body) {
-            sections.append(qualityHeader(quality: quality))
+            sections.append(qualityHeader(quality: quality, observationOnly: observationOnly))
         }
         return sections.joined()
     }
@@ -129,9 +131,22 @@ public enum ProductBrief {
         """
     }
 
-    private static func qualityHeader(quality: String) -> String {
+    private static func qualityHeader(quality: String, observationOnly: Bool) -> String {
+        if observationOnly {
+            return """
 
-        """
+            ---
+            ## 项目最终质量契约（本次阶段观察的背景，不是整项目验收票）
+            完整标准保留如下；只映射到本次阶段实际声明和可见证据，不要求局部截图
+            证明全部终验条款。未展示的项目能力列为未验证，不判定不存在；不得降低
+            最终合入要求，也不得由阶段观察自动批准合入或要求整项目返工。
+            \(quality)
+            ---
+
+            """
+        }
+
+        return """
 
         ---
         ## 这个项目怎样才算做完（项目质量契约 —— 是验收标准，不是参考建议）

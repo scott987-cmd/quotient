@@ -80,4 +80,21 @@ final class TaskStoreCheckpointTests: XCTestCase {
         XCTAssertEqual(Set(TaskStore.all().map(\.id)), ["first", "second"])
         XCTAssertEqual(TaskStore.skippedLines, 0)
     }
+
+    func testHotCacheReloadsSameSizeAtomicLedgerReplacement() throws {
+        var first = WorkTask(id: "same-id", prompt: "first", repo: "/tmp/repo-a")
+        first.rev = 1
+        var second = WorkTask(id: "same-id", prompt: "other", repo: "/tmp/repo-b")
+        second.rev = 1
+        var firstData = try SnapshotCoding.encoder().encode(first)
+        var secondData = try SnapshotCoding.encoder().encode(second)
+        firstData.append(UInt8(ascii: "\n")); secondData.append(UInt8(ascii: "\n"))
+        XCTAssertEqual(firstData.count, secondData.count, "夹具必须保持账本字节数相同")
+        try firstData.write(to: TaskStore.file, options: .atomic)
+        XCTAssertEqual(TaskStore.all().first?.prompt, "first")
+
+        try secondData.write(to: TaskStore.file, options: .atomic)
+        XCTAssertEqual(TaskStore.all().first?.prompt, "other",
+                       "同尺寸原子替换会更换 inode，热缓存不能永久沿用旧任务状态")
+    }
 }

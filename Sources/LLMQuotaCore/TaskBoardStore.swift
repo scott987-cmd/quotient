@@ -26,6 +26,7 @@ import Foundation
 public struct MachineTaskBoard: Codable, Sendable {
     public var machineID: String
     public var machineName: String
+    public var nodeName: String?
     /// 这份任务板是什么时候采下来的。手机靠它判断新鲜度，见类型说明。
     public var generatedAt: Date
     /// 字段和 `dashboard.tasks` 里的完全一样 —— 就是同一个 `TaskBrief`。
@@ -62,9 +63,10 @@ public struct MachineTaskBoard: Codable, Sendable {
     public init(machineID: String, machineName: String, generatedAt: Date,
                 tasks: [TaskBrief], tasksTruncated: Bool = false,
                 focusedRepoAlias: String? = nil,
-                planned: [PlannedBrief] = []) {
+                planned: [PlannedBrief] = [], nodeName: String? = nil) {
         self.machineID = machineID
         self.machineName = machineName
+        self.nodeName = nodeName
         self.generatedAt = generatedAt
         self.tasks = tasks
         self.tasksTruncated = tasksTruncated
@@ -88,6 +90,7 @@ public struct MachineTaskBoard: Codable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         machineID = try c.decodeIfPresent(String.self, forKey: .machineID) ?? ""
         machineName = try c.decodeIfPresent(String.self, forKey: .machineName) ?? ""
+        nodeName = try c.decodeIfPresent(String.self, forKey: .nodeName)
         generatedAt = try c.decodeIfPresent(Date.self, forKey: .generatedAt) ?? .distantPast
         tasks = try c.decodeIfPresent([TaskBrief].self, forKey: .tasks) ?? []
         tasksTruncated = try c.decodeIfPresent(Bool.self, forKey: .tasksTruncated) ?? false
@@ -109,6 +112,8 @@ public enum TaskBoardStore {
     /// 一轮没到可能只是这次慢了点，两轮没到就该说话了。
     /// 这个常量是给 doctor 和手机端共用的口径，别在两边各写一个数。
     public static let staleAfter: TimeInterval = 30 * 60
+    /// 手机和 Mac 的时钟允许有少量偏差；超出后必须按不可靠快照处理。
+    public static let futureTolerance: TimeInterval = 5 * 60
 
     /// 多久没更新的任务板算废弃、可以删。
     ///
@@ -155,7 +160,7 @@ public enum TaskBoardStore {
             generatedAt: dash.generatedAt,
             tasks: dash.tasks, tasksTruncated: dash.tasksTruncated,
             focusedRepoAlias: focusedRepoAlias(),
-            planned: planned)
+            planned: planned, nodeName: ClusterConfigStore.load()?.nodeName)
         return publish(board)
     }
 
@@ -198,7 +203,7 @@ public enum TaskBoardStore {
             generatedAt: now,
             tasks: built.tasks, tasksTruncated: built.truncated,
             focusedRepoAlias: focusedRepoAlias(),
-            planned: planned))
+            planned: planned, nodeName: ClusterConfigStore.load()?.nodeName))
     }
 
     private static func focusedRepoAlias() -> String? {
@@ -272,12 +277,9 @@ public enum TaskBoardStore {
                 // 所以只报不删 —— 删除的判断在 prune 里，那边更保守。
                 unreadable.append(url.lastPathComponent); continue
             }
-            // 文件名就是 machineID。老版本或者手改过的文件里可能没有这个键，
-            // 用文件名补上 —— 手机要靠 (machineID, task.id) 去重，
-            // machineID 空掉会让两台机器的任务互相覆盖。
-            if board.machineID.isEmpty {
-                board.machineID = url.deletingPathExtension().lastPathComponent
-            }
+            // 文件名由发布路径决定，是这块板子的路由身份。内容来自同步文件，
+            // 即使被旧版本或损坏数据写成另一台机器，也不能越权改报归属。
+            board.machineID = url.deletingPathExtension().lastPathComponent
             boards.append(board)
         }
         return Listing(boards: boards.sorted { $0.machineName < $1.machineName },
@@ -314,7 +316,7 @@ public enum TaskBoardStore {
         var inheritedTruncation = dashboard.tasksTruncated
         for board in listing.boards {
             let age = now.timeIntervalSince(board.generatedAt)
-            guard age <= staleAfter else { continue }
+            guard age >= -futureTolerance, age <= staleAfter else { continue }
             inheritedTruncation = inheritedTruncation || board.tasksTruncated
             for original in board.tasks {
                 var task = original
@@ -406,7 +408,7 @@ public enum TaskBoardStore {
             let generated = (try? decoder.decode(MachineTaskBoard.self, from: data))?.generatedAt
             let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate
-            guard let last = lastActivity(generatedAt: generated, mtime: mtime) else {
+            guard let last = lastActivity(generatedAt: generated, mtime: mtime, now: now) else {
                 skipped.append(name); continue
             }
             guard now.timeIntervalSince(last) > maxAge else { continue }
@@ -422,8 +424,10 @@ public enum TaskBoardStore {
 
     /// 「最后一次有动静」= 内容里的时间和文件 mtime 里**更新**的那个。
     /// 两个都没有就返回 nil —— 调用方不许猜，只能留着。
-    static func lastActivity(generatedAt: Date?, mtime: Date?) -> Date? {
-        let g = (generatedAt == .distantPast) ? nil : generatedAt
+    static func lastActivity(generatedAt: Date?, mtime: Date?, now: Date = Date()) -> Date? {
+        let g = (generatedAt == .distantPast
+                 || generatedAt.map { $0 > now.addingTimeInterval(futureTolerance) } == true)
+            ? nil : generatedAt
         return [g, mtime].compactMap { $0 }.max()
     }
 }

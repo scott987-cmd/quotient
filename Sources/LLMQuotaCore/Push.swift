@@ -125,13 +125,16 @@ public enum Push {
     static func notificationPayload(_ kind: Kind, body: String,
                                     subtitle: String? = nil,
                                     badge: Int? = nil,
-                                    page: String? = nil) -> Data? {
+                                    page: String? = nil, notificationID: String? = nil,
+                                    sourcePage: String? = nil) -> Data? {
         var alert: [String: Any] = ["title": kind.title, "body": body]
         if let subtitle { alert["subtitle"] = subtitle }
         var aps: [String: Any] = ["alert": alert, "sound": "default"]
         if let badge { aps["badge"] = badge }
         var payload: [String: Any] = ["aps": aps, "kind": kind.rawValue]
         if let page { payload["page"] = page }
+        if let notificationID { payload["notificationID"] = notificationID }
+        if let sourcePage { payload["sourcePage"] = sourcePage }
         return try? JSONSerialization.data(withJSONObject: payload)
     }
 
@@ -143,7 +146,8 @@ public enum Push {
     public static func send(_ kind: Kind, body: String,
                             subtitle: String? = nil,
                             badge: Int? = nil,
-                            page: String? = nil) -> Int {
+                            page: String? = nil, notificationID: String? = nil,
+                            sourcePage: String? = nil) -> Int {
         guard let cfg = Config.load() else { return 0 }
         let list = devices()
         guard !list.isEmpty else { return 0 }
@@ -153,7 +157,8 @@ public enum Push {
         for d in list {
             guard let data = notificationPayload(kind, body: body,
                                                  subtitle: subtitle,
-                                                 badge: badge, page: page)
+                                                 badge: badge, page: page,
+                                                 notificationID: notificationID, sourcePage: sourcePage)
             else { continue }
             if post(token: d.token, environment: d.environment,
                     payload: data, jwt: jwt, cfg: cfg,

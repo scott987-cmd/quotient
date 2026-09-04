@@ -41,11 +41,13 @@ public enum Milestone {
         public var taskID: String?
         /// true = 尚未合入的运行中 checkpoint；false = 已落地主线成果。
         public var isCheckpoint: Bool
+        /// 只记录 Agent 声明的阶段，不从图片名推断；旧记录可能没有。
+        public var phase: String?
 
         public init(repo: String, repoName: String, branch: String, mergeSHA: String,
                     subject: String, landedAt: Date, evidenceFiles: [String],
                     verdict: String? = nil, taskID: String? = nil,
-                    isCheckpoint: Bool = false) {
+                    isCheckpoint: Bool = false, phase: String? = nil) {
             self.repo = repo
             self.repoName = repoName
             self.branch = branch
@@ -56,6 +58,7 @@ public enum Milestone {
             self.verdict = verdict
             self.taskID = taskID
             self.isCheckpoint = isCheckpoint
+            self.phase = phase
         }
 
         public init(from decoder: Decoder) throws {
@@ -71,6 +74,7 @@ public enum Milestone {
             verdict = try c.decodeIfPresent(String.self, forKey: .verdict)
             taskID = try c.decodeIfPresent(String.self, forKey: .taskID)
             isCheckpoint = try c.decodeIfPresent(Bool.self, forKey: .isCheckpoint) ?? false
+            phase = try c.decodeIfPresent(String.self, forKey: .phase)
         }
     }
 
@@ -186,9 +190,11 @@ public enum Milestone {
             revision: String(revision.prefix(12)), context: progress.summary,
             preferredFiles: Set(visual))
         guard !extracted.isEmpty else { return nil }
+        // repo 是读取当前提交/证据的工作区，任务归属仍是原项目主仓。
+        let projectRepo = RepoLease.normalize(task.repo)
         let item = Item(
-            repo: repo,
-            repoName: URL(fileURLWithPath: repo).lastPathComponent,
+            repo: projectRepo,
+            repoName: URL(fileURLWithPath: projectRepo).lastPathComponent,
             branch: branch,
             mergeSHA: revision,
             subject: progress.summary,
@@ -196,7 +202,7 @@ public enum Milestone {
             evidenceFiles: extracted,
             verdict: nil,
             taskID: task.id,
-            isCheckpoint: true)
+            isCheckpoint: true, phase: progress.phase)
         var items = all()
         guard !items.contains(where: { $0.id == item.id }) else { return nil }
         items.append(item)
@@ -215,33 +221,7 @@ public enum Milestone {
     /// 这一道不是替代他,是先过一遍明显的:人物姿势怪、UI 错位、画面全黑。
     @discardableResult
     public static func dispatchVisualCheck(_ item: Item, repoPath: String) -> String? {
-        let visual = item.evidenceFiles.filter {
-            let l = $0.lowercased()
-            return l.hasSuffix(".mov") || l.hasSuffix(".mp4") || l.hasSuffix(".png")
-                || l.hasSuffix(".jpg")
-        }
-        guard !visual.isEmpty else { return nil }
-        let dir = Review.evidenceDir.path
-        let prompt = """
-        【看效果】看一遍这次产出的录屏/截图,替老板先过一道眼。
-
-        成果：\(item.subject)
-        文件（都在 \(dir) 下）：
-        \(visual.map { "  - " + $0 }.joined(separator: "\n"))
-
-        用你的图片/视频理解能力**真的看**,不要凭文件名猜。要回答的就三件事：
-
-        1. 画面正常吗 —— 有没有全黑、纯色、卡住不动、明显穿模。
-        2. 人物/动作自然吗 —— 姿势别扭、手脚朝向不对、滑步、T-pose 这类。
-           （这条最要紧：老板上一轮就是靠肉眼发现「跑的姿势不像真人、
-           手歪不拉几」,那两条后来都证实是真问题。）
-        3. 和成果标题对得上吗 —— 说是打枪的录屏里真有开枪吗。
-
-        输出格式（就这几行,别写长报告）：
-        **看到了**：一句话描述画面里实际发生的事
-        **问题**：逐条列,没有就写「没看出问题」
-        **结论**：可以给老板看 / 建议先修（附一句为什么）
-        """
+        guard let prompt = visualCheckPrompt(item) else { return nil }
         let r = try? TaskIntake.enqueue(
             prompt: prompt, repo: repoPath, classify: false, split: false,
             force: true, origin: "milestone-eyes",
@@ -250,6 +230,29 @@ public enum Milestone {
             preferredPlatform: .minimax)
         if case .single(let t)? = r { return t.id }
         return nil
+    }
+
+    /// 纠正旧评审时复用同一份范围定义，不另写一套临时提示词。
+    public static func visualCheckPrompt(_ item: Item) -> String? {
+        let visual = item.evidenceFiles.filter {
+            Review.isImageName($0) || Review.isVideoName($0)
+        }
+        guard !visual.isEmpty else { return nil }
+        let dir = Review.evidenceDir.path
+        return """
+        【看效果】看一遍这次产出的录屏/截图,替老板先过一道眼。
+        \(VisualReviewScope.observationMarker)
+
+        成果：\(item.subject)
+        阶段：\(item.phase ?? "未记录；只观察本次已提交证据，不推断全项目完成度")
+        来源分支：\(item.branch)
+        证据提交：\(item.mergeSHA)
+        文件（都在 \(dir) 下）：
+        \(visual.map { "  - " + $0 }.joined(separator: "\n"))
+
+        必须真的看图/抽帧，不凭文件名猜。标题只是待核对的声明，不是额外验收条款。
+        \(VisualReviewScope.observation.rules)
+        """
     }
 
     /// 还没被看过的成果(推送和手机列表都用它)。

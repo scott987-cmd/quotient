@@ -57,14 +57,28 @@ public enum RepoLease {
         return tasks.first { $0.state == .running && normalize($0.repo) == want }
     }
 
-    /// 路径比较前先归一：`~/dev/Maw`、`/Users/x/dev/Maw`、
-    /// 末尾带斜杠的，都是同一个仓库。不归一的后果是独占形同虚设 ——
-    /// 同一个仓库用两种写法就能各拿一把锁。
+    /// 项目身份同时用于专注过滤、摄入和独占锁。linked worktree 不是另一个
+    /// 项目；只凭路径字符串比较会让阶段评审消失，或绕过同仓库互斥。
+    /// 只按本机 Git common-dir 归一，绝不按目录名、父目录或 remote URL 猜。
     public static func normalize(_ path: String) -> String {
-        var p = NSString(string: path).expandingTildeInPath
-        p = URL(fileURLWithPath: p).standardizedFileURL.path
-        while p.count > 1, p.hasSuffix("/") { p.removeLast() }
-        return p
+        let root = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        // 普通主仓/不存在的路径无需启动进程。只有 .git 文件的工作副本才
+        // 查询 Git；失败或超时保持自己的路径，不能放宽为所有项目。
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(".git").path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else { return root.path }
+        let result = GitWorkspace.git(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            in: root.path, timeout: 2)
+        guard result.exitCode == 0 else { return root.path }
+        let common = URL(fileURLWithPath: result.stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines))
+            .standardizedFileURL.resolvingSymlinksInPath()
+        // 非标准 separate-git-dir 不知道主工作区在哪，不冒充它的父目录。
+        guard common.lastPathComponent == ".git" else { return root.path }
+        return common.deletingLastPathComponent().path
     }
 
     /// 从就绪队列里滤掉「所在仓库已经有人在改」的任务。

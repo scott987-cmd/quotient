@@ -218,6 +218,8 @@ public enum ViewFeed {
     /// 否则已经合掉的分支会永远挂在手机上。判据是**本机自己上一份**
     /// 有没有内容 —— views 只推不拉，本地那份就是本机最后写出去的东西。
     public static func worthPublishing(_ page: Page, over previous: Page?) -> Bool {
+        // roadmap 已是单发布者的三机汇总；空状态/读取失败也必须持续更新时间。
+        if page.page == "roadmap" { return true }
         if contentCount(page) > 0 { return true }   // 自己有内容 —— 照常发
         guard let previous else { return true }     // 还没有过 —— 建立初始页面
         return contentCount(previous) > 0           // 自己清空了自己 —— 该发
@@ -238,6 +240,37 @@ public enum ViewFeed {
     }
 
     public static func publish(_ page: Page, root: URL = Paths.sharedRoot) -> Bool {
+        var page = page
+        let machineID = Paths.machineID()
+        func routed(_ actions: [Action]) -> [Action] {
+            actions.compactMap { action in
+                guard let id = MobileAction.scoped(action.id, machineID: machineID) else { return nil }
+                var copy = action; copy.id = id; return copy
+            }
+        }
+        page.sections = page.sections.map { section in
+            var copy = section
+            copy.actions = section.actions.map(routed)
+            copy.cards = section.cards?.map { card in
+                var copy = card; copy.actions = routed(card.actions); return copy
+            }
+            return copy
+        }
+        let scopedName = NotificationDetail.sourcePage(page.page, machineID: Paths.machineID())
+        if scopedName != page.page {
+            var scoped = page; scoped.page = scopedName
+            let label = ClusterConfigStore.load()?.nodeName ?? String(Paths.machineID().prefix(8))
+            scoped.sections = page.sections.map { section in
+                var copy = section
+                copy.title = label + " · " + (section.title ?? "事项")
+                return copy
+            }
+            guard publishSingle(scoped, root: root) else { return false }
+        }
+        return publishSingle(page, root: root)
+    }
+
+    private static func publishSingle(_ page: Page, root: URL) -> Bool {
         let dir = dir(at: root)
         try? FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true)
@@ -315,7 +348,12 @@ public enum ViewFeed {
                 at: actionsDir.appendingPathComponent(n), as: Invocation.self),
                   !inv.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
-            if done.contains(inv.key) { continue }
+            if let route = MobileAction.route(inv.id) {
+                let machineID = Paths.machineID()
+                guard route.scope == MobileAction.digest(machineID),
+                      !MobileAction.hasTerminalReceipt(for: inv, machineID: machineID)
+                else { continue }
+            } else if done.contains(inv.key) { continue }
             out.append(inv)
         }
         return out
@@ -453,12 +491,12 @@ extension ViewFeed {
                          trailing: Review.evidenceSummary(d.evidenceFiles),
                          images: d.evidenceFiles,
                          actions: d.mergesCleanly && d.landingBlockReason == nil
-                             ? [Action(id: "review:merge:" + d.repo + "|" + d.branch,
+                             ? [Action(id: "review:merge:" + d.actionResource,
                                        label: "合入", style: "primary"),
-                                Action(id: "review:discard:" + d.repo + "|" + d.branch,
+                                Action(id: "review:discard:" + d.actionResource,
                                        label: Review.rejectionLabel(branch: d.branch),
                                        style: "destructive", needsNote: true)]
-                             : [Action(id: "review:discard:" + d.repo + "|" + d.branch,
+                             : [Action(id: "review:discard:" + d.actionResource,
                                        label: Review.rejectionLabel(branch: d.branch),
                                        style: "destructive", needsNote: true)])
                 }))
@@ -691,15 +729,15 @@ extension ViewFeed {
         // 协作账里，但不能因为发生得晚就把正在运行的任务挤出手机首屏。
         // 没有活跃任务时退回最近历史，空闲时仍然可以复盘。
         let focused = all.filter { event in
-            if let taskID = event.taskID, activeTaskIDs.contains(taskID) { return true }
+            if let taskID = event.taskID, activeTaskIDs.contains(taskID),
+               let repo = tasksByID[taskID]?.repo,
+               URL(fileURLWithPath: repo).standardizedFileURL.path == event.project { return true }
             return event.kind == .question && unresolvedIDs.contains(event.id)
                 && event.recipientRunnerID != nil
         }
         let recent = Array((focused.isEmpty ? all : focused).suffix(30))
-        let pendingIDs = unresolvedIDs.intersection(Set(recent.map(\.id)))
+        let pendingIDs = unresolvedIDs.intersection(Set((focused.isEmpty ? all : focused).map(\.id)))
         let claims = recent.filter { $0.kind == .claim }.count
-        let questions = recent.filter { $0.kind == .question }.count
-        let answers = recent.filter { $0.kind == .answer }.count
         func presentation(_ kind: CollaborationEvent.Kind) -> (String, String) {
             switch kind {
             case .claim: return ("主动认领", "hand.raised.fill")
@@ -711,15 +749,19 @@ extension ViewFeed {
             case .checkpoint: return ("检查点", "checkmark.circle.fill")
             case .result: return ("结果", "shippingbox.fill")
             case .handoff: return ("交接", "arrow.right.circle.fill")
-            case .ack: return ("已采纳", "checkmark.bubble.fill")
+            case .ack: return ("确认反馈", "checkmark.bubble.fill")
             }
         }
         let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+        func parent(of event: CollaborationEvent) -> CollaborationEvent? {
+            guard let id = event.replyTo, let parent = byID[id],
+                  parent.project == event.project, parent.taskID == event.taskID else { return nil }
+            return parent
+        }
         func root(of event: CollaborationEvent) -> CollaborationEvent {
             var current = event
             var visited = Set([event.id])
-            while let replyTo = current.replyTo,
-                  let parent = byID[replyTo], !visited.contains(parent.id) {
+            while let parent = parent(of: current), !visited.contains(parent.id) {
                 visited.insert(parent.id)
                 current = parent
             }
@@ -730,12 +772,41 @@ extension ViewFeed {
             if root.id != event.id || root.kind == .question {
                 return "event:" + root.id
             }
-            return event.taskID.map { "task:" + $0 } ?? "event:" + root.id
+            return event.taskID.map { "task:" + event.project + ":" + $0 } ?? "event:" + root.id
         }
-        let grouped = Dictionary(grouping: recent, by: chainKey)
-        let orderedChains = grouped.values.sorted { lhs, rhs in
-            (lhs.map(\.createdAt).max() ?? .distantPast)
-                > (rhs.map(\.createdAt).max() ?? .distantPast)
+        func newestFirst(_ lhs: [CollaborationEvent], _ rhs: [CollaborationEvent]) -> Bool {
+            let left = lhs.map(\.createdAt).max() ?? .distantPast
+            let right = rhs.map(\.createdAt).max() ?? .distantPast
+            return left == right ? (lhs.first?.id ?? "") < (rhs.first?.id ?? "") : left > right
+        }
+        // 按问题限量，而不是先按事件截断：40 个新检查点也不能冲掉一组问答。
+        // 普通工作链仍只取近期动作；问答单独保留最近 8 组的原题、最新答复和反馈。
+        let selectedKeys = Set((focused.isEmpty ? all : focused).map(chainKey))
+        let conversations = Dictionary(grouping: all, by: chainKey).filter {
+            selectedKeys.contains($0.key) && $0.value.first.map { root(of: $0).kind == .question } == true
+        }.values.sorted(by: newestFirst).prefix(8)
+        let ordinary = Dictionary(grouping: recent, by: chainKey).values.filter {
+            $0.first.map { root(of: $0).kind != .question } == true
+        }.sorted(by: newestFirst).prefix(12)
+        let orderedChains = (Array(conversations) + Array(ordinary)).sorted(by: newestFirst)
+        func answersQuestion(_ event: CollaborationEvent, _ question: CollaborationEvent) -> Bool {
+            guard event.kind == .answer, event.replyTo == question.id,
+                  event.project == question.project, event.taskID == question.taskID,
+                  event.senderRunnerID == question.recipientRunnerID else { return false }
+            // 老记录可能没有接收者，但显式 replyTo 和答题者仍能证明这条关联。
+            return event.recipientRunnerID == nil || event.recipientRunnerID == question.senderRunnerID
+        }
+        var agentQuestions: [CollaborationEvent] = []
+        let nonAgents: Set<String> = ["human", "orchestrator"]
+        for chain in conversations {
+            guard let first = chain.first else { continue }
+            let question = root(of: first)
+            guard let recipient = question.recipientRunnerID,
+                  !nonAgents.contains(question.senderRunnerID), !nonAgents.contains(recipient) else { continue }
+            agentQuestions.append(question)
+        }
+        let answeredQuestions = agentQuestions.filter { question in
+            all.contains { answersQuestion($0, question) }
         }
         func actor(_ runnerID: String) -> String {
             let lower = runnerID.lowercased()
@@ -765,7 +836,7 @@ extension ViewFeed {
         func eventTitle(_ event: CollaborationEvent, pending: Bool) -> String {
             let sender = actor(event.senderRunnerID)
             let recipient = event.recipientRunnerID.map(actor)
-            let parent = event.replyTo.flatMap { byID[$0] }
+            let parent = parent(of: event)
             let task = shortTask(event.taskID)
             let action: String
             switch event.kind {
@@ -796,7 +867,7 @@ extension ViewFeed {
             case .handoff:
                 action = sender + (recipient.map { " 将工作交给 " + $0 } ?? " 发起交接")
             case .ack:
-                action = sender + " 已确认并采纳 "
+                action = sender + " 反馈了 "
                     + (parent.map { actor($0.senderRunnerID) + " 的事项" } ?? "协作事项")
             }
             return (pending ? "待回应 · " : "") + action + " · " + concise(event.summary)
@@ -840,7 +911,7 @@ extension ViewFeed {
             let task = event.taskID.flatMap { tasksByID[$0] }
             let source = derivedSource(of: task)?.actor ?? "调度器"
             let currentOwner = owner(of: task) ?? sender
-            let parent = event.replyTo.flatMap { byID[$0] }
+            let parent = parent(of: event)
             let recipient = event.recipientRunnerID.map(actor)
             switch event.kind {
             case .claim:
@@ -902,7 +973,7 @@ extension ViewFeed {
             }
             func relationshipLine(_ event: CollaborationEvent) -> String {
                 let sender = actor(event.senderRunnerID)
-                let parent = event.replyTo.flatMap { byID[$0] }
+                let parent = parent(of: event)
                 switch event.kind {
                 case .claim:
                     let from = parent.map { actor($0.senderRunnerID) } ?? source
@@ -929,24 +1000,41 @@ extension ViewFeed {
                         + (parent.map { actor($0.senderRunnerID) } ?? target(for: event, fallback: source))
                 }
             }
-            let visible = chain.count <= 6 ? chain : [chain[0]] + chain.suffix(5)
+            let answer = chain.last { answersQuestion($0, rootEvent) }
+            let feedback = answer.flatMap { answer in chain.last {
+                $0.kind == .ack && $0.replyTo == answer.id && $0.senderRunnerID == rootEvent.senderRunnerID
+            } }
+            let questionChain = rootEvent.kind == .question
+            var visible: [CollaborationEvent]
+            if questionChain {
+                visible = [rootEvent]
+                if let claim = chain.last(where: { $0.kind == .claim && $0.replyTo == rootEvent.id }) {
+                    visible.append(claim)
+                }
+                if let answer { visible.append(answer) }
+                if let feedback { visible.append(feedback) }
+                if answer == nil, let failure = chain.last(where: {
+                    $0.id.hasPrefix("consultation-failure:") && $0.replyTo == rootEvent.id
+                }) { visible.append(failure) }
+            } else {
+                visible = chain.count <= 6 ? chain : [chain[0]] + chain.suffix(5)
+            }
             var body = visible.map(relationshipLine).joined(separator: "\n")
             // “有回答”不等于“提问方已经采用”。移动端必须把最后一跳也展示
             // 出来，否则用户只能看到 Agent 说过话，却看不出结论有没有进入实现。
-            if rootEvent.kind == .question,
-               let answer = chain.last(where: { $0.kind == .answer }) {
+            if questionChain, let answer {
                 let adopter = actor(answer.recipientRunnerID ?? rootEvent.senderRunnerID)
-                let adopted = chain.contains {
-                    $0.kind == .ack && $0.replyTo == answer.id
-                        && $0.senderRunnerID == (answer.recipientRunnerID
-                            ?? rootEvent.senderRunnerID)
-                }
-                body += "\n采用　" + (adopted ? adopter + " 已确认" : "待 " + adopter + " 确认")
+                body += "\n采用反馈　" + (feedback != nil ? adopter + " 已确认（见详情）" : "待 " + adopter + " 确认")
             }
-            let detail = chain.suffix(10).map { event in
-                Format.dateTime(event.createdAt) + "　" + presentation(event.kind).0
-                    + "　" + concise(event.summary)
-            }.joined(separator: "\n")
+            let detail = (questionChain ? visible : Array(chain.suffix(10))).map { event in
+                var text = Format.dateTime(event.createdAt) + "　" + relationshipLine(event)
+                    + "\n" + event.summary
+                if let details = event.details, !details.isEmpty { text += "\n" + details }
+                if let branch = event.branch { text += "\n分支：" + branch }
+                if let commit = event.commitSHA { text += "\n提交：" + commit }
+                if !event.artifacts.isEmpty { text += "\n材料：" + event.artifacts.joined(separator: "、") }
+                return text
+            }.joined(separator: "\n\n")
             let pending = chain.contains { pendingIDs.contains($0.id) }
             let unhealthy = chain.contains(where: failedLooking)
             return Card(
@@ -956,7 +1044,7 @@ extension ViewFeed {
                 icon: rootEvent.kind == .question
                     ? "bubble.left.and.bubble.right.fill" : "arrow.triangle.branch",
                 trailing: URL(fileURLWithPath: first.project).lastPathComponent,
-                eventKind: "chain", taskID: taskID)
+                eventKind: questionChain ? "conversation" : "chain", taskID: taskID)
         }
         let registeredAgents = AgentRegistry.all(now: now)
         let presenceNames = Dictionary(uniqueKeysWithValues:
@@ -985,10 +1073,11 @@ extension ViewFeed {
                      tone: registeredAgents.isEmpty ? .warn : .good),
                 Fact(key: "工作关系", value: "\(relationshipCards.count)", tone: .neutral),
                 Fact(key: "主动认领", value: "\(claims)", tone: .neutral),
-                Fact(key: "Agent 互问", value: "\(questions)/\(answers)", tone: .neutral),
+                Fact(key: "Agent 互问", value: "\(agentQuestions.count)/\(answeredQuestions.count)", tone: .neutral),
+                Fact(key: "最近记录", value: "\(min(recent.count, 12))", tone: .neutral),
             ]),
             Section(kind: "cards", title: "交互关系",
-                    note: "每张卡是一项工作；箭头表示谁把什么交给了谁",
+                    note: "问答保留最近 8 组原题、最新答复与确认反馈；工作链和单向决定不算问答",
                     cards: relationshipCards),
             Section(kind: "cards", title: "可用 Agent",
                     note: agentCards.isEmpty
@@ -1001,7 +1090,7 @@ extension ViewFeed {
                         let repo = URL(fileURLWithPath: event.project).lastPathComponent
                         let pending = pendingIDs.contains(event.id)
                         var detail = event.details ?? ""
-                        if let replyTo = event.replyTo, let parent = byID[replyTo] {
+                        if let parent = parent(of: event) {
                             let context = "回应：" + actor(parent.senderRunnerID) + " 的"
                                 + presentation(parent.kind).0 + " · " + concise(parent.summary)
                             detail = context + (detail.isEmpty ? "" : "\n" + detail)
@@ -1084,9 +1173,9 @@ extension ViewFeed {
                              trailing: URL(fileURLWithPath: t.repo).lastPathComponent,
                              images: [],
                              actions: [
-                                Action(id: "task:approve:" + t.id,
+                                Action(id: "task:approve:" + MobileAction.taskResource(t),
                                        label: "放行", style: "primary"),
-                                Action(id: "task:discard:" + t.id,
+                                Action(id: "task:discard:" + MobileAction.taskResource(t),
                                        label: "不做了", style: "destructive",
                                        needsNote: true)])
                     })
@@ -1111,7 +1200,7 @@ extension ViewFeed {
                     Card(id: item.id,
                          title: item.subject,
                          body: item.repoName + (item.isCheckpoint
-                            ? " · 任务仍在运行，等你看阶段效果"
+                            ? " · 阶段成果未合入，等你看阶段效果（不代表最终验收）"
                             : " · 已合入 main，等你看实际效果"),
                          detail: "来源分支：\(item.branch)\n"
                             + (item.isCheckpoint ? "阶段提交：" : "提交：")
@@ -1149,9 +1238,9 @@ extension ViewFeed {
                          trailing: Review.evidenceSummary(d.evidenceFiles) ?? "没交证据",
                          images: d.evidenceFiles,
                          actions: (d.mergesCleanly && d.landingBlockReason == nil
-                             ? [Action(id: "review:merge:" + d.repo + "|" + d.branch,
+                             ? [Action(id: "review:merge:" + d.actionResource,
                                        label: "合入", style: "primary")] : [])
-                             + [Action(id: "review:discard:" + d.repo + "|" + d.branch,
+                             + [Action(id: "review:discard:" + d.actionResource,
                                        label: Review.rejectionLabel(branch: d.branch),
                                        style: "destructive", needsNote: true)])
                 })
@@ -1181,7 +1270,7 @@ extension ViewFeed {
                             .replacingOccurrences(of: "**", with: ""),
                          detail: p.brief.replacingOccurrences(of: "**", with: ""),
                          tone: .warn, icon: "hand.raised",
-                         actions: [Action(id: "playbook:approve:" + p.id,
+                         actions: [Action(id: "playbook:approve:" + MobileAction.playbookResource(p),
                                           label: "批准", style: "primary", needsNote: true)])
                 }))
         }

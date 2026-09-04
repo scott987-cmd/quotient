@@ -246,14 +246,22 @@ final class PhaseDTests: XCTestCase {
 
         var page = ViewFeed.collaborationPage(tasks: [])
         var card = try XCTUnwrap(page.sections.first { $0.title == "交互关系" }?.cards?.first)
-        XCTAssertTrue(card.body?.contains("采用　待 Kimi 确认") == true)
+        XCTAssertEqual(card.eventKind, "conversation")
+        XCTAssertTrue(card.body?.contains("采用反馈　待 Kimi 确认") == true)
+        XCTAssertTrue(card.detail?.contains("架构怎么定？") == true)
+        XCTAssertTrue(card.detail?.contains("采用单写者") == true)
 
         _ = try CollaborationStore.acknowledge(
             eventID: answer.id, project: answer.project, taskID: answer.taskID,
-            senderRunnerID: "kimi.code", summary: "已采用到实现")
+            senderRunnerID: "kimi.code", summary: "拒绝：已有单写者，不重复实现，保留现有契约")
         page = ViewFeed.collaborationPage(tasks: [])
         card = try XCTUnwrap(page.sections.first { $0.title == "交互关系" }?.cards?.first)
-        XCTAssertTrue(card.body?.contains("采用　Kimi 已确认") == true)
+        XCTAssertEqual(card.eventKind, "conversation")
+        XCTAssertTrue(card.body?.contains("采用反馈　Kimi 已确认") == true)
+        XCTAssertFalse(card.body?.contains("待 Kimi 确认") == true)
+        XCTAssertTrue(card.detail?.contains("拒绝：已有单写者，不重复实现，保留现有契约") == true)
+        XCTAssertFalse(card.detail?.contains("已采纳") == true,
+                       "确认事件不等于采用建议，必须保留拒绝理由")
     }
 
     func testMobileCollaborationListsConsultableAgentsByMachineIdentity() throws {

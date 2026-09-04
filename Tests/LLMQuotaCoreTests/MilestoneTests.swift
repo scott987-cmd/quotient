@@ -110,6 +110,7 @@ final class MilestoneTests: XCTestCase {
         let item = try SnapshotCoding.decoder().decode(Milestone.Item.self, from: data)
         XCTAssertFalse(item.isCheckpoint)
         XCTAssertNil(item.taskID)
+        XCTAssertNil(item.phase)
     }
 
     func testRunningCheckpointCanBeReviewedWithoutCreatingAnotherTask() throws {
@@ -172,7 +173,7 @@ final class MilestoneTests: XCTestCase {
                        "一个提交无论声明目录里有几份证据，都只能形成一张复核卡")
     }
 
-    func testReviewPageLabelsRunningCheckpointHonestly() {
+    func testReviewPageLabelsCheckpointWithoutInventingCurrentTaskState() {
         Milestone.save([Milestone.Item(
             repo: "/flint", repoName: "Flint", branch: "agent/kimi/live1",
             mergeSHA: "def5678", subject: "人物母版三机位", landedAt: Date(),
@@ -182,7 +183,8 @@ final class MilestoneTests: XCTestCase {
         let section = page.sections.first { ($0.cards ?? []).contains { $0.id == "/flint|def5678" } }
         let card = section?.cards?.first { $0.id == "/flint|def5678" }
         XCTAssertEqual(section?.title, "待你复核成果（1）")
-        XCTAssertTrue(card?.body?.contains("任务仍在运行") == true)
+        XCTAssertTrue(card?.body?.contains("阶段成果未合入") == true)
+        XCTAssertFalse(card?.body?.contains("任务仍在运行") == true)
         XCTAssertFalse(card?.body?.contains("已合入 main") == true)
     }
 

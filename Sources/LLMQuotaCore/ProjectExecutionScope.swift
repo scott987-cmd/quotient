@@ -66,8 +66,7 @@ public struct ProjectExecutionScope: Sendable {
     }
 
     private static func normalize(_ path: String) -> String {
-        URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
-            .standardizedFileURL.path
+        RepoLease.normalize(path)
     }
 
     /// 新版优先读本机作用域；尚未配置的机器只读兼容旧的共享 focus。

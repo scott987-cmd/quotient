@@ -358,6 +358,8 @@ public enum Nudge {
         case "milestone", "review", "rejected": return "review"
         case "blocked": return "blocked"
         case "playbook": return "playbook"
+        case "progress": return "roadmap"
+        case "question": return "now"
         default: return nil
         }
     }
@@ -373,7 +375,9 @@ public enum Nudge {
     /// 横幅秒到，镜像还要几十秒，人点进去只能看到旧页或空页。
     static func mobileContentReady(key: String,
                                    localRoot: URL = Paths.sharedRoot,
-                                   mobileRoot: URL = Push.mirrorDir) -> Bool {
+                                   mobileRoot: URL = Push.mirrorDir,
+                                   notification: NotificationDetail.Record? = nil) -> Bool {
+        if let notification { return NotificationDetail.ready(notification, mobileRoot: mobileRoot) }
         guard let page = targetPage(for: key) else { return true }
         guard let local = ViewFeed.published(page: page, root: localRoot),
               let mobile = ViewFeed.published(
@@ -448,11 +452,20 @@ public enum Nudge {
 
         var sent = 0
         for (item, appBadge) in zip(items, notificationBadges) {
+            var detail: NotificationDetail.Record?
             if deliver(key: item.key, kind: item.kind, body: item.body,
                        badge: appBadge, now: now,
-                       contentReady: { mobileContentReady(key: $0) },
+                       contentReady: { key in
+                           detail = NotificationDetail.capture(key: key, kind: item.kind,
+                                                               body: item.body, now: now)
+                           guard let detail,
+                                 NotificationDetail.publish(detail, localRoot: Paths.sharedRoot,
+                                                            mobileRoot: Push.mirrorDir) else { return false }
+                           return mobileContentReady(key: key, notification: detail)
+                       },
                        send: { Push.send($0, body: $1, badge: $2,
-                                         page: targetPage(for: item.key)) }) {
+                                         page: targetPage(for: item.key),
+                                         notificationID: detail?.id, sourcePage: detail?.sourcePage) }) {
                 sent += 1
             }
         }

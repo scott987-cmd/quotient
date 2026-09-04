@@ -1018,6 +1018,11 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
     public var productionStage: String?
     public var deliverableKind: String?
     public var productionBlockedReason: String?
+    public var ownerRunnerID: String?
+    public var branch: String?
+    public var landedAt: Date?
+    public var progressEvidence: [String]?
+    public var progressCheckpointAt: Date?
 
     public init(
         id: String,
@@ -1039,7 +1044,10 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         progressEvidenceCount: Int? = nil,
         productionStage: String? = nil,
         deliverableKind: String? = nil,
-        productionBlockedReason: String? = nil
+        productionBlockedReason: String? = nil,
+        ownerRunnerID: String? = nil, branch: String? = nil,
+        landedAt: Date? = nil, progressEvidence: [String]? = nil,
+        progressCheckpointAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -1061,6 +1069,11 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         self.productionStage = productionStage
         self.deliverableKind = deliverableKind
         self.productionBlockedReason = productionBlockedReason
+        self.ownerRunnerID = ownerRunnerID
+        self.branch = branch
+        self.landedAt = landedAt
+        self.progressEvidence = progressEvidence
+        self.progressCheckpointAt = progressCheckpointAt
     }
 
     /// 手写解码，可选字段一律 `decodeIfPresent`。
@@ -1095,6 +1108,11 @@ public struct TaskBrief: Codable, Sendable, Hashable, Identifiable {
         deliverableKind = try c.decodeIfPresent(String.self, forKey: .deliverableKind)
         productionBlockedReason = try c.decodeIfPresent(
             String.self, forKey: .productionBlockedReason)
+        ownerRunnerID = try c.decodeIfPresent(String.self, forKey: .ownerRunnerID)
+        branch = try c.decodeIfPresent(String.self, forKey: .branch)
+        landedAt = try c.decodeIfPresent(Date.self, forKey: .landedAt)
+        progressEvidence = try c.decodeIfPresent([String].self, forKey: .progressEvidence)
+        progressCheckpointAt = try c.decodeIfPresent(Date.self, forKey: .progressCheckpointAt)
     }
 
     /// 按**字符**截断，超了就用省略号收尾（收尾之后总长仍然 ≤ 上限）。

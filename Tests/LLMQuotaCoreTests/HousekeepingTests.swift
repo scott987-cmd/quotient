@@ -16,11 +16,13 @@ final class HousekeepingTests: XCTestCase {
         let dir = Review.evidenceDir
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let protected = dir.appendingPathComponent("flint-grip.m4v")
+        let checkpoint = dir.appendingPathComponent("flint-checkpoint.jpg")
         let orphan = dir.appendingPathComponent("old-orphan.jpg")
         try Data("video".utf8).write(to: protected)
+        try Data("image".utf8).write(to: checkpoint)
         try Data("image".utf8).write(to: orphan)
         let old = Date().addingTimeInterval(-3600)
-        for file in [protected, orphan] {
+        for file in [protected, checkpoint, orphan] {
             try FileManager.default.setAttributes([.modificationDate: old],
                                                   ofItemAtPath: file.path)
         }
@@ -31,12 +33,17 @@ final class HousekeepingTests: XCTestCase {
           - flint-grip.m4v
         """, repo: "/flint")
         task.state = .queued
+        let milestone = Milestone.Item(repo: "/flint", repoName: "Flint", branch: "sample",
+            mergeSHA: "abc", subject: "未确认成果", landedAt: old,
+            evidenceFiles: [checkpoint.lastPathComponent], taskID: "source", isCheckpoint: true)
 
         XCTAssertEqual(Housekeeping.sweepOrphanEvidence(
-            directory: dir, digests: [], tasks: [task], now: Date()), 1)
+            directory: dir, digests: [], tasks: [task], milestones: [milestone], now: Date()), 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: protected.path),
                       "排队中的视觉任务还要消费这个证据，不能当孤儿删除")
         XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: checkpoint.path),
+                      "主任务结束后，尚未确认的成果卡仍然需要图片")
     }
 
     func testSweepsOnlyStaleVerifyDirs() throws {

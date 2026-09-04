@@ -74,16 +74,12 @@ public enum Housekeeping {
         directory dir: URL = Review.evidenceDir,
         digests: [Review.Digest] = Review.publishedDigests(),
         tasks: [WorkTask] = TaskStore.all(),
+        milestones: [Milestone.Item] = Milestone.unreviewed(),
         now: Date = Date()
     ) -> Int {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return 0 }
-        var live = Set(digests.flatMap(\.evidenceFiles))
-        for task in tasks where task.state == .queued || task.state == .running || task.state == .blocked {
-            live.formUnion(MiniMaxMediaRunner.visualFiles(in: task.prompt).map {
-                URL(fileURLWithPath: $0).lastPathComponent
-            })
-        }
+        let live = referencedEvidenceNames(digests: digests, tasks: tasks, milestones: milestones)
         var removed = 0
         for n in names where !live.contains(n) {
             // 刚抽出来还没发布的别删 —— 半小时宽限。
@@ -93,6 +89,23 @@ public enum Housekeeping {
             if (try? fm.removeItem(atPath: p)) != nil { removed += 1 }
         }
         return removed
+    }
+
+    /// 定时清理和同分支缓存换版必须共用引用集合。任务结束不代表人的
+    /// checkpoint 已确认；反过来新图生成也不代表排队评审已经消费了旧图。
+    static func referencedEvidenceNames(
+        digests: [Review.Digest] = Review.publishedDigests(),
+        tasks: [WorkTask] = TaskStore.all(),
+        milestones: [Milestone.Item] = Milestone.unreviewed()
+    ) -> Set<String> {
+        var live = Set(digests.flatMap(\.evidenceFiles))
+        live.formUnion(milestones.filter { $0.verdict == nil }.flatMap(\.evidenceFiles))
+        for task in tasks where task.state == .queued || task.state == .running || task.state == .blocked {
+            live.formUnion(MiniMaxMediaRunner.visualFiles(in: task.prompt).map {
+                URL(fileURLWithPath: $0).lastPathComponent
+            })
+        }
+        return live
     }
 
     /// 一轮开始时做的家务,返回给日志的一句话(没事就 nil)。

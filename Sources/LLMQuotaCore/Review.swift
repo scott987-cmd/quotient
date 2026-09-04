@@ -1477,24 +1477,29 @@ public enum Review {
     }
 
     /// 丢弃一个分支和它的工作区。
+    @discardableResult
     public static func discard(repo: String, branch: String, reason: String? = nil,
-                               recordDisposition: Bool = true) {
+                               recordDisposition: Bool = true) -> Bool {
         // 和 merge 同理：丢弃立刻改变待审集合。
         defer { invalidateListCache() }
         // `llmq work discard` 会在清理分支后一次性写完整终态。若这里也先写，
         // 它手里的任务快照立刻过期，结果就会变成「分支已经删了、discardedAt
         // 也写了，但命令最后报 stale write」，既是假失败又留下 state=done。
         // 手机端直接丢分支仍沿用默认值，由这里负责记录去向。
-        if recordDisposition {
-            markDisposition(branch: branch, landed: false, reason: reason)
-        }
+        guard GitWorkspace.isRepo(repo), GitWorkspace.branchExists(branch, in: repo) else { return false }
         // 先摘 worktree 再删分支：分支被 worktree 占用时 git 拒绝删除，
         // 而错误信息（"used by worktree at ..."）不看文档很难懂。
         if let path = worktreePath(repo: repo, branch: branch) {
-            _ = GitWorkspace.git(["worktree", "remove", "--force", path], in: repo)
+            let removed = GitWorkspace.git(["worktree", "remove", "--force", path], in: repo)
+            guard removed.exitCode == 0, !FileManager.default.fileExists(atPath: path) else { return false }
         }
         _ = GitWorkspace.git(["worktree", "prune"], in: repo)
-        _ = GitWorkspace.git(["branch", "-D", branch], in: repo)
+        let deleted = GitWorkspace.git(["branch", "-D", branch], in: repo)
+        guard deleted.exitCode == 0, !GitWorkspace.branchExists(branch, in: repo) else { return false }
+        if recordDisposition {
+            markDisposition(branch: branch, landed: false, reason: reason)
+        }
+        return true
     }
 
     /// 处理人对一份产出的“拒绝”。体验型黄金样板的拒绝表示“保留现有成果，
@@ -1527,8 +1532,7 @@ public enum Review {
             invalidateListCache()
             return true
         }
-        discard(repo: repo, branch: branch, reason: feedback)
-        return true
+        return discard(repo: repo, branch: branch, reason: feedback)
     }
 
     /// 纯状态转换，单测可以精确覆盖“保留 owner/branch/context，只重置本轮执行”。
@@ -1727,6 +1731,12 @@ extension Review {
         /// 发布这一版摘要时，机器评审是否已明确否决。
         /// Optional 保证旧客户端写出的摘要仍能解码。
         public var rejected: Bool? = nil
+        public var sourceMachineID: String? = nil
+        public var head: String? = nil
+
+        var actionResource: String {
+            repo + "|" + branch + (head.flatMap { $0.isEmpty ? nil : "|" + $0 } ?? "")
+        }
     }
 
     /// 手机上的验收结论。写进 `shared/verdicts/<repo>|<branch>.json`，
@@ -1882,10 +1892,12 @@ extension Review {
         }
 
         let expected = selected.map(expectedName)
+        let referenced = Housekeeping.referencedEvidenceNames()
         if let have = try? fm.contentsOfDirectory(atPath: dir.path),
            expected.allSatisfy({ have.contains($0) }) {
             // 清掉同一分支旧提交留下的媒体；当前提交的完整缓存直接复用。
-            for name in have where name.hasPrefix(basePrefix) && !expected.contains(name) {
+            for name in have where name.hasPrefix(basePrefix) && !expected.contains(name)
+                && !referenced.contains(name) {
                 try? fm.removeItem(at: dir.appendingPathComponent(name))
             }
             return expected
@@ -1963,7 +1975,8 @@ extension Review {
         }
         // 新提交已经抽完再删旧提交，避免转换期间让手机引用的上一版突然消失。
         if let have = try? fm.contentsOfDirectory(atPath: dir.path) {
-            for name in have where name.hasPrefix(basePrefix) && !out.contains(name) {
+            for name in have where name.hasPrefix(basePrefix) && !out.contains(name)
+                && !referenced.contains(name) {
                 try? fm.removeItem(at: dir.appendingPathComponent(name))
             }
         }
@@ -2074,7 +2087,7 @@ extension Review {
                     platform: item.platform, subject: item.subject,
                     prompt: nil, files: item.files, insertions: 0, deletions: 0,
                     mergesCleanly: true, overlapsWith: [], committedAt: item.committedAt,
-                    evidence: item.evidence))
+                    evidence: item.evidence, head: item.head))
             }
         }
         return out
@@ -2132,7 +2145,7 @@ extension Review {
                     evidenceFiles: extracted,
                     landingBlockReason: qualityLandingBlock(
                         repo: path, branch: item.branch),
-                    rejected: review.rejected ? true : nil))
+                    rejected: review.rejected ? true : nil, head: item.head))
             }
         }
         // **按仓库合并，绝不整份覆盖。**
@@ -2150,6 +2163,8 @@ extension Review {
         //
         // 所以：只替换**本机看得见的那些仓库**的条目，
         // 别的仓库的条目原样留着，等那台机器自己来更新。
+        let machineID = Paths.machineID()
+        for i in out.indices { out[i].sourceMachineID = machineID }
         let seen = Set(repos.compactMap { r -> String? in
             let p = NSString(string: r.localPath).expandingTildeInPath
             return GitWorkspace.isRepo(p) ? p : nil
@@ -2211,6 +2226,10 @@ extension Review {
         Paths.sharedRoot.appendingPathComponent("verdicts", isDirectory: true)
     }
 
+    static var decisionLedgerDir: URL {
+        MobileAction.ledger(machineID: Paths.machineID()).appendingPathComponent("review-decisions")
+    }
+
     /// 执行失败的结论记在这儿。**失败必须留痕** ——
     /// 悄悄失败的后果是那份产出永远卡在待审里，人被反复提醒却做不了任何事。
     static var failedDir: URL {
@@ -2244,8 +2263,8 @@ extension Review {
     /// 静默放弃(本地 actions/.failures.json 里 9 条全是这样)。
     /// 两条路同一个台账,人点了哪条都生效。
     public static func markDecided(repo: String, branch: String) {
-        let f = verdictsDir.appendingPathComponent(".done")
-        try? FileManager.default.createDirectory(at: verdictsDir, withIntermediateDirectories: true)
+        let f = decisionLedgerDir.appendingPathComponent(".done")
+        try? FileManager.default.createDirectory(at: decisionLedgerDir, withIntermediateDirectories: true)
         var lines = Set((try? String(contentsOf: f, encoding: .utf8))?
             .split(separator: "\n").map(String.init) ?? [])
         lines.insert(repo + "|" + branch)
@@ -2291,7 +2310,7 @@ extension Review {
     }
 
     public static func decidedBranches() -> Set<String> {
-        let doneFile = verdictsDir.appendingPathComponent(".done")
+        let doneFile = decisionLedgerDir.appendingPathComponent(".done")
         return Set((try? String(contentsOf: doneFile, encoding: .utf8))?
             .split(separator: "\n").map(String.init) ?? [])
     }
@@ -2306,7 +2325,8 @@ extension Review {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: verdictsDir.path)
         else { return [] }
-        let doneFile = verdictsDir.appendingPathComponent(".done")
+        let doneFile = decisionLedgerDir.appendingPathComponent(".done")
+        try? fm.createDirectory(at: decisionLedgerDir, withIntermediateDirectories: true)
         var done = Set((try? String(contentsOf: doneFile, encoding: .utf8))?
             .split(separator: "\n").map(String.init) ?? [])
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
@@ -2314,9 +2334,24 @@ extension Review {
 
         // `.attempts.json` / `.done` 这类自己的账本文件也在这个目录,别当 verdict 解。
         for name in names where name.hasSuffix(".json") && !name.hasPrefix(".") {
-            guard let v = SafeDecode.json(
+            guard var v = SafeDecode.json(
                 at: verdictsDir.appendingPathComponent(name), as: Verdict.self)
             else { continue }
+            // 没有来源的旧结论不能用“本机碰巧有同路径”来猜。带机器封装的
+            // repo 在旧 Mac 上不是合法仓库路径，因此旧消费者也无法误执行。
+            guard let route = MobileAction.route(v.repo),
+                  route.scope == MobileAction.digest(Paths.machineID()) else {
+                if !v.repo.hasPrefix("machine:") {
+                    try? fm.createDirectory(at: failedDir, withIntermediateDirectories: true)
+                    let notice = failedDir.appendingPathComponent(MobileAction.digest(name) + ".txt")
+                    if !fm.fileExists(atPath: notice.path) {
+                        try? "未执行：旧版验收结论缺少来源机器，请在更新后的手机重新确认。"
+                            .write(to: notice, atomically: true, encoding: .utf8)
+                    }
+                }
+                continue
+            }
+            v.repo = route.actionID
             let key = verdictDoneKey(v)
             guard !done.contains(key) else { continue }
             let legacyKey = v.repo + "|" + v.branch + "|" + v.action
@@ -2442,7 +2477,7 @@ extension Review {
     static let maxVerdictAttempts = 3
 
     static var verdictAttemptsFile: URL {
-        verdictsDir.appendingPathComponent(".attempts.json")
+        decisionLedgerDir.appendingPathComponent(".attempts.json")
     }
 
     /// 记一次尝试，返回累计次数。`to: 0` 表示清零（成功之后）。
@@ -2474,5 +2509,30 @@ extension Review {
         guard let mod = (try? stamp.resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate else { return true }
         return now.timeIntervalSince(mod) >= every
+    }
+}
+
+// 新字段缺失时仍可阅读旧摘要；未知合入条件按不可合入处理。
+extension Review.Digest {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        repo = try c.decodeIfPresent(String.self, forKey: .repo) ?? ""
+        repoName = try c.decodeIfPresent(String.self, forKey: .repoName) ?? ""
+        branch = try c.decodeIfPresent(String.self, forKey: .branch) ?? ""
+        platform = try c.decodeIfPresent(String.self, forKey: .platform) ?? ""
+        subject = try c.decodeIfPresent(String.self, forKey: .subject) ?? ""
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt)
+        files = try c.decodeIfPresent([String].self, forKey: .files) ?? []
+        insertions = try c.decodeIfPresent(Int.self, forKey: .insertions) ?? 0
+        deletions = try c.decodeIfPresent(Int.self, forKey: .deletions) ?? 0
+        mergesCleanly = try c.decodeIfPresent(Bool.self, forKey: .mergesCleanly) ?? false
+        overlapsWith = try c.decodeIfPresent([String].self, forKey: .overlapsWith) ?? []
+        committedAt = try c.decodeIfPresent(Date.self, forKey: .committedAt)
+        evidence = try c.decodeIfPresent([String].self, forKey: .evidence) ?? []
+        evidenceFiles = try c.decodeIfPresent([String].self, forKey: .evidenceFiles) ?? []
+        landingBlockReason = try c.decodeIfPresent(String.self, forKey: .landingBlockReason)
+        rejected = try c.decodeIfPresent(Bool.self, forKey: .rejected)
+        sourceMachineID = try c.decodeIfPresent(String.self, forKey: .sourceMachineID)
+        head = try c.decodeIfPresent(String.self, forKey: .head)
     }
 }

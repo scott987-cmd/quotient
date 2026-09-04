@@ -4,6 +4,15 @@ import XCTest
 /// MirrorService 的规则测试。**纯本地**：两个临时目录当 local/cloud，
 /// 不碰真 iCloud —— 「云端列不动」「抢占输了」用注入口模拟。
 final class MirrorServiceTests: XCTestCase {
+    func testActionReceiptsPushWithoutPullingOtherMachineState() {
+        put(local, "action-receipts/a.json", "A completed")
+        put(cloud, "action-receipts/b.json", "B failed")
+        _ = sync()
+        XCTAssertEqual(read(cloud, "action-receipts/a.json"), "A completed")
+        XCTAssertEqual(read(cloud, "action-receipts/b.json"), "B failed")
+        XCTAssertFalse(exists(local, "action-receipts/b.json"))
+    }
+
 
     var local: URL!
     var cloud: URL!
@@ -54,6 +63,22 @@ final class MirrorServiceTests: XCTestCase {
     }
 
     // MARK: - 按机器分文件的目录（snapshots/ taskboards/ presence/）
+
+    func testNonPublisherCannotOverwriteRoadmapButStillPushesOtherViews() {
+        put(local, "views/roadmap.json", "partial-new")
+        put(cloud, "views/roadmap.json", "complete", age: 600)
+        put(local, "views/collaboration.json", "other-view")
+        var stats = MirrorStats()
+        MirrorService.pushDirNoDelete(localDir: local.appendingPathComponent("views"),
+            cloudDir: cloud.appendingPathComponent("views"), label: "views", stats: &stats,
+            publishRoadmap: false)
+        XCTAssertEqual(read(cloud, "views/roadmap.json"), "complete")
+        XCTAssertEqual(read(cloud, "views/collaboration.json"), "other-view")
+        MirrorService.pushDirNoDelete(localDir: local.appendingPathComponent("views"),
+            cloudDir: cloud.appendingPathComponent("views"), label: "views", stats: &stats,
+            publishRoadmap: true)
+        XCTAssertEqual(read(cloud, "views/roadmap.json"), "partial-new")
+    }
 
     func testPerMachinePushOwnPullOthers() {
         put(local, "snapshots/\(mid).json", "mine-new", age: 60)
@@ -368,6 +393,13 @@ final class MirrorServiceTests: XCTestCase {
                    to: local)
         guard case .ok = MirrorHealth.check(root: local, now: now) else {
             return XCTFail("新鲜且零错误必须报 ok")
+        }
+
+        // 机器时钟明显跑到未来时不能把一份旧心跳永久判成健康。
+        writeState(MirrorState(lastAttemptAt: now.addingTimeInterval(3600),
+                               lastOKAt: now.addingTimeInterval(3600)), to: local)
+        guard case .failing = MirrorHealth.check(root: local, now: now) else {
+            return XCTFail("远未来心跳必须按异常处理")
         }
     }
 

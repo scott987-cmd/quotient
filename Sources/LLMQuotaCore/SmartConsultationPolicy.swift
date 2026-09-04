@@ -9,6 +9,7 @@ public enum SmartConsultationPolicy {
         case ask
         case waitingForAnswer
         case acknowledgeAnswer
+        case consultationFailed
     }
 
     public struct Instruction: Sendable {
@@ -32,9 +33,20 @@ public enum SmartConsultationPolicy {
         "consultation:",
     ]
 
+    /// CLI/MCP 的只读提示。绝不把状态机提示伪装成 Agent 事件写回账本。
+    public static func currentInstruction(project: String, taskID: String?, runnerID: String,
+                                          tasks: [WorkTask]? = nil) -> Instruction? {
+        guard let taskID, let task = (tasks ?? TaskStore.all()).first(where: {
+            $0.id == taskID && normalizedProject($0.repo) == normalizedProject(project)
+                && $0.ownerRunnerID == runnerID && $0.pausedAt == nil && $0.discardedAt == nil
+                && ($0.state == .running || $0.state == .queued || $0.state == .blocked)
+        }) else { return nil }
+        return instruction(task: task, runnerID: runnerID, events: CollaborationStore.all())
+    }
+
     public static func instruction(
         task: WorkTask, runnerID: String, events: [CollaborationEvent],
-        tier: TaskProfile.Tier? = nil
+        tier: TaskProfile.Tier? = nil, attempts: [WorkAttempt]? = nil
     ) -> Instruction? {
         guard runnerID != architectRunnerID else { return nil }
         if let origin = task.origin?.lowercased(),
@@ -49,20 +61,61 @@ public enum SmartConsultationPolicy {
         let repeatedFailure = (task.interruptedCount ?? 0) >= 2
             || task.automaticHandoffCount >= 1
             || task.qualityRejectionCount >= 2
-        guard architectureBoundary || repeatedFailure else { return nil }
-
-        let reason = repeatedFailure
-            ? "同一任务已连续失败或自动接力，先裁决根因与边界，禁止继续盲改"
-            : "任务触及重大架构、契约或跨模块边界，首次实现前需要架构裁决"
-        let questionID = "smart-consult:\(task.id):architecture-v1"
         let scoped = events.filter {
             $0.project == normalizedProject(task.repo)
                 && $0.taskID == task.id
+        }.sorted {
+            $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt
         }
-        let question = scoped.first {
-            $0.id == questionID && $0.kind == .question
+        let prefix = "smart-consult:\(task.id):"
+        let questions = scoped.filter {
+            $0.id.hasPrefix(prefix) && $0.kind == .question
                 && $0.senderRunnerID == runnerID
                 && $0.recipientRunnerID == architectRunnerID
+        }
+        func answer(to question: CollaborationEvent) -> CollaborationEvent? {
+            scoped.last {
+                $0.kind == .answer && $0.replyTo == question.id
+                    && $0.senderRunnerID == architectRunnerID
+                    && $0.recipientRunnerID == runnerID
+            }
+        }
+        func acknowledgement(of answer: CollaborationEvent?) -> CollaborationEvent? {
+            guard let answer else { return nil }
+            return scoped.last {
+                $0.kind == .ack && $0.replyTo == answer.id && $0.senderRunnerID == runnerID
+                    && $0.createdAt >= answer.createdAt
+            }
+        }
+        // 先闭环正在处理的决策点，不能因为又失败一次而同时派出多个咨询。
+        let openQuestion = questions.first { acknowledgement(of: answer(to: $0)) == nil }
+        let lastClosedAt = questions.compactMap { acknowledgement(of: answer(to: $0))?.createdAt }.max()
+        let failureKinds: Set<String> = ["timedOut", "agentFailed", "verificationFailed", "postRunGate", "qualityGate"]
+        let failures = WorkAttemptStore.latestSnapshots(attempts ?? WorkAttemptStore.all()).filter {
+            guard let endedAt = $0.endedAt else { return false }
+            return $0.taskID == task.id && $0.runnerID == runnerID && $0.outcome == .failed
+                && failureKinds.contains($0.failureKind ?? "")
+                && endedAt > (lastClosedAt ?? .distantPast)
+        }.sorted {
+            $0.endedAt == $1.endedAt ? $0.attemptID < $1.attemptID
+                : ($0.endedAt ?? .distantPast) < ($1.endedAt ?? .distantPast)
+        }
+        let failure = failures.last
+        let needsFailureDecision = failure != nil && (lastClosedAt != nil || failures.count >= 2)
+        guard openQuestion != nil || needsFailureDecision
+                || (questions.isEmpty && (architectureBoundary || repeatedFailure)) else { return nil }
+        let question = openQuestion
+        let questionID: String
+        if let question { questionID = question.id }
+        else if needsFailureDecision, let failure { questionID = prefix + "failure-" + failure.attemptID }
+        else { questionID = prefix + "architecture-v1" }
+        let reason: String
+        if needsFailureDecision, let failure {
+            reason = "失败尝试 \(failure.attemptID)（\(failure.failureKind ?? "unknown")）尚未裁决；先检查已有增量和失败证据，禁止继续盲改"
+        } else {
+            reason = repeatedFailure
+                ? "同一任务已连续失败或自动接力，先裁决根因与边界，禁止继续盲改"
+                : "任务触及重大架构、契约或跨模块边界，首次实现前需要架构裁决"
         }
 
         guard let question else {
@@ -73,11 +126,17 @@ public enum SmartConsultationPolicy {
                                   questionID: questionID, reason: reason))
         }
 
-        guard let answer = scoped.last(where: {
-            $0.kind == .answer && $0.replyTo == question.id
-                && $0.senderRunnerID == architectRunnerID
-                && $0.recipientRunnerID == runnerID
-        }) else {
+        guard let answer = answer(to: question) else {
+            if let failed = scoped.last(where: {
+                $0.kind == .finding && $0.replyTo == question.id
+                    && $0.id.hasPrefix("consultation-failure:") && $0.senderRunnerID == "consultation-executor"
+            }) {
+                return Instruction(stage: .consultationFailed, reason: failed.summary,
+                    questionID: questionID, recipientRunnerID: architectRunnerID,
+                    clause: "\n\n【智能咨询 · 执行失败】\(questionID)：\(failed.summary)。"
+                        + "这不是架构师答复，禁止伪造 ack 或重新开同一问题。"
+                        + "记录具体阻塞并请求处理接收方环境；不要循环等待。可继续不依赖该裁决的工作，Owner 不变。")
+            }
             return Instruction(
                 stage: .waitingForAnswer, reason: reason, questionID: questionID,
                 recipientRunnerID: architectRunnerID,
@@ -86,11 +145,6 @@ public enum SmartConsultationPolicy {
                     + "在动架构边界前读取协作上下文。原任务 Owner 不变。")
         }
 
-        let acknowledged = scoped.contains {
-            $0.kind == .ack && $0.replyTo == answer.id
-                && $0.senderRunnerID == runnerID
-        }
-        guard !acknowledged else { return nil }
         let ack = "llmq collaboration ack " + shellQuote(answer.id)
             + " --project " + shellQuote(normalizedProject(task.repo))
             + " --sender " + shellQuote(runnerID)
@@ -115,10 +169,11 @@ public enum SmartConsultationPolicy {
         }
         command += " --to " + shellQuote(architectRunnerID)
             + " --id " + shellQuote(questionID)
-            + " --question '请裁决本任务的架构/契约边界、最小正确方案和验收门槛'"
+            + " --question '替换为检查现有增量后的具体疑问，不要原样发送模板'"
+            + " --details '按事实填写：现有分支/提交、实际失败证据、已尝试方案和下一验收门槛；跨机器不可读的文件必须摘录关键证据，不能只给本机路径'"
         return "\n\n【智能咨询 · 强制决策点】\(reason)。在第一次实现性修改前，"
             + "必须先完成一次定向架构咨询；问题要包含你检查现有增量后发现的具体分歧。"
-            + "只问这一次，提交后继续不依赖答案的工作，不暂停、不换 Owner。"
+            + "同一决策点只问一次，提交后继续不依赖答案的工作，不暂停、不换 Owner。"
             + "收到答案后必须 ack 说明是否采用。\n" + command
     }
 

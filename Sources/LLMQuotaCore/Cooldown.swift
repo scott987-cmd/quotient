@@ -119,6 +119,9 @@ public enum CooldownLedger {
         var action: Action
         var writerMachineID: String
         var createdAt: Date
+        // 兼容时间字段使用 ISO8601（秒精度）。事件排序另外保留亚秒，
+        // 否则同一秒内 record → clear → record 会退化成按随机 UUID 排序。
+        var createdAtUnixSeconds: TimeInterval
         var platform: Platform
         var quotaPoolID: String?
         var runnerID: String?
@@ -137,6 +140,7 @@ public enum CooldownLedger {
             self.action = action
             self.writerMachineID = writerMachineID
             self.createdAt = createdAt
+            self.createdAtUnixSeconds = createdAt.timeIntervalSince1970
             self.platform = platform
             self.quotaPoolID = quotaPoolID
             self.runnerID = runnerID
@@ -147,7 +151,7 @@ public enum CooldownLedger {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case schemaVersion, id, action, writerMachineID, createdAt
+            case schemaVersion, id, action, writerMachineID, createdAt, createdAtUnixSeconds
             case platform, quotaPoolID, runnerID, capability, platformWide
             case includeLegacyPool, cooldown
         }
@@ -160,6 +164,8 @@ public enum CooldownLedger {
             writerMachineID = try c.decodeIfPresent(
                 String.self, forKey: .writerMachineID) ?? "unknown"
             createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? .distantPast
+            createdAtUnixSeconds = try c.decodeIfPresent(
+                TimeInterval.self, forKey: .createdAtUnixSeconds) ?? createdAt.timeIntervalSince1970
             platform = try c.decode(Platform.self, forKey: .platform)
             quotaPoolID = try c.decodeIfPresent(String.self, forKey: .quotaPoolID)
             runnerID = try c.decodeIfPresent(String.self, forKey: .runnerID)
@@ -496,7 +502,12 @@ public enum CooldownLedger {
     }
 
     private static func eventOrder(_ lhs: Event, _ rhs: Event) -> Bool {
-        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        if lhs.createdAtUnixSeconds != rhs.createdAtUnixSeconds {
+            return lhs.createdAtUnixSeconds < rhs.createdAtUnixSeconds
+        }
+        // 旧记录丢掉的精度不能复原；完全相同时让清除墓碑最后生效。
+        // 新记录有亚秒顺序，清除后真正的新故障不会被这个兜底吞掉。
+        if lhs.action != rhs.action { return lhs.action == .upsert }
         if lhs.writerMachineID != rhs.writerMachineID {
             return lhs.writerMachineID < rhs.writerMachineID
         }

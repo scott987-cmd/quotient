@@ -77,8 +77,7 @@ final class DecidedMeansExecutedTests: XCTestCase {
         XCTAssertFalse(Review.decidedBranches().contains("/r|agent/a/stuck"),
                        "点了但没合上的,必须留在他眼前 —— 否则就是黑洞")
         // 办成之后才隐藏。
-        try "/r|agent/a/stuck".write(to: dir.appendingPathComponent(".done"),
-                                    atomically: true, encoding: .utf8)
+        Review.markDecided(repo: "/r", branch: "agent/a/stuck")
         XCTAssertTrue(Review.decidedBranches().contains("/r|agent/a/stuck"))
     }
 }

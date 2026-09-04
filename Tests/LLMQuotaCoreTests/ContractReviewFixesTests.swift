@@ -26,12 +26,44 @@ final class ContractReviewFixesTests: XCTestCase {
 
     // MARK: M5 卡片放行后要撤问题文件
 
-    func test_卡片放行路径会撤Ask() {
-        let s = mainSwift
-        guard let r = s.range(of: "case (\"task\", \"approve\"), (\"task\", \"discard\"):") else { return XCTFail() }
-        let endIdx: String.Index = s.index(r.upperBound, offsetBy: 2500, limitedBy: s.endIndex) ?? s.endIndex
-        let tail = String(s[r.upperBound..<endIdx])
-        XCTAssertTrue(tail.contains("AskStore.retract("), "两个入口(卡片/问题页)必须互相撤销,否则「确认了还弹」")
+    func test_卡片放行路径会撤Ask() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("independent-ask-" + UUID().uuidString)
+        let previousRoot = Paths.appSupportOverride, previousMachine = Paths.machineIDOverride
+        Paths.appSupportOverride = root
+        Paths.machineIDOverride = "isolated-ask-machine"
+        defer {
+            Paths.appSupportOverride = previousRoot
+            Paths.machineIDOverride = previousMachine
+            try? FileManager.default.removeItem(at: root)
+        }
+        let repo = root.appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        let branch = "agent/codex/isolated-ask"
+        for args in [["init", "-b", "main"], ["config", "user.name", "Isolated Acceptance"],
+                     ["config", "user.email", "acceptance@example.invalid"],
+                     ["commit", "--allow-empty", "-m", "base"], ["checkout", "-b", branch],
+                     ["commit", "--allow-empty", "-m", "approval snapshot"], ["checkout", "main"]] {
+            let result = GitWorkspace.git(args, in: repo.path)
+            XCTAssertEqual(result.exitCode, 0, result.stderr)
+        }
+        let ask = Ask(id: "isolated-question", taskID: "isolated-ask", machineID: "isolated-ask-machine",
+            round: 1, platform: .codex, taskPrompt: "独立验收", repoName: "repo", questions: [], kind: .approval)
+        var task = WorkTask(id: ask.taskID, prompt: "独立验收", repo: repo.path)
+        task.state = .blocked; task.branch = branch; task.pendingAsk = ask
+        task.note = "碰到高危路径，等你确认"
+        try TaskStore.append(task)
+        try AskStore.publish(ask)
+        XCTAssertEqual(AskStore.pending(machine: ask.machineID).map(\.id), [ask.id])
+        let current = try XCTUnwrap(TaskStore.all().last { $0.id == task.id })
+        let id = try XCTUnwrap(MobileAction.scoped("task:approve:" + MobileAction.taskResource(current), machineID: ask.machineID))
+        let data = try JSONSerialization.data(withJSONObject: ["id": id, "invocationID": UUID().uuidString,
+            "at": "2026-09-03T00:00:00Z"])
+        let inv = try SnapshotCoding.decoder().decode(ViewFeed.Invocation.self, from: data)
+        XCTAssertEqual(MobileAction.execute(inv), true)
+        XCTAssertTrue(AskStore.pending(machine: ask.machineID).isEmpty,
+                      "两个入口(卡片/问题页)必须互相撤销,否则「确认了还弹」")
+        XCTAssertEqual(TaskStore.all().last { $0.id == task.id }?.state, .done)
+        XCTAssertNil(TaskStore.all().last { $0.id == task.id }?.pendingAsk)
     }
 
     func test_人工结束或重试任务会撤下旧问题() {

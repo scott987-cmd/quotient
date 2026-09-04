@@ -312,18 +312,23 @@ public enum ProjectorService {
             prepare: { LLMQuota.dashboard() },
             commit: { dash in
                 guard token.isCurrent else { return }
-                Inbox.publishDashboard(dash)
+                let legacyDash = TaskBoardStore.mergedForLegacyDashboard(
+                    dash, now: dash.generatedAt, timeout: 4)
+                Inbox.publishDashboard(legacyDash)
                 _ = TaskBoardStore.prune()
                 Inbox.publishRepos()
             })
         if case .done = dashboard { published = true }
 
         guard token.isCurrent else { return false }
-        _ = Review.publishDigests()
         let guarded = Showcase.defaultPublishers.map { publisher in
             { if token.isCurrent { publisher() } }
         }
         if Showcase.refresh(force: true, publishers: guarded) { published = true }
+        // Git 评审摘要不能挡住下一轮项目进度；同 key 看门狗禁止阻塞线程堆积。
+        _ = Watchdog.run("projector.review-digests", timeout: 10) {
+            if token.isCurrent { _ = Review.publishDigests() }
+        }
         return published && token.isCurrent
     }
 }

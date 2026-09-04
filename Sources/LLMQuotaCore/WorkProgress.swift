@@ -15,6 +15,16 @@ public struct WorkProgress: Codable, Sendable, Equatable {
     public var evidenceFingerprint: String
     public var requestedMinutes: Int
     public var updatedAt: Date
+    /// `true` 表示 worker 根据提交或工作区变化生成的客观续期，不是 Agent
+    /// 对“整项任务是否还有下一步”的主动声明。
+    public var automatic: Bool
+    /// 最近一次 Agent 主动声明的后续工作。自动续期会保留它，Agent 最终上报
+    /// 不带 `--next` 时才清空，避免自动心跳覆盖尚未完成的事实。
+    public var explicitNextStep: String?
+    /// `explicitNextStep` 最初由 Agent 写入时的序号和时间。自动续期只搬运这组
+    /// 来源信息，不能把上一轮的声明伪装成本轮的新声明。
+    public var explicitNextStepSequence: Int?
+    public var explicitNextStepAt: Date?
     /// 最近一次真实 checkpoint 的时间。普通 diff 只能续租；显式里程碑或
     /// 新提交里真实出现的证据文件才能刷新它。
     public var checkpointAt: Date?
@@ -33,6 +43,10 @@ public struct WorkProgress: Codable, Sendable, Equatable {
         self.evidenceFingerprint = evidenceFingerprint
         self.requestedMinutes = requestedMinutes
         self.updatedAt = updatedAt
+        self.automatic = automatic
+        self.explicitNextStep = automatic ? nil : nextStep
+        self.explicitNextStepSequence = automatic || nextStep == nil ? nil : sequence
+        self.explicitNextStepAt = automatic || nextStep == nil ? nil : updatedAt
         self.checkpointAt = automatic ? checkpointAt : (checkpointAt ?? updatedAt)
     }
 
@@ -48,12 +62,20 @@ public struct WorkProgress: Codable, Sendable, Equatable {
             forKey: .evidenceFingerprint) ?? ""
         requestedMinutes = try c.decodeIfPresent(Int.self, forKey: .requestedMinutes) ?? 20
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast
+        let looksAutomatic = phase == "持续实现" && summary.hasPrefix("检测到")
+        automatic = try c.decodeIfPresent(Bool.self, forKey: .automatic) ?? looksAutomatic
+        explicitNextStep = try c.decodeIfPresent(String.self, forKey: .explicitNextStep)
+            ?? (automatic ? nil : nextStep)
+        explicitNextStepSequence = try c.decodeIfPresent(
+            Int.self, forKey: .explicitNextStepSequence)
+            ?? (automatic || explicitNextStep == nil ? nil : sequence)
+        explicitNextStepAt = try c.decodeIfPresent(Date.self, forKey: .explicitNextStepAt)
+            ?? (automatic || explicitNextStep == nil ? nil : updatedAt)
         if c.contains(.checkpointAt) {
             checkpointAt = try c.decodeIfPresent(Date.self, forKey: .checkpointAt)
         } else {
             // 老版本没有来源字段。能识别出的 worker 自动文案不冒充 Agent；
             // 其余旧记录按主动汇报兼容，避免升级瞬间制造一批假告警。
-            let looksAutomatic = phase == "持续实现" && summary.hasPrefix("检测到")
             checkpointAt = looksAutomatic ? nil : updatedAt
         }
     }
@@ -109,7 +131,7 @@ public enum WorkProgressStore {
         let cleanEvidence = incomingEvidence.isEmpty
             ? (old?.evidence ?? [])
             : incomingEvidence
-        let item = WorkProgress(
+        var item = WorkProgress(
             taskID: taskID,
             sequence: (old?.sequence ?? 0) + 1,
             phase: String(phase.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)),
@@ -125,6 +147,11 @@ public enum WorkProgressStore {
                 ? (incomingEvidence.isEmpty ? old?.checkpointAt : now)
                 : now,
             automatic: automatic)
+        if automatic {
+            item.explicitNextStep = old?.explicitNextStep
+            item.explicitNextStepSequence = old?.explicitNextStepSequence
+            item.explicitNextStepAt = old?.explicitNextStepAt
+        }
         let data = try SnapshotCoding.prettyEncoder().encode(item)
         guard ICloudSafe.write(data, to: file(taskID: taskID)) else {
             throw NSError(domain: "WorkProgress", code: 1,
@@ -184,6 +211,36 @@ public enum WorkProgressStore {
     }
 }
 
+/// Runner 成功退出不能覆盖同一轮主动声明的后续工作。序号和时间双重约束，
+/// 避免旧 checkpoint 把后来真正完成的一轮重新打开。
+public enum WorkContinuationGate {
+    @discardableResult
+    public static func requeueIfNeeded(
+        task: inout WorkTask,
+        startedAt: Date,
+        baselineSequence: Int,
+        progress: WorkProgress?
+    ) -> String? {
+        guard task.state == .done,
+              let progress,
+              progress.sequence > baselineSequence,
+              progress.updatedAt >= startedAt,
+              let declaredSequence = progress.explicitNextStepSequence,
+              declaredSequence > baselineSequence,
+              let declaredAt = progress.explicitNextStepAt,
+              declaredAt >= startedAt,
+              let nextStep = progress.explicitNextStep?.trimmingCharacters(
+                in: .whitespacesAndNewlines),
+              !nextStep.isEmpty else { return nil }
+        task.state = .queued
+        task.endedAt = nil
+        task.runnerPID = nil
+        task.note = "本轮阶段成果已保存；仍有明确下一步，沿用原任务继续："
+            + nextStep
+        return nextStep
+    }
+}
+
 /// 独立于 Agent 自报的长任务巡检。
 ///
 /// Agent 忘记调用 `work progress` 时，租约闸会拒绝给它续时；但手机端过去仍只写
@@ -209,7 +266,8 @@ public enum WorkProgressSentinel {
         // worker 看到文件变化会自动续租，但那不是 Agent 主动交出的阶段成果。
         // 两者共用 updatedAt 会让一个一直改文件却从不交 checkpoint 的任务
         // 永远逃过 20 分钟巡检。
-        let lastProof = progress?.checkpointAt ?? startedAt
+        let checkpoint = progress?.checkpointAt ?? startedAt
+        let lastProof = isRunning ? max(startedAt, checkpoint) : checkpoint
         let age = now.timeIntervalSince(lastProof)
         guard age >= interval else { return nil }
         return Finding(taskID: task.id,
@@ -305,6 +363,7 @@ public enum WorkProgressContract {
         任务编号由环境变量 `LLMQ_TASK_ID` 自动提供。证据可以是测试日志、截图或产物路径；
         系统也会自动核对当前提交和工作区差异。只改汇报文字、没有新提交/差异/证据，不能续期。
         在当前时限不够时再次提交最新里程碑；证据持续推进就会延长同一执行会话，续期总次数不封顶。
+        最终 progress：有 `--next` 就继续排队；无 `--next` 才算整项完成。
         """
     }
 }

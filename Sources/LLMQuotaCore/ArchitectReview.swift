@@ -60,6 +60,7 @@ public enum ArchitectReview {
         })
         // 已经有复核票的历史来源不必每 30 秒重新打开 EVAL/git 报告。
         let negative = tasks.filter { task in
+            guard VisualReviewScope.resolve(task: task) != .observation else { return false }
             if legacySources.contains(task.id) { return true }
             if let subject = subject(for: task), batchSubjects.contains(subjectKey(subject)) {
                 return !TaskKind.isArchitectReview(task.prompt)
@@ -229,6 +230,7 @@ public enum ArchitectReview {
 
     static func isNegative(_ review: WorkTask) -> Bool {
         guard review.state == .done, review.discardedAt == nil,
+              VisualReviewScope.resolve(task: review) != .observation,
               review.prompt.contains(contractMarker),
               !TaskKind.isTesting(review.prompt),
               !TaskKind.isArchitectReview(review.prompt),

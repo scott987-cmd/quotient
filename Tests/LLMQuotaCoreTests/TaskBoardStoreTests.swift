@@ -139,6 +139,14 @@ final class TaskBoardStoreTests: XCTestCase {
                       "截断标记丢了，手机上的条数就变成一句没人会核对的假话")
     }
 
+    func testFileNameOwnsTaskBoardMachineIdentity() throws {
+        let payload = board("forged-inside", name: "Mac", tasks: [brief("one")])
+        try SnapshotCoding.prettyEncoder().encode(payload).write(to: fileURL("actual-file"))
+
+        XCTAssertEqual(TaskBoardStore.loadAll().boards.first?.machineID, "actual-file",
+                       "分机文件名是路由身份，内容不能把自己改报成另一台机器")
+    }
+
     // MARK: - 3. 老 dashboard.tasks 还在
 
     /// **别删 `dashboard.tasks`。** 老版本手机只认它，
@@ -206,6 +214,18 @@ final class TaskBoardStoreTests: XCTestCase {
 
         XCTAssertTrue(merged.tasks.isEmpty,
                       "过期任务板里的 running 不能被兼容层复活成正在执行")
+    }
+
+    func testLegacyDashboardRejectsFarFutureRemoteBoard() {
+        TaskBoardStore.publish(board(
+            "FUTURE", name: "时钟异常机器", generatedAt: now.addingTimeInterval(3600),
+            tasks: [brief("future-running", machine: "时钟异常机器")]))
+        let local = Dashboard(generatedAt: now, machines: [], reports: [], tasks: [])
+
+        let merged = TaskBoardStore.mergedForLegacyDashboard(local, now: now)
+
+        XCTAssertTrue(merged.tasks.isEmpty,
+                      "未来一小时的快照不能在旧手机里长期压过真实的新状态")
     }
 
     func testLegacyDashboardUsesNewestObservationForTransferredTask() {
@@ -293,12 +313,15 @@ final class TaskBoardStoreTests: XCTestCase {
 
     func testLastActivityTakesTheNewerSignal() {
         let old = now.addingTimeInterval(-9 * 86400)
-        XCTAssertEqual(TaskBoardStore.lastActivity(generatedAt: old, mtime: now), now)
-        XCTAssertEqual(TaskBoardStore.lastActivity(generatedAt: now, mtime: old), now)
-        XCTAssertEqual(TaskBoardStore.lastActivity(generatedAt: .distantPast, mtime: now), now,
+        XCTAssertEqual(TaskBoardStore.lastActivity(generatedAt: old, mtime: now, now: now), now)
+        XCTAssertEqual(TaskBoardStore.lastActivity(generatedAt: now, mtime: old, now: now), now)
+        XCTAssertEqual(TaskBoardStore.lastActivity(generatedAt: .distantPast, mtime: now, now: now), now,
                        "distantPast 是解码兜底出来的，不是真实时间，不该参与比较")
-        XCTAssertNil(TaskBoardStore.lastActivity(generatedAt: nil, mtime: nil),
+        XCTAssertNil(TaskBoardStore.lastActivity(generatedAt: nil, mtime: nil, now: now),
                      "一个时间信号都没有时必须返回 nil —— 让调用方留着，别猜")
+        XCTAssertEqual(TaskBoardStore.lastActivity(
+            generatedAt: now.addingTimeInterval(3600), mtime: old, now: now), old,
+            "远未来内容时间不能让废弃任务板永久逃过清理")
     }
 
     // MARK: - 读不到 ≠ 没有

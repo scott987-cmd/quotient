@@ -46,6 +46,32 @@ final class ShowcaseTests: XCTestCase {
     }
 
     /// 契约:手机真正读的每一页都要在默认发布器里。
+    func testSlowPageDoesNotBlockOtherPagesOrAccumulateThreads() {
+        let release = DispatchSemaphore(value: 0)
+        let returned = expectation(description: "stuck page released")
+        let lock = NSLock()
+        var slowCalls = 0
+        var nextCalls = 0
+        let publishers: [() -> Void] = [{
+            lock.lock(); slowCalls += 1; lock.unlock()
+            release.wait()
+            returned.fulfill()
+        }, {
+            lock.lock(); nextCalls += 1; lock.unlock()
+        }]
+        let began = Date()
+        XCTAssertTrue(Showcase.refresh(force: true, publishers: publishers, publisherTimeout: 0.03))
+        XCTAssertTrue(Showcase.refresh(force: true, publishers: publishers, publisherTimeout: 0.03))
+        XCTAssertLessThan(Date().timeIntervalSince(began), 1, "慢页不能阻塞本轮或下一轮的其他页面")
+        lock.lock()
+        XCTAssertEqual(slowCalls, 1)
+        XCTAssertEqual(nextCalls, 2)
+        lock.unlock()
+        release.signal()
+        wait(for: [returned], timeout: 1)
+    }
+
+    /// 契约:手机真正读的每一页都要在默认发布器里。
     /// 少一份,那一页就永远停在旧内容上 —— 而这种「静止」在界面上和「没有新东西」长得一样。
     func test_默认发布器覆盖手机读的每一页() throws {
         let here = URL(fileURLWithPath: #filePath)
@@ -68,5 +94,9 @@ final class ShowcaseTests: XCTestCase {
         let loopBody = main[loopStart.lowerBound..<projectorStart.lowerBound]
         XCTAssertFalse(loopBody.contains("Showcase.trigger"),
                        "Coordinator 不得再发布手机视图")
+        let lifecycle = try String(contentsOf: root.appendingPathComponent(
+            "Sources/LLMQuotaCore/LifecycleIsolation.swift"), encoding: .utf8)
+        XCTAssertTrue(lifecycle.contains("TaskBoardStore.mergedForLegacyDashboard"),
+                      "启用 Projector 后也不能把旧客户端的跨机任务列表覆盖成本机任务")
     }
 }

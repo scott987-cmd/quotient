@@ -26,6 +26,7 @@ final class CollaborationTests: XCTestCase {
         scratch = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("collaboration-" + UUID().uuidString)
         CollaborationStore.directoryOverride = scratch
+        Paths.appSupportOverride = scratch.appendingPathComponent("support")
         // Agent 发现会合并跨机注册表；测试必须使用自己的空注册目录，不能
         // 把开发机此刻真实在线的 Claude/MiniMax 等 Agent 当成夹具。
         AgentRegistry.directoryOverride = scratch.appendingPathComponent("agent-registry")
@@ -35,6 +36,7 @@ final class CollaborationTests: XCTestCase {
         AgentConsultation.responseOverride = nil
         AgentRegistry.directoryOverride = nil
         CollaborationStore.directoryOverride = nil
+        Paths.appSupportOverride = nil
         try? FileManager.default.removeItem(at: scratch)
         super.tearDown()
     }
@@ -127,6 +129,49 @@ final class CollaborationTests: XCTestCase {
         let ids = Set(CollaborationStore.context(
             project: "/tmp/project-a", taskID: "task-a", runnerID: "kimi.code").map(\.id))
         XCTAssertEqual(ids, ["broadcast", "mine"])
+    }
+
+    func testOwnerContextRetainsUnacknowledgedAnswerAndOriginalQuestionWithinBudget() throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        try publish(id: "q-context", to: "codex.code", kind: .question, summary: "真实问题", at: start)
+        try publish(id: "a-context", sender: "codex.code", to: "kimi.code", kind: .answer,
+                    summary: "采用前必须读到的完整结论", replyTo: "q-context", at: start.addingTimeInterval(1))
+        for i in 0..<40 {
+            try publish(id: "noise-\(i)", kind: .checkpoint, summary: "后续进度",
+                        at: start.addingTimeInterval(Double(i + 2)))
+        }
+        let context = CollaborationStore.context(project: "/tmp/project-a", taskID: "task-a", runnerID: "kimi.code")
+        XCTAssertEqual(context.count, 18)
+        XCTAssertTrue(context.contains { $0.id == "q-context" })
+        XCTAssertTrue(context.contains { $0.id == "a-context" })
+        try publish(id: "ack-context", kind: .ack, summary: "拒绝并说明理由", replyTo: "a-context",
+                    at: start.addingTimeInterval(50))
+        XCTAssertFalse(CollaborationStore.context(project: "/tmp/project-a", taskID: "task-a", runnerID: "kimi.code")
+            .contains { $0.id == "q-context" }, "已确认的旧全文不应无限重复带入上下文")
+    }
+
+    func testRecipientContextRetainsUnansweredQuestionWithinBudget() throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        try publish(id: "incoming-question", sender: "codex.code", to: "kimi.code",
+                    kind: .question, summary: "需要接收方明确回答的问题", at: start)
+        for i in 0..<40 {
+            try publish(id: "later-\(i)", sender: "codex.code", kind: .checkpoint,
+                        summary: "后续进度", at: start.addingTimeInterval(Double(i + 1)))
+        }
+
+        let context = CollaborationStore.context(
+            project: "/tmp/project-a", taskID: "task-a",
+            runnerID: "kimi.code", limit: 6)
+        XCTAssertTrue(context.contains { $0.id == "incoming-question" },
+                      "发给当前 Runner 的未答问题不能被后续进度挤出上下文")
+
+        try publish(id: "incoming-answer", sender: "kimi.code", to: "codex.code",
+                    kind: .answer, summary: "已经回答", replyTo: "incoming-question",
+                    at: start.addingTimeInterval(50))
+        XCTAssertFalse(CollaborationStore.context(
+            project: "/tmp/project-a", taskID: "task-a",
+            runnerID: "kimi.code", limit: 6).contains { $0.id == "incoming-question" },
+            "已回答的问题不应继续长期占用固定上下文")
     }
 
     func testAnswerClosesQuestionAndBriefingMarksOnlyPending() throws {
@@ -354,6 +399,71 @@ final class CollaborationTests: XCTestCase {
     func testEventSizeIsBounded() throws {
         XCTAssertThrowsError(try publish(summary: String(repeating: "x", count: 2_001)))
         XCTAssertTrue(CollaborationStore.all().isEmpty)
+    }
+
+    func testQuestionAnswerAndFeedbackSurviveCheckpointFlood() throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let questionText = "为何测试通过但无法通关？" + String(repeating: "保留既有增量。", count: 30)
+        let answerText = "用真实操作验证。" + String(repeating: "不要降低门槛。", count: 30)
+        try publish(id: "q", to: "codex.code", kind: .question, summary: questionText, at: start)
+        try publish(id: "a", sender: "codex.code", to: "kimi.code", kind: .answer,
+                    summary: answerText, replyTo: "q", at: start.addingTimeInterval(1))
+        try publish(id: "ack", kind: .ack, summary: "部分采用：保留控制方案，拒绝降低门槛",
+                    replyTo: "a", at: start.addingTimeInterval(2))
+        for i in 0..<40 {
+            try publish(id: "cp-\(i)", kind: .checkpoint, summary: "检查点 \(i)",
+                        at: start.addingTimeInterval(Double(i + 3)))
+        }
+        try publish(id: "human-answer", sender: "human", to: "kimi.code", kind: .answer,
+                    summary: "继续", at: start.addingTimeInterval(50))
+        let page = ViewFeed.collaborationPage(tasks: [task(id: "task-a", owner: "kimi.code", platform: .kimi)])
+        let conversation = try XCTUnwrap(page.sections.flatMap { $0.cards ?? [] }.first {
+            $0.id == "chain:event:q"
+        })
+        XCTAssertTrue(conversation.detail?.contains(questionText) == true)
+        XCTAssertTrue(conversation.detail?.contains(answerText) == true)
+        XCTAssertTrue(conversation.detail?.contains("部分采用：保留控制方案，拒绝降低门槛") == true)
+        XCTAssertFalse(conversation.detail?.contains("已采纳") == true)
+        XCTAssertEqual(conversation.eventKind, "conversation")
+        XCTAssertEqual(page.sections.flatMap { $0.facts ?? [] }.first { $0.key == "Agent 互问" }?.value, "1/1",
+                       "用户的继续、单向决定不能冒充 Agent 问答")
+    }
+
+    func testConversationDoesNotFollowReplyIntoAnotherProject() throws {
+        try publish(id: "other", project: "/tmp/private", kind: .question, summary: "其他项目内容")
+        try publish(id: "bad-reply", sender: "codex.code", kind: .answer, summary: "无有效关联",
+                    replyTo: "other")
+        let page = ViewFeed.collaborationPage(tasks: [task(id: "task-a", owner: "kimi.code", platform: .kimi)])
+        let cards = page.sections.first { $0.title == "交互关系" }?.cards ?? []
+        XCTAssertFalse(cards.contains { $0.title.contains("其他项目内容") })
+    }
+
+    func testQuestionLimitKeepsWholeLatestAnswerAndHonestAwaitingFeedback() throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        for i in 0..<12 {
+            try publish(id: "q-\(i)", to: "codex.code", kind: .question, summary: "原题 \(i)",
+                        at: start.addingTimeInterval(Double(i * 3)))
+            try publish(id: "a-\(i)", sender: "codex.code", to: "kimi.code", kind: .answer,
+                        summary: "完整答复 \(i)", replyTo: "q-\(i)", at: start.addingTimeInterval(Double(i * 3 + 1)))
+        }
+        let page = ViewFeed.collaborationPage(tasks: [])
+        let conversations = page.sections.flatMap { $0.cards ?? [] }.filter { $0.eventKind == "conversation" }
+        XCTAssertEqual(conversations.count, 8)
+        XCTAssertTrue(conversations[0].detail?.contains("原题 11") == true)
+        XCTAssertTrue(conversations[0].detail?.contains("完整答复 11") == true)
+        XCTAssertTrue(conversations[0].body?.contains("待 Kimi 确认") == true)
+        XCTAssertFalse(conversations.contains { $0.id == "chain:event:q-0" })
+    }
+
+    func testFailedResponderIsShownAsFailureNotAnswer() throws {
+        try publish(id: "failed-q", to: "codex.code", kind: .question, summary: "请复查失败")
+        try publish(id: "consultation-failure:failed-q:mini", sender: "consultation-executor",
+                    kind: .finding, summary: "咨询超时", replyTo: "failed-q")
+        let page = ViewFeed.collaborationPage(tasks: [])
+        let card = try XCTUnwrap(page.sections.flatMap { $0.cards ?? [] }.first { $0.eventKind == "conversation" })
+        XCTAssertTrue(card.detail?.contains("咨询超时") == true)
+        XCTAssertFalse(card.body?.contains("回复") == true)
+        XCTAssertEqual(page.sections.flatMap { $0.facts ?? [] }.first { $0.key == "Agent 互问" }?.value, "1/0")
     }
 
     func testTargetedConsultationPublishesQuestionClaimAndAnswer() throws {

@@ -233,6 +233,68 @@ extension CooldownClassifyTests {
             "clear 事件必须压住后来回流的旧整文件")
     }
 
+    func testCooldownEventsPreserveWithinSecondOrderAcrossDiskRoundTrip() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-event-subsecond-\(UUID().uuidString)")
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+        try FileManager.default.createDirectory(
+            at: CooldownLedger.eventDirectory, withIntermediateDirectories: true)
+        let start = Date(timeIntervalSince1970: 1_788_000_000)
+        func write(_ action: CooldownLedger.Event.Action, id: String,
+                   offset: Double, detail: String) throws {
+            let at = start.addingTimeInterval(offset)
+            let cd = Cooldown(platform: .qwen, quotaPoolID: "qwen:default",
+                runnerID: "qwen.code", capability: "code", cause: .authFailed,
+                since: at, until: at.addingTimeInterval(900), strikes: 1, detail: detail)
+            var event = CooldownLedger.Event(action: action, platform: .qwen,
+                quotaPoolID: cd.quotaPoolID, runnerID: cd.runnerID, capability: cd.capability,
+                cooldown: action == .upsert ? cd : nil, createdAt: at, writerMachineID: "test")
+            event.id = id
+            try SnapshotCoding.prettyEncoder().encode(event).write(
+                to: CooldownLedger.eventDirectory.appendingPathComponent(id + ".json"))
+        }
+        // ID 的字典序故意和真正发生顺序相反，不允许靠随机 UUID 碰运气。
+        try write(.upsert, id: "z-old", offset: 0.1, detail: "old failure")
+        try write(.clear, id: "a-clear", offset: 0.2, detail: "")
+        XCTAssertTrue(CooldownLedger.loadEntries().isEmpty)
+        try write(.upsert, id: "m-new", offset: 0.3, detail: "new failure")
+        XCTAssertEqual(CooldownLedger.loadEntries().map(\.detail), ["new failure"],
+                       "恢复以后真正再次失败仍然必须重新阻断，不能一律 clear 胜出")
+    }
+
+    func testLegacyCooldownEventsAtIdenticalTimestampPreferClear() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cd-event-legacy-tie-\(UUID().uuidString)")
+        Paths.appSupportOverride = sandbox
+        defer {
+            Paths.appSupportOverride = nil
+            try? FileManager.default.removeItem(at: sandbox)
+        }
+        try FileManager.default.createDirectory(
+            at: CooldownLedger.eventDirectory, withIntermediateDirectories: true)
+        let at = Date(timeIntervalSince1970: 1_788_000_000)
+        let cd = Cooldown(platform: .qwen, quotaPoolID: "qwen:default",
+            runnerID: "qwen.code", capability: "code", cause: .authFailed,
+            since: at, until: at.addingTimeInterval(900), strikes: 1, detail: "legacy failure")
+        for (id, action) in [("z-old", CooldownLedger.Event.Action.upsert), ("a-clear", .clear)] {
+            var event = CooldownLedger.Event(action: action, platform: .qwen,
+                quotaPoolID: cd.quotaPoolID, runnerID: cd.runnerID, capability: cd.capability,
+                cooldown: action == .upsert ? cd : nil, createdAt: at, writerMachineID: "test")
+            event.id = id
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: SnapshotCoding.prettyEncoder().encode(event)) as? [String: Any])
+            json.removeValue(forKey: "createdAtUnixSeconds")
+            try JSONSerialization.data(withJSONObject: json).write(
+                to: CooldownLedger.eventDirectory.appendingPathComponent(id + ".json"))
+        }
+        XCTAssertTrue(CooldownLedger.loadEntries().isEmpty,
+                      "旧版已丢失的亚秒精度无法复原；相同时间的恢复墓碑不能被随机 ID 排到前面")
+    }
+
     func testDefaultPoolEventReplacesLegacyNilPoolRecord() throws {
         let sandbox = FileManager.default.temporaryDirectory
             .appendingPathComponent("cd-event-default-pool-\(UUID().uuidString)")

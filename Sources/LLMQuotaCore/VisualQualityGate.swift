@@ -43,6 +43,7 @@ public enum VisualQualityGate {
     }
 
     static func verdict(_ task: WorkTask) -> Status? {
+        guard VisualReviewScope.resolve(task: task) != .observation else { return nil }
         let text = (task.outputs + [task.note ?? ""]).joined(separator: "\n")
         guard let line = text.components(separatedBy: .newlines)
             .first(where: { $0.contains("结论") }) else { return nil }
@@ -56,6 +57,7 @@ public enum VisualQualityGate {
     }
 
     private static func resolvedStatus(_ matching: [WorkTask], tasks: [WorkTask]) -> Status {
+        let matching = matching.filter { VisualReviewScope.resolve(task: $0) != .observation }
         // 新一轮正在看时，旧票不能先放行。TaskStore.all() 已把同 ID 的状态
         // 快照折成最后一条，这里处理的是不同验收任务。
         if matching.contains(where: {
@@ -93,6 +95,7 @@ public enum VisualQualityGate {
         let prefix = marker(branch: branch, head: head)
         return tasks.filter {
             $0.prompt.hasPrefix(prefix) && $0.state == .blocked
+                && VisualReviewScope.resolve(task: $0) != .observation
         }.max(by: { verdictDate($0) < verdictDate($1) })?.note
     }
 
@@ -116,6 +119,7 @@ public enum VisualQualityGate {
         let prefix = marker(branch: branch, head: head)
         let attempts = tasks.filter {
             $0.prompt.hasPrefix(prefix)
+                && VisualReviewScope.resolve(task: $0) != .observation
                 && ($0.state == .done || $0.state == .failed)
         }.count
         return attempts >= 3

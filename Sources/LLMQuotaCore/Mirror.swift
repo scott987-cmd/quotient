@@ -16,7 +16,7 @@ public enum SharedLayout {
         "answers", "questions", "outbox",
         "config-intents", "config-intents/processed",
         "releases", "collaboration", "agent-registry", "config-journal",
-        "cooldown-events",
+        "cooldown-events", "action-receipts",
     ]
 
     public static func ensure(at root: URL) {
@@ -140,7 +140,7 @@ public enum MirrorService {
     /// 多写者不可变事件目录：文件名全局唯一，两边只做集合并集，不按 mtime 覆盖。
     static let appendOnlyDirs = ["config-journal", "cooldown-events"]
     /// 只推不拉的目录：证据截图是 Mac 端产的，手机只看。
-    static let pushOnlyDirs = ["evidence", "views"]
+    static let pushOnlyDirs = ["evidence", "views", "action-receipts"]
 
     /// 永不搬的文件：`.sb-` 半成品（原子写卡在 rename 留下的）、
     /// 心跳文件、一切点开头的文件。
@@ -386,12 +386,15 @@ public enum MirrorService {
     /// 给多机共写的扁平目录用（outbox）。这种目录里「本地没有」不代表
     /// 「不该存在」—— 那可能是另一台机器的东西。
     static func pushDirNoDelete(
-        localDir: URL, cloudDir: URL, label: String, stats: inout MirrorStats
+        localDir: URL, cloudDir: URL, label: String, stats: inout MirrorStats,
+        publishRoadmap: Bool? = nil
     ) {
         let localFiles = regularFiles(in: localDir)
         guard !localFiles.isEmpty else { return }
         _ = ICloudSafe.ensureDir(cloudDir)
         for f in localFiles where !excluded(f.lastPathComponent) {
+            if label == "views", f.lastPathComponent == "roadmap.json",
+               !(publishRoadmap ?? RoadmapPage.isPublisher()) { continue }
             pushIfNewer(localFile: f,
                         cloudFile: cloudDir.appendingPathComponent(f.lastPathComponent),
                         label: "\(label)/\(f.lastPathComponent)", stats: &stats)
@@ -527,11 +530,15 @@ public enum MirrorService {
     static func pushIfNewer(localFile: URL, cloudFile: URL, label: String,
                             stats: inout MirrorStats) {
         guard let lm = localMTime(localFile) else { return }   // 本地没有就没什么可推
-        if let cm = ICloudSafe.modificationDate(cloudFile), lm <= cm + tolerance { return }
+        // 回执可能一秒内从 running 变成终态，不能被两秒 mtime 容差永久吞掉。
+        // 每份回执只有目标 Mac 写，按内容更新也不会覆盖其他机器的状态。
+        let isReceipt = label.hasPrefix("action-receipts/")
+        if !isReceipt, let cm = ICloudSafe.modificationDate(cloudFile), lm <= cm + tolerance { return }
         guard let data = try? Data(contentsOf: localFile) else {
             stats.errors.append("\(label)：本地读不出来")
             return
         }
+        if isReceipt, ICloudSafe.read(cloudFile) == data { return }
         _ = ICloudSafe.ensureDir(cloudFile.deletingLastPathComponent())
         if ICloudSafe.write(data, to: cloudFile) {
             try? FileManager.default.setAttributes(
@@ -610,6 +617,8 @@ public enum MirrorHealth {
     /// 超过这么久没有镜像尝试，就当 App 不在跑。
     /// App 的镜像周期是 30 秒，5 分钟等于整整十轮没到。
     public static let staleAfter: TimeInterval = 5 * 60
+    /// 两台机器允许少量时钟偏差；明显来自未来的心跳不能长期冒充健康。
+    public static let futureTolerance: TimeInterval = 5 * 60
 
     public enum Status: Sendable {
         /// 心跳新鲜且上一轮零错误。
@@ -627,11 +636,13 @@ public enum MirrorHealth {
         guard let data = try? Data(contentsOf: url),
               let st = try? SnapshotCoding.decoder().decode(MirrorState.self, from: data)
         else { return .neverSynced }
-        if now.timeIntervalSince(st.lastAttemptAt) > staleAfter {
+        let attemptAge = now.timeIntervalSince(st.lastAttemptAt)
+        guard attemptAge >= -futureTolerance else { return .failing(st) }
+        if attemptAge > staleAfter {
             return .appNotRunning(st)
         }
         if st.lastError == nil, let ok = st.lastOKAt,
-           now.timeIntervalSince(ok) <= staleAfter {
+           (-futureTolerance...staleAfter).contains(now.timeIntervalSince(ok)) {
             return .ok(st)
         }
         return .failing(st)

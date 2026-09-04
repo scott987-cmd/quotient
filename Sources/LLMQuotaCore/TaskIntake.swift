@@ -21,6 +21,24 @@ public enum TaskIntake {
         case duplicate([DuplicateGuard.Match])
     }
 
+    /// 修复旧版把 linked worktree 存成项目的排队记录。只在派发快照之前
+    /// 对本机允许执行、尚未被领取的任务做 CAS；不碰运行中任务或冻结历史。
+    @discardableResult
+    public static func reconcileQueuedRepos(scope: ProjectExecutionScope) throws -> Int {
+        var repaired = 0
+        for task in TaskStore.all() where task.state == .queued
+            && task.dispatchLeaseID == nil && task.pausedAt == nil && task.discardedAt == nil {
+            let repo = RepoLease.normalize(task.repo)
+            guard repo != task.repo, scope.allows(repo) else { continue }
+            _ = try TaskStore.transition(
+                id: task.id, expectedRevision: task.rev, actor: "task-intake",
+                reason: "归一工作副本项目身份：" + task.repo + " → " + repo
+            ) { $0.repo = repo }
+            repaired += 1
+        }
+        return repaired
+    }
+
     /// - Parameters:
     ///   - classify: 要不要分诊（会调用推理平台，花额度）。
     ///   - split: 复杂/高危任务要不要交给指挥拆图。
@@ -35,8 +53,9 @@ public enum TaskIntake {
         preferredPlatform: Platform? = nil,
         production requestedProduction: ProductionContext? = nil
     ) throws -> Outcome {
+        let repo = RepoLease.normalize(repo)
         var prompt = prompt
-        if TaskKind.isReview(prompt), !TaskKind.isTesting(prompt),
+        if origin != "milestone-eyes", TaskKind.isReview(prompt), !TaskKind.isTesting(prompt),
            !TaskKind.isArchitectReview(prompt),
            !TaskKind.isTechnicalDisposition(prompt),
            !prompt.contains(ArchitectReview.contractMarker) {
@@ -161,6 +180,7 @@ public enum TaskIntake {
             return .single(prior)
         }
         var task = candidate
+        task.repo = RepoLease.normalize(candidate.repo)
         // 预构造入口可能已经带有业务稳定 ID（例如里程碑整改 m<sha>、
         // 远端请求 ID）。它是外部关联的一部分，不能为了幂等再改名。
         // 只有摄入方明确留下 `pending` 占位符时才由统一入口派生 ID。

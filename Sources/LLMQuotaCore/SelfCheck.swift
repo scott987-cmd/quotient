@@ -65,7 +65,7 @@ public enum SelfCheck {
         // 真出过：worker 的 plist 指向 app bundle 里的一份 llmq，
         // 而 publish 只更新 ~/.local/bin —— 两份分道扬镳，
         // worker 安静地跑了几小时旧代码，最后那个文件没了直接 EX_CONFIG 退出。
-        for label in ["com.llmquotabar.worker", "com.llmquotabar.cluster",
+        for label in ["com.llmquotabar.worker", "com.llmquotabar.projector", "com.llmquotabar.cluster",
                       "com.llmquotabar.updater", "com.llmquotabar.collector"] {
             guard let exe = launchdProgram(label) else { continue }
             if !FileManager.default.fileExists(atPath: exe) {
@@ -105,7 +105,7 @@ public enum SelfCheck {
         var out: [Finding] = []
         let list = Proc.run("/bin/launchctl", ["list"],
                             cwd: NSTemporaryDirectory(), env: [:], timeout: 15).stdout
-        for label in ["com.llmquotabar.worker", "com.llmquotabar.cluster",
+        for label in ["com.llmquotabar.worker", "com.llmquotabar.projector", "com.llmquotabar.cluster",
                       "com.llmquotabar.updater", "com.llmquotabar.collector"] {
             guard let line = list.split(separator: "\n").first(where: { $0.contains(label) })
             else {

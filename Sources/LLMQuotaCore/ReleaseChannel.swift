@@ -515,6 +515,9 @@ public enum ReleaseChannel {
                             : "  ⚠︎ 菜单栏 App 没拉起来 —— 这台机器的镜像同步会停,请手动 open -a LLMQuotaBar\n").utf8))
         }
 
+        // 升级需要迁移服务清单，不能只重启“以前已经装过”的服务。
+        // 只补展示服务；绝不通过 install-loop 中断在飞的任务。
+        _ = try ProjectorInstallation.ensure(executable: installed.path)
         markInstalled(manifest.sha256)
 
         // **这里不踢 worker。** 原来末尾有一句无条件 `launchctl kickstart -k worker`,

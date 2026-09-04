@@ -1756,6 +1756,21 @@ final class AskTests: XCTestCase {
         XCTAssertNotNil(saved?.resumeContext, "拼不出 resumeContext，恢复时就没有答复上下文")
     }
 
+    func testSaveFailureKeepsAnswerForRetryAndDoesNotReportAccepted() throws {
+        let ask = makeAsk()
+        let stored = makeTask(state: .blocked, ask: ask)
+        try writeAnswer(AskAnswer(askID: ask.id, taskID: "t1", machineID: machine,
+                                  answers: ["q1": "先保留这份答复"]))
+
+        let rs = AskIngest.run(machineID: machine, load: { [stored] }) { _ in
+            throw NSError(domain: "isolated-save", code: 1)
+        }
+
+        XCTAssertEqual(rs.first?.accepted, false)
+        XCTAssertEqual(AskStore.collectAnswers(machine: machine).count, 1,
+                       "任务状态没写成时必须保留答案，下轮才能重试")
+    }
+
     /// **致命场景**：你三天后才回答，期间任务已经被人工跑完并提交了。
     ///
     /// 无条件把状态推回 queued 的话，它的 createdAt 最老、排在队头，
@@ -1820,7 +1835,7 @@ final class AskTests: XCTestCase {
     func testAnswersAreScopedByMachine() throws {
         let ask = makeAsk()
         let stored = makeTask(state: .blocked, ask: ask)
-        try writeAnswer(AskAnswer(askID: ask.id, taskID: "t1", machineID: machine,
+        try writeAnswer(AskAnswer(askID: ask.id, taskID: "t1", machineID: "forged-machine",
                                   answers: ["q1": "x"]))
         // 另一台机器去收，什么都收不到 —— 也不会把别人的答案归档掉
         let rs = AskIngest.run(machineID: "other-machine",
@@ -1828,6 +1843,8 @@ final class AskTests: XCTestCase {
         XCTAssertTrue(rs.isEmpty, "另一台机器消费了不属于它的答案")
         XCTAssertEqual(AskStore.collectAnswers(machine: machine).count, 1,
                        "答案被别的机器动过了")
+        XCTAssertEqual(AskStore.collectAnswers(machine: machine).first?.0.machineID, machine,
+                       "答案目录是路由身份，内容不能自报成另一台机器")
     }
 
     // MARK: 契约解析

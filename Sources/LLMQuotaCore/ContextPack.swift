@@ -127,7 +127,8 @@ public enum ContextPackBuilder {
 
         let contracts = renderContracts(request: request)
         let product = ProductBrief.fullBriefing(repo: request.workspacePath,
-                                                registeredRepo: request.task.repo)
+            registeredRepo: request.task.repo,
+            observationOnly: VisualReviewScope.resolve(task: request.task) == .observation)
         let facts = factItems(projection: projection, request: request)
 
         // P0 固定契约：没有它 agent 不知道怎么交证据、怎么汇报进度、怎么留

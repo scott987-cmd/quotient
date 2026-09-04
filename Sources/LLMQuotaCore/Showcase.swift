@@ -49,7 +49,8 @@ public enum Showcase {
     /// 会跑 git、抽证据图,重入只是白花时间,还可能两份内容互相覆盖。
     @discardableResult
     public static func refresh(force: Bool = false, now: Date = Date(),
-                              publishers: [() -> Void]? = nil) -> Bool {
+                              publishers: [() -> Void]? = nil,
+                              publisherTimeout: TimeInterval = 15) -> Bool {
         if force { markStale() }
         guard due(now: now) else { return false }
         lock.lock()
@@ -57,20 +58,24 @@ public enum Showcase {
         busy = true
         lock.unlock()
         defer { lock.lock(); busy = false; lock.unlock() }
-        for p in publishers ?? defaultPublishers { p() }
+        for (index, p) in (publishers ?? defaultPublishers).enumerated() {
+            // 某一页的 Git/文件读取卡住，不得冻结全部页面和下一轮刷新。
+            // 同 key 尚未返回时跳过，避免每轮泄漏一个阻塞线程。
+            _ = Watchdog.run("showcase.page.\(index)", timeout: publisherTimeout) { p() }
+        }
         return true
     }
 
     /// 手机真正读的那几份。少一份,那一页就会停在旧内容上。
     public static var defaultPublishers: [() -> Void] {
         [
-            { OfficeLog.publish() },
             { TaskBoardStore.publishNow() },
+            { if RoadmapPage.isPublisher() { _ = ViewFeed.publish(RoadmapPage.page()) } },
+            { OfficeLog.publish() },
             { ClusterPresenceStore.publish() },
             { _ = ViewFeed.publish(ViewFeed.reviewPage()) },
             { _ = ViewFeed.publish(ViewFeed.blockedPage()) },
 
-            { _ = ViewFeed.publish(RoadmapPage.page()) },
             { _ = ViewFeed.publish(ViewFeed.playbookPage()) },
             { _ = ViewFeed.publish(ViewFeed.collaborationPage()) },
             { _ = ViewFeed.publishMenu(ViewFeed.menu()) },

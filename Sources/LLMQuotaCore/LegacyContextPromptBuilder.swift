@@ -47,7 +47,8 @@ public enum LegacyContextPromptBuilder {
         // 产品事实（AGENTS.md）：让每个 agent 知道自己在给什么产品干活、
         // 什么不能动。
         effectivePrompt += ProductBrief.briefing(repo: workspacePath,
-                                                 registeredRepo: task.repo)
+            registeredRepo: task.repo,
+            observationOnly: VisualReviewScope.resolve(task: task) == .observation)
         // 证据条款（事前）：干活的 agent 在同一次执行里自己交证据。
         effectivePrompt += EvidenceGate.inlineClause(repoPath: task.repo,
                                                      prompt: task.prompt)

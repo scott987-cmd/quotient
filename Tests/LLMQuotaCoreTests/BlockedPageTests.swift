@@ -16,12 +16,13 @@ final class BlockedPageTests: XCTestCase {
     }
 
     func testWaitingForHumanGetsAnApproveButton() {
-        let p = ViewFeed.blockedPage(tasks: [
-            task("t1", state: .blocked, note: "碰到高危路径（Tools/gen-skin.py），等你确认")])
+        let waiting = task("t1", state: .blocked, note: "碰到高危路径（Tools/gen-skin.py），等你确认")
+        let p = ViewFeed.blockedPage(tasks: [waiting])
+        let resource = MobileAction.taskResource(waiting)
         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
-        XCTAssertTrue(ids.contains("task:approve:t1"),
+        XCTAssertTrue(ids.contains("task:approve:" + resource),
                       "有提醒就必须有按钮 —— 否则人点了也没用")
-        XCTAssertTrue(ids.contains("task:discard:t1"), "也要能说「这步不做了」")
+        XCTAssertTrue(ids.contains("task:discard:" + resource), "也要能说「这步不做了」")
     }
 
     /// 上游没完成而冻住的不算「等你放行」—— 人对它们无事可做,

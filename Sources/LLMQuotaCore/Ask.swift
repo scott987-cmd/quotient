@@ -297,8 +297,11 @@ public enum AskStore {
             .filter { $0.pathExtension == "json" }
             .compactMap { url in
                 guard let d = try? Data(contentsOf: url),
-                      let a = try? SnapshotCoding.decoder().decode(AskAnswer.self, from: d)
+                      var a = try? SnapshotCoding.decoder().decode(AskAnswer.self, from: d)
                 else { return nil }
+                // 调用者已经选择了本机答案目录；目录才是路由身份。内容字段
+                // 只做旧协议兼容，不能把答复伪装成另一台机器。
+                a.machineID = machine
                 return (a, url)
             }
             .sorted { $0.0.answeredAt < $1.0.answeredAt }
@@ -505,10 +508,16 @@ public enum AskIngest {
                 let r = Approval.settle(task: t, approve: approve)
                 t = r.task
                 t.pendingAsk = nil
+                do {
+                    try save(t)
+                } catch {
+                    out.append(Result(taskID: t.id, accepted: false,
+                                      note: "任务状态保存失败，答复已保留供下轮重试"))
+                    continue
+                }
                 AskStore.retract(taskID: t.id, machine: machineID)
                 AskStore.archive(url, machine: machineID,
                                  suffix: approve ? "approved" : "rejected")
-                try? save(t)
                 tasks[t.id] = t
                 out.append(Result(taskID: t.id, accepted: true, note: r.note))
                 continue
@@ -518,9 +527,15 @@ public enum AskIngest {
                 t.endedAt = Date()
                 t.note = "你选择了放弃这个任务"
                 t.pendingAsk = nil
+                do {
+                    try save(t)
+                } catch {
+                    out.append(Result(taskID: t.id, accepted: false,
+                                      note: "任务状态保存失败，答复已保留供下轮重试"))
+                    continue
+                }
                 AskStore.retract(taskID: t.id, machine: machineID)
                 AskStore.archive(url, machine: machineID, suffix: "abandoned")
-                try? save(t)
                 tasks[t.id] = t
                 out.append(Result(taskID: t.id, accepted: true, note: "已放弃"))
                 continue
@@ -531,9 +546,15 @@ public enum AskIngest {
             t.startedAt = nil
             t.endedAt = nil
             t.note = "答复已收到，排队继续"
+            do {
+                try save(t)
+            } catch {
+                out.append(Result(taskID: t.id, accepted: false,
+                                  note: "任务状态保存失败，答复已保留供下轮重试"))
+                continue
+            }
             AskStore.retract(taskID: t.id, machine: machineID)
             AskStore.archive(url, machine: machineID, suffix: t.id)
-            try? save(t)
             tasks[t.id] = t
             out.append(Result(taskID: t.id, accepted: true, note: "已恢复排队"))
         }

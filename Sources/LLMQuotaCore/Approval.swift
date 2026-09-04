@@ -48,6 +48,17 @@ public enum Approval {
                 ["rev-list", "--count", "main..\(branch)"], in: t.repo)
             let ahead = Int(aheadResult.stdout
                 .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            // 丢弃非图任务时，分支删除发生在任务状态落盘之前。进程若在两步
+            // 之间退出，重试看到“工作区和分支都没有”正是目标已经完成，
+            // 必须补写丢弃终态；放行仍要求有可验证的提交。
+            if !approve, !exists {
+                t.state = .failed
+                t.branch = nil
+                t.discardedAt = Date()
+                t.discardReason = "高危改动，你选择了丢弃"
+                t.note = "已拒绝并删除隔离快照分支"
+                return Outcome(task: t, note: t.note ?? "已拒绝")
+            }
             guard exists, ahead > 0 else {
                 t.state = .failed
                 t.note = "工作区和可恢复快照都不在了，改动找不回来"

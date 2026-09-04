@@ -270,7 +270,7 @@ public enum CollaborationStore {
                                graphID: String? = nil, runnerID: String,
                                limit: Int = 18) -> [CollaborationEvent] {
         let normalized = normalizeProject(project)
-        return Array(all().filter { event in
+        let visibleEvents = all().filter { event in
             guard event.project == normalized else { return false }
             let sameScope = event.taskID == nil || event.taskID == taskID
                 || (graphID != nil && event.graphID == graphID)
@@ -279,7 +279,46 @@ public enum CollaborationStore {
                 || event.senderRunnerID == runnerID
             // started 留在手机时间线里，但不占 Agent 的有限上下文；它不含可执行事实。
             return sameScope && visible && event.kind != .started
-        }.suffix(max(1, min(limit, 50))))
+        }
+        let budget = max(1, min(limit, 50))
+        var pinned: [CollaborationEvent] = []
+        let resolved = resolvedIDs(in: visibleEvents)
+        // 明确发给当前 Runner 且仍待处理的事项不能被后续进度挤出窗口。
+        // 先保留收件，再处理自己发出的问答闭环；否则 Agent 忙久以后会
+        // 永久忘掉早先收到的问题，看起来就像任务无故停住。
+        var groups = 0
+        for event in visibleEvents.reversed() where event.kind.needsResponse
+            && event.recipientRunnerID == runnerID && event.senderRunnerID != runnerID
+            && !resolved.contains(event.id) {
+            guard groups < 4, pinned.count < budget else { continue }
+            pinned.append(event)
+            groups += 1
+        }
+        // 答复尚未确认时必须携带原题和答案，否则只提醒 ack 会诱导盲目确认。
+        // 最多为 4 个待闭环问题保留位置；闭环后退回普通增量，避免反复重放旧全文。
+        for question in visibleEvents.reversed() where question.kind == .question
+            && question.senderRunnerID == runnerID && question.recipientRunnerID != nil
+            && question.recipientRunnerID != "human" {
+            let answer = visibleEvents.last { event in
+                event.kind == .answer && event.replyTo == question.id
+                    && event.taskID == question.taskID
+                    && event.senderRunnerID == question.recipientRunnerID
+                    && (event.recipientRunnerID == nil || event.recipientRunnerID == runnerID)
+            }
+            if let answer, visibleEvents.contains(where: {
+                $0.kind == .ack && $0.replyTo == answer.id && $0.senderRunnerID == runnerID
+                    && $0.taskID == question.taskID && $0.createdAt >= answer.createdAt
+            }) { continue }
+            let pair = [question] + (answer.map { [$0] } ?? [])
+            guard groups < 4, pinned.count + pair.count <= budget else { continue }
+            pinned += pair
+            groups += 1
+        }
+        let pinnedIDs = Set(pinned.map(\.id))
+        let recent = visibleEvents.filter { !pinnedIDs.contains($0.id) }.suffix(budget - pinned.count)
+        return (pinned + recent).sorted {
+            $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt
+        }
     }
 
     public static func briefing(project: String, taskID: String? = nil,
@@ -330,17 +369,15 @@ public enum CollaborationStore {
             + " --sender " + shellQuote(runnerID)
         if let taskID { ack += " --task " + shellQuote(taskID) }
         let agents = "llmq collaboration agents"
-        return "\n\n【协作约定】遇到会影响下一棒的发现、决定或检查点时，"
-            + "用下面的 publish 留下结构化事实；不要写隐藏推理。遇到确实会造成返工、"
-            + "而另一位 Agent 的岗位更适合回答的工作疑问时，先问再实现，不要自行假设。"
-            + "先用 agents 列出当前可咨询的稳定 ID；架构、契约、技术边界或是否偏离目标的疑问，"
-            + "若列表中存在 codex.code，优先向 codex.code 定向咨询一次。咨询会进入接收机器的"
-            + "独立一次性进程异步回答；提交后继续处理不依赖答案的工作，不改变当前任务 owner，"
-            + "不得广播拉群或循环互问。回答到达后必须 ack 表明是否采用。收到定向的发现、决定或交接后，"
-            + "先明确确认并纳入后续工作，不能静默跳过。若 MCP 可用，优先调用 "
-            + "collaboration_list_agents / collaboration_ask / collaboration_publish / "
-            + "collaboration_ack。\n"
-            + agents + "\n" + command + "\n" + ask + "\n" + ack
+        var context = "llmq collaboration context --project " + shellQuote(normalizeProject(project))
+            + " --runner " + shellQuote(runnerID) + " --with-next-action"
+        if let taskID { context += " --task " + shellQuote(taskID) }
+        return "\n\n【协作约定】检查点、失败后及实现前读上下文，优先确认答复；禁止空轮询、编造问答或隐藏推理。"
+            + "publish 留事实；疑问先问再改。agents 查稳定 ID，架构/契约优先 codex.code。"
+            + "咨询异步只读，Owner 不变，可继续独立工作；禁止广播或嵌套互问。"
+            + "答复须 ack 说明采用/部分采用/拒绝及落实位置；定向事项不能静默跳过。"
+            + "有 MCP 时优先用对应 collaboration_* 工具（含 collaboration_ack）。\n"
+            + agents + "\n" + context + "\n" + command + "\n" + ask + "\n" + ack
     }
 
     public static func contract(project: String, taskID: String? = nil,
@@ -414,7 +451,15 @@ public enum CollaborationMCP {
                 let value = try call(name: name, arguments: args)
                 let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
                 let text = String(decoding: data, as: UTF8.self)
-                return success(id: id, result: ["content": [["type": "text", "text": text]]])
+                var content = [["type": "text", "text": text]]
+                if name == "collaboration_get_context",
+                   let project = args["project"] as? String, let runnerID = args["runnerID"] as? String,
+                   let next = SmartConsultationPolicy.currentInstruction(
+                       project: project, taskID: args["taskID"] as? String, runnerID: runnerID) {
+                    // 保留第一个文本块的历史 JSON 数组协议，另给状态机建议；不是伪造的事件。
+                    content.append(["type": "text", "text": next.clause])
+                }
+                return success(id: id, result: ["content": content])
             } catch {
                 return success(id: id, result: [
                     "isError": true,

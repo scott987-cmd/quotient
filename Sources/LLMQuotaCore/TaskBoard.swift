@@ -112,6 +112,9 @@ public enum TaskBoard {
         progress: WorkProgress?,
         now: Date
     ) -> TaskBrief {
+        // 重启后的旧 checkpoint 仍可作为历史证据，但不能冒充本轮进度。
+        let priorRun = t.state == .running && progress != nil
+            && (progress?.updatedAt ?? .distantPast) < (t.startedAt ?? .distantPast)
         // queued 的任务身上可能还挂着**上一轮**的 startedAt（重排、接力过的）。
         // 照发的话手机上会显示「已经跑了 3 天」——一个排队中的任务。
         // 排队就是没在跑，这两个字段一起按下。
@@ -224,14 +227,19 @@ public enum TaskBoard {
             stepIndex: t.stepIndex,
             stepTotal: t.graphID.flatMap { stepTotals[$0] },
             repoAlias: aliasByPath[standardized(t.repo)],
-            progressPhase: visiblePhase,
-            progressSummary: visibleSummary,
+            progressPhase: priorRun && stalled == nil ? "已恢复 · 等待本轮里程碑" : visiblePhase,
+            progressSummary: priorRun && stalled == nil
+                ? "上轮进展：\(visibleSummary ?? "暂无汇报")" : visibleSummary,
             progressNextStep: visibleNextStep,
             progressUpdatedAt: delivery == nil ? progress?.updatedAt : (t.landedAt ?? t.endedAt),
             progressEvidenceCount: progress?.evidence.count,
             productionStage: t.production?.stage.rawValue,
             deliverableKind: t.production?.deliverableKind,
-            productionBlockedReason: t.production?.blockedReason
+            productionBlockedReason: t.production?.blockedReason,
+            ownerRunnerID: t.ownerRunnerID,
+            branch: t.branch, landedAt: t.landedAt,
+            progressEvidence: progress.map { Array($0.evidence.prefix(8)) },
+            progressCheckpointAt: progress?.checkpointAt
         )
     }
 

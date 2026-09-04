@@ -462,6 +462,7 @@ public enum TaskStore {
     /// 的追加；本进程 append 后直接推进索引，不再重复扫描历史。
     private static var cachedPath: String?
     private static var cachedSize: Int64 = -1
+    private static var cachedFileID: UInt64?
     private static var cachedLatest: [String: WorkTask] = [:]
     private static var cachedSkippedLines = 0
 
@@ -551,16 +552,30 @@ public enum TaskStore {
     private static func loadCacheLocked() {
         let path = file.path
         let size = sizeOfFile()
-        guard cachedPath != path || cachedSize != size else { return }
+        let identity = fileID()
+        guard cachedPath != path || cachedSize != size || cachedFileID != identity else { return }
+        let sameLedger = cachedPath == path
+        let previousLatest = sameLedger ? cachedLatest : [:]
+        let previousSkipped = sameLedger ? cachedSkippedLines : 0
         cachedPath = path
-        cachedSize = size
+        // 只有完整读成之后才提交这个缓存身份。读取中断时保留哨兵，下一次
+        // all() 必须重试，不能因为“文件大小没变”永久返回空/旧任务表。
+        cachedSize = .min
+        cachedFileID = nil
         cachedLatest = [:]
         cachedSkippedLines = 0
         bytesParsedLastLoad = 0
-        guard size >= 0 else { return }
-        let identity = fileID()
+        guard size >= 0 else {
+            cachedSize = size
+            cachedFileID = identity
+            return
+        }
         let start = loadCheckpointLocked(path: path, size: size, id: identity) ?? 0
-        guard let data = readLedger(from: start, through: size) else { return }
+        guard let data = readLedger(from: start, through: size) else {
+            cachedLatest = previousLatest
+            cachedSkippedLines = previousSkipped
+            return
+        }
         bytesParsedLastLoad = Int64(data.count)
         let dec = SnapshotCoding.decoder()
         for line in data.split(separator: UInt8(ascii: "\n")) {
@@ -589,6 +604,8 @@ public enum TaskStore {
             if let current = cachedLatest[t.id], current.rev > t.rev { continue }
             cachedLatest[t.id] = t
         }
+        cachedSize = size
+        cachedFileID = identity
         // 首次完整构建一定落盘；之后每多 2MB 刷一次。短尾巴即使暂未刷，
         // 下个短命进程也只重读这段尾巴，不会退化成全文件扫描。
         if start == 0 || size - start >= checkpointTailThreshold {
@@ -610,6 +627,7 @@ public enum TaskStore {
         writtenRev = [:]
         cachedPath = nil
         cachedSize = -1
+        cachedFileID = nil
         cachedLatest = [:]
         cachedSkippedLines = 0
         bytesParsedLastLoad = 0
@@ -782,6 +800,7 @@ public enum TaskStore {
 
         cachedPath = file.path
         cachedSize = sizeOfFile()
+        cachedFileID = fileID()
         cachedLatest[id] = task
         return task
     }
@@ -990,6 +1009,7 @@ public enum TaskStore {
         try appendCompletely(data, to: lockFD) { write(lockFD, $0, $1) }
         cachedPath = file.path
         cachedSize = sizeOfFile()
+        cachedFileID = fileID()
         cachedLatest[task.id] = task
         return task
     }
@@ -1619,11 +1639,19 @@ public protocol AgentRunner: Sendable {
     func command(prompt: String, cwd: String, session: GraphSession.Mode)
         -> (launchPath: String, args: [String], env: [String: String])
 
+    /// 保留任务来源与原始证据清单；不能从可能含旧任务全文的上下文猜评审用途。
+    func command(task: WorkTask, prompt: String, cwd: String, session: GraphSession.Mode)
+        -> (launchPath: String, args: [String], env: [String: String])
+
     /// 只有 `.reportedID` 执行器覆盖；不得从提示词或自造随机值猜会话 ID。
     func discoveredSessionID(from output: String) -> String?
 }
 
 public extension AgentRunner {
+    func command(task: WorkTask, prompt: String, cwd: String, session: GraphSession.Mode)
+        -> (launchPath: String, args: [String], env: [String: String]) {
+        command(prompt: prompt, cwd: cwd, session: session)
+    }
     /// 测试替身和外部扩展的兼容默认值。产品内置执行器必须显式声明稳定 ID；
     /// 默认值只保证旧 conformer 不因协议扩展而源码不兼容。
     var runnerID: String { "legacy.\(platform.rawValue).\(String(reflecting: Self.self))" }
@@ -2172,7 +2200,7 @@ public struct MiniMaxMediaRunner: AgentRunner {
         return out
     }
 
-    func visualReviewCommand(prompt: String, files: [String])
+    func visualReviewCommand(prompt: String, files: [String], scope: VisualReviewScope)
         -> (launchPath: String, args: [String], env: [String: String]) {
         let driver = #"""
         export PATH="${LLMQ_MMX:h}:$HOME/.hermes/node/bin:$PATH"
@@ -2185,8 +2213,22 @@ public struct MiniMaxMediaRunner: AgentRunner {
         observations="$tmpd/observations.txt"
         : > "$observations"
         n=0
+        # 先核对整份清单，缺图时不先花前几张的额度，更不能据半份材料签票。
         while IFS= read -r src; do
-          [ -s "$src" ] || { echo "缺少视觉证据: $src" >> "$observations"; continue; }
+          [ -s "$src" ] || { echo "缺少视觉证据: $src"; exit 1; }
+        done <<< "$LLMQ_VISUAL_FILES"
+        describe_image() {
+          local reply
+          run_mmx vision describe --image "$1" --prompt "$2" \
+            --output text --non-interactive --quiet > "$tmpd/one.txt" 2> "$tmpd/vision-error.txt" \
+            || { echo "读图失败，未签发报告: $1"; exit 1; }
+          reply="$(<"$tmpd/one.txt")"
+          [ -n "${reply//[[:space:]]/}" ] || { echo "读图返回空内容: $1"; exit 1; }
+          n=$((n+1))
+          print -r -- "## $3" >> "$observations"
+          print -r -- "$reply" >> "$observations"
+        }
+        while IFS= read -r src; do
           case "${src:l}" in
             *.mov|*.mp4|*.m4v)
               frames="$tmpd/frames-$n"
@@ -2194,20 +2236,18 @@ public struct MiniMaxMediaRunner: AgentRunner {
               duration="$("$LLMQ_FFPROBE" -v error -show_entries format=duration \
                 -of default=noprint_wrappers=1:nokey=1 "$src" 2>/dev/null)"
               secs="${duration%%.*}"
-              [[ "$secs" = <-> ]] || secs=1
+              [[ "$secs" = <-> ]] || { echo "无法读取录屏时长: $src"; exit 1; }
               (( secs < 1 )) && secs=1
               points=(0 $((secs / 2)) $((secs > 1 ? secs - 1 : 0)))
               fi=0
               for second in "${points[@]}"; do
                 fi=$((fi+1))
                 "$LLMQ_FFMPEG" -loglevel error -ss "$second" -i "$src" \
-                  -vf "scale='min(1280,iw)':-2" -frames:v 1 "$frames/frame-$fi.jpg" || true
+                  -vf "scale='min(1280,iw)':-2" -frames:v 1 "$frames/frame-$fi.jpg" \
+                  || { echo "录屏关键帧抽取失败: $src"; exit 1; }
               done
               for image in "$frames"/*.jpg(N); do
-                n=$((n+1))
-                echo "\n## $src · 关键全尺寸帧 $n" >> "$observations"
-                run_mmx vision describe --image "$image" --prompt "$LLMQ_FRAME_PROMPT" \
-                  --output text --non-interactive --quiet >> "$observations" 2>&1
+                describe_image "$image" "$LLMQ_FRAME_PROMPT" "$src · 关键全尺寸帧 ${image:t}"
               done
               # 开头/中间/结尾会漏掉中间持续数秒的关键状态。每 2 秒取一帧，
               # 25 帧拼一张联系表：覆盖整段 30–60 秒录屏，同时只增加 1–2 次
@@ -2217,39 +2257,46 @@ public struct MiniMaxMediaRunner: AgentRunner {
               /bin/mkdir -p "$sheets"
               "$LLMQ_FFMPEG" -loglevel error -i "$src" \
                 -vf "fps=1/2,scale='min(320,iw)':-2,tile=5x5:padding=2:margin=2" \
-                -frames:v 4 "$sheets/contact-%02d.jpg" || true
-              for image in "$sheets"/*.jpg(N); do
-                n=$((n+1))
-                echo "\n## $src · 全时段联系表 $n（从左到右、从上到下）" >> "$observations"
-                run_mmx vision describe --image "$image" --prompt "$LLMQ_CONTACT_PROMPT" \
-                  --output text --non-interactive --quiet >> "$observations" 2>&1
+                -frames:v 4 "$sheets/contact-%02d.jpg" \
+                || { echo "录屏联系表抽取失败: $src"; exit 1; }
+              sheet_files=("$sheets"/*.jpg(N))
+              [ ${#sheet_files} -gt 0 ] || { echo "录屏未生成联系表: $src"; exit 1; }
+              for image in "${sheet_files[@]}"; do
+                describe_image "$image" "$LLMQ_CONTACT_PROMPT" "$src · 全时段联系表（从左到右、从上到下）"
               done;;
             *)
-              n=$((n+1))
-              echo "\n## $src" >> "$observations"
-              run_mmx vision describe --image "$src" --prompt "$LLMQ_FRAME_PROMPT" \
-                --output text --non-interactive --quiet >> "$observations" 2>&1;;
+              describe_image "$src" "$LLMQ_FRAME_PROMPT" "$src";;
           esac
         done <<< "$LLMQ_VISUAL_FILES"
         [ $n -gt 0 ] || { echo "没有读到任何可看的截图/录屏"; exit 1; }
         seen="$(<"$observations")"
-        ask="你是游戏视觉质量验收人。下面先给验收任务与项目质量契约，再给静态图片、关键全尺寸帧和覆盖录屏全时段的联系表观察。只依据真正看到的画面判断，不用文件名猜。\n\n任务与契约：\n${LLMQ_VISUAL_PROMPT[1,12000]}\n\n画面观察：\n${seen[1,24000]}\n\n输出 Markdown：第一行必须严格写 **结论**：达标 或 **结论**：未达标（二选一）；然后写看到了什么、违反了哪条质量契约、对应哪个画面。任一明显穿模、悬空握持、T-pose、占位资产、流程断点或画面无法证明任务目标，都只能判未达标。"
+        ask="${LLMQ_REVIEW_RULES}\n\n任务与契约（已由上下文预算器装配，不截掉尾部当前任务）：\n${LLMQ_VISUAL_PROMPT}\n\n画面观察：\n${seen}\n\n本次用途与输出要求：\n${LLMQ_REVIEW_RULES}"
         final="$tmpd/final.md"
-        run_mmx text chat --message "$ask" --output text --non-interactive --quiet > "$final"
+        run_mmx text chat --message "$ask" --output text --non-interactive --quiet > "$final" \
+          || { echo "视觉报告生成失败"; exit 1; }
         [ -s "$final" ] || { echo "视觉验收没有生成结论"; exit 1; }
+        heading="$(/usr/bin/awk 'NF { sub(/\r$/, ""); sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); print; exit }' "$final")"
+        valid_heading=0
+        while IFS= read -r candidate; do
+          [ "$heading" = "$candidate" ] && valid_heading=1
+        done <<< "$LLMQ_REVIEW_HEADINGS"
+        [ "$valid_heading" = 1 ] || { echo "视觉报告用途/判定格式不匹配，未签发报告"; exit 1; }
         branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
         tid="${branch##*/}"
         out="reviews/EVAL-视觉-${tid:-new}.md"
         /bin/cp "$final" "$out"
         while IFS= read -r line; do
-          case "$line" in *结论*) echo "$line"; break;; esac
+          case "$line" in *阶段观察*|*结论*) echo "$line"; break;; esac
         done < "$out"
-        echo "已检查 $n 份证据画面（含全时段联系表），报告：$out"
+        echo "已检查 $n 份证据画面，报告：$out"
         """#
         var env = [
             "LLMQ_VISUAL_PROMPT": prompt,
-            "LLMQ_FRAME_PROMPT": "只描述这张游戏画面中实际可见的内容。重点检查双手与武器接触、手腕方向、穿模/悬空、动作状态、角色材质、HUD 和明显卡顿迹象；看不到就明确说看不到，不要推测。",
-            "LLMQ_CONTACT_PROMPT": "这是按时间从左到右、从上到下排列的游戏录屏联系表，每格间隔约 2 秒。先说明画面阶段如何变化，再检查是否出现任务目标、双手与武器接触、手腕方向、穿模/悬空、动作状态、角色材质和流程断点；某阶段看不清就明确说看不清，不要把没看清说成不存在。",
+            "LLMQ_REVIEW_SCOPE": scope.rawValue,
+            "LLMQ_REVIEW_HEADINGS": scope.acceptedHeadings.joined(separator: "\n"),
+            "LLMQ_REVIEW_RULES": scope.rules,
+            "LLMQ_FRAME_PROMPT": scope.framePrompt,
+            "LLMQ_CONTACT_PROMPT": "这是按时间从左到右、从上到下排列的录屏联系表，每格约 2 秒。说明可见阶段的变化，不把没看清说成不存在，不据抽帧推断帧率。" + scope.framePrompt,
             "LLMQ_VISUAL_FILES": files.joined(separator: "\n"),
             "LLMQ_FFMPEG": Proc.which("ffmpeg") ?? "/opt/homebrew/bin/ffmpeg",
             "LLMQ_FFPROBE": Proc.which("ffprobe") ?? "/opt/homebrew/bin/ffprobe",
@@ -2259,12 +2306,21 @@ public struct MiniMaxMediaRunner: AgentRunner {
         return ("/bin/zsh", ["-c", driver], env)
     }
 
+    public func command(task: WorkTask, prompt: String, cwd: String, session: GraphSession.Mode)
+        -> (launchPath: String, args: [String], env: [String: String]) {
+        guard Self.isVisualReviewPrompt(task.prompt) else {
+            return command(prompt: prompt, cwd: cwd)
+        }
+        return visualReviewCommand(prompt: prompt, files: Self.visualFiles(in: task.prompt),
+                                   scope: VisualReviewScope.resolve(task: task))
+    }
+
     public func command(
         prompt: String, cwd: String
     ) -> (launchPath: String, args: [String], env: [String: String]) {
         if Self.isVisualReviewPrompt(prompt) {
             return visualReviewCommand(prompt: prompt,
-                                       files: Self.visualFiles(in: prompt))
+                files: Self.visualFiles(in: prompt), scope: VisualReviewScope.resolve(prompt: prompt))
         }
         // 驱动内联成一段 zsh：解析 DSL、逐行调 mmx、统计成败。
         // 单独装一个脚本文件的话，发布/更新就多一个会漂移的部件。
