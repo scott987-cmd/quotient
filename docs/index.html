@@ -1,326 +1,55 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<title>Quotient</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-:root {
-  /* 深色优先：这是个盯着东西流走的监控工具，深底才是它的世界。
-     浅色在下面 prefers-color-scheme 里给全套对应值。 */
-  --bg: #0F1315;
-  --surface: #171D20;
-  --surface-2: #1E262A;
-  --line: #2A3439;
-  --ink: #E6ECEE;
-  --ink-dim: #8A979C;      /* 青灰，不是中性灰 —— 和琥珀是互补关系 */
-  --ink-faint: #5C686D;
-  --amber: #F0B429;        /* 产品里「额度要作废」就是这个色，不是随便挑的 */
-  --amber-soft: rgba(240,180,41,.14);
-  --danger: #E5534B;
-  --good: #4FB477;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg: #F7F9F9;
-    --surface: #FFFFFF;
-    --surface-2: #EEF2F3;
-    --line: #DCE4E6;
-    --ink: #10171A;
-    --ink-dim: #56656B;
-    --ink-faint: #8A979C;
-    --amber: #B47100;
-    --amber-soft: rgba(180,113,0,.10);
-    --danger: #C0362F;
-    --good: #2F7D50;
-  }
-}
-:root[data-theme="light"] {
-  --bg: #F7F9F9; --surface: #FFFFFF; --surface-2: #EEF2F3; --line: #DCE4E6;
-  --ink: #10171A; --ink-dim: #56656B; --ink-faint: #8A979C;
-  --amber: #B47100; --amber-soft: rgba(180,113,0,.10);
-  --danger: #C0362F; --good: #2F7D50;
-}
-:root[data-theme="dark"] {
-  --bg: #0F1315; --surface: #171D20; --surface-2: #1E262A; --line: #2A3439;
-  --ink: #E6ECEE; --ink-dim: #8A979C; --ink-faint: #5C686D;
-  --amber: #F0B429; --amber-soft: rgba(240,180,41,.14);
-  --danger: #E5534B; --good: #4FB477;
-}
-
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--ink);
-  font: 400 17px/1.75 -apple-system, BlinkMacSystemFont, "PingFang SC",
-        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-.wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
-
-/* ── Hero：把问题直接摆出来，不做大标题+按钮那一套 ── */
-header { padding: 88px 0 40px; }
-.eyebrow {
-  font: 600 12px/1 var(--mono);
-  letter-spacing: .14em; text-transform: uppercase;
-  color: var(--amber); margin-bottom: 22px;
-}
-h1 {
-  margin: 0 0 20px;
-  font-size: clamp(38px, 6vw, 60px);
-  font-weight: 700; line-height: 1.12; letter-spacing: -.02em;
-  text-wrap: balance;
-}
-h1 em { font-style: normal; color: var(--amber); }
-.lede {
-  margin: 0; max-width: 34em;
-  font-size: 19px; line-height: 1.7; color: var(--ink-dim);
-}
-
-/* ── 额度条：页面的主视觉，也是真实数据 ── */
-.meters {
-  margin: 44px 0 8px; padding: 24px 26px 20px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
-}
-.meters-cap {
-  font: 500 13px/1.5 var(--mono); color: var(--ink-faint);
-  margin-bottom: 18px; letter-spacing: .01em;
-}
-.meter { display: grid; grid-template-columns: 84px 1fr 58px; align-items: center;
-         gap: 14px; padding: 7px 0; }
-.meter-name { font: 500 14px/1 var(--mono); color: var(--ink-dim); }
-.track { height: 9px; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
-.fill { height: 100%; border-radius: 5px; background: var(--amber);
-        transform-origin: left; animation: grow 1.1s cubic-bezier(.2,.7,.3,1) both; }
-.meter-num { font: 600 14px/1 var(--mono); color: var(--amber);
-             text-align: right; font-variant-numeric: tabular-nums; }
-@keyframes grow { from { transform: scaleX(0); } }
-@media (prefers-reduced-motion: reduce) { .fill { animation: none; } }
-.meters-foot {
-  margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line);
-  font-size: 14px; color: var(--ink-faint); line-height: 1.6;
-}
-
-/* ── 通用区块 ── */
-section { padding: 56px 0; border-top: 1px solid var(--line); }
-h2 {
-  margin: 0 0 8px; font-size: 27px; font-weight: 650;
-  letter-spacing: -.01em; text-wrap: balance;
-}
-.sub { margin: 0 0 30px; color: var(--ink-dim); font-size: 16px; max-width: 40em; }
-p { margin: 0 0 16px; }
-strong { font-weight: 650; color: var(--ink); }
-
-/* ── 三层 ── */
-.layers { display: grid; gap: 14px; }
-.layer {
-  display: grid; grid-template-columns: 30px 1fr; gap: 16px;
-  padding: 20px 22px; background: var(--surface);
-  border: 1px solid var(--line); border-radius: 12px;
-}
-.layer-n { font: 600 15px/1.4 var(--mono); color: var(--amber-num, var(--ink-faint)); }
-.layer h3 { margin: 0 0 5px; font-size: 17px; font-weight: 650; }
-.layer p { margin: 0; font-size: 15px; color: var(--ink-dim); line-height: 1.65; }
-.layer .gate {
-  display: inline-block; margin-top: 9px; padding: 3px 9px;
-  font: 500 12px/1.5 var(--mono); border-radius: 5px;
-  background: var(--surface-2); color: var(--ink-faint);
-}
-
-/* ── 截图 ── */
-.shots {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 26px; margin-top: 8px;
-}
-figure { margin: 0; }
-figure img {
-  width: 100%; display: block; border-radius: 16px;
-  border: 1px solid var(--line); background: var(--surface);
-}
-figcaption { margin-top: 11px; font-size: 14px; line-height: 1.6; color: var(--ink-dim); }
-figcaption b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
-
-/* ── 代码 ── */
-pre {
-  margin: 0 0 14px; padding: 17px 19px; overflow-x: auto;
-  background: var(--surface); border: 1px solid var(--line);
-  border-radius: 11px; font: 400 14px/1.75 var(--mono); color: var(--ink);
-}
-pre .c { color: var(--ink-faint); }
-code { font: 400 .92em/1 var(--mono); background: var(--surface-2);
-       padding: 2px 6px; border-radius: 4px; }
-
-/* ── 事实条目 ── */
-.facts { display: grid; gap: 1px; background: var(--line);
-         border: 1px solid var(--line); border-radius: 11px; overflow: hidden; }
-.fact { display: grid; grid-template-columns: 1fr auto; gap: 16px;
-        padding: 15px 20px; background: var(--surface); align-items: baseline; }
-.fact-k { font-size: 15px; }
-.fact-v { font: 600 14px/1 var(--mono); color: var(--good);
-          font-variant-numeric: tabular-nums; white-space: nowrap; }
-.fact-v.no { color: var(--ink-faint); }
-
-footer { padding: 44px 0 72px; border-top: 1px solid var(--line);
-         color: var(--ink-faint); font-size: 14px; line-height: 1.8; }
-footer a { color: var(--amber); text-decoration: none;
-           border-bottom: 1px solid var(--amber-soft); }
-footer a:hover, footer a:focus-visible { border-bottom-color: var(--amber); }
-a:focus-visible, button:focus-visible {
-  outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 3px;
-}
-@media (max-width: 560px) {
-  header { padding: 60px 0 32px; }
-  .meter { grid-template-columns: 72px 1fr 50px; gap: 10px; }
-}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <meta name="description" content="Quotient 把九个 LLM 编码平台、多台 Mac 和 iPhone/iPad 变成一间可调度、可追踪、可验收的数字员工办公室。">
+  <meta name="theme-color" content="#07110d">
+  <title>Quotient · 让闲置的 LLM 额度真正干活</title>
+  <style>
+    :root{--bg:#07110d;--paper:#f5f1e8;--card:#0d1b15;--ink:#eef8f0;--muted:#a9b8ad;--line:#274033;--lime:#99f27c;--mint:#4bd48a;--sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC","Helvetica Neue",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.7 var(--sans);-webkit-font-smoothing:antialiased}a{color:inherit}.wrap{width:min(1180px,calc(100% - 40px));margin:auto}.nav{position:sticky;top:0;z-index:20;background:rgba(7,17,13,.78);backdrop-filter:blur(18px);border-bottom:1px solid rgba(255,255,255,.08)}.nav-inner{height:68px;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:12px;text-decoration:none;font-weight:750}.mark{width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,var(--lime),var(--mint));color:#07110d;display:grid;place-items:center;font:900 17px/1 var(--mono);box-shadow:0 0 28px rgba(153,242,124,.2)}.nav-links{display:flex;gap:24px;align-items:center}.nav-links a{color:var(--muted);font-size:14px;text-decoration:none}.nav-links a:hover{color:var(--ink)}.nav-cta{padding:9px 14px;border:1px solid var(--line);border-radius:999px!important;color:var(--ink)!important}
+    .hero{min-height:760px;padding:104px 0 80px;position:relative;overflow:hidden}.hero:before{content:"";position:absolute;width:700px;height:700px;right:-220px;top:-180px;border-radius:50%;background:radial-gradient(circle,rgba(75,212,138,.18),transparent 67%);pointer-events:none}.kicker{display:inline-flex;align-items:center;gap:9px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;color:var(--lime);font:600 12px/1.3 var(--mono);letter-spacing:.06em}.pulse{width:7px;height:7px;border-radius:50%;background:var(--lime);box-shadow:0 0 0 6px rgba(153,242,124,.1)}h1{font-size:clamp(48px,8vw,94px);line-height:.98;letter-spacing:-.055em;margin:28px 0 24px;max-width:920px;font-weight:820}.hero h1 span{color:var(--lime)}.lede{max-width:720px;font-size:clamp(19px,2.2vw,25px);line-height:1.55;color:var(--muted);margin:0}.hero-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:35px}.btn{display:inline-flex;align-items:center;gap:9px;padding:13px 18px;border-radius:12px;text-decoration:none;font-weight:700;font-size:15px}.primary{background:var(--lime);color:#06100c}.secondary{border:1px solid var(--line);background:rgba(255,255,255,.025)}
+    .proof-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:20px;overflow:hidden;margin-top:78px}.proof{background:rgba(13,27,21,.92);padding:24px}.proof strong{display:block;font:750 28px/1.1 var(--mono);color:var(--lime)}.proof span{display:block;color:var(--muted);font-size:13px;margin-top:7px}.section{padding:100px 0;border-top:1px solid rgba(255,255,255,.08)}.section-head{display:grid;grid-template-columns:.8fr 1.2fr;gap:50px;align-items:end;margin-bottom:48px}.eyebrow{font:700 12px/1.4 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--lime)}h2{font-size:clamp(35px,5vw,60px);line-height:1.05;letter-spacing:-.035em;margin:10px 0 0}.section-head p{margin:0;color:var(--muted);font-size:19px}
+    .demo-grid{display:grid;grid-template-columns:.8fr 1.2fr;gap:28px;align-items:center}.phone-stage{min-height:680px;border:1px solid var(--line);border-radius:32px;background:radial-gradient(circle at 50% 20%,rgba(153,242,124,.12),transparent 45%),var(--card);display:grid;place-items:center;padding:34px;overflow:hidden}.phone{width:min(310px,100%);padding:8px;border-radius:38px;background:#020403;border:1px solid #33443b;box-shadow:0 35px 90px rgba(0,0,0,.5);line-height:0}.phone video{width:100%;border-radius:31px;background:#fff}.story{display:grid;gap:14px}.story-card{padding:25px;border:1px solid var(--line);border-radius:18px;background:var(--card)}.story-card .n{font:700 12px/1 var(--mono);color:var(--lime)}.story-card h3{margin:10px 0 7px;font-size:22px}.story-card p{margin:0;color:var(--muted);font-size:15px}
+    .features{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.feature{min-height:245px;padding:27px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(145deg,var(--card),#0a1610)}.icon{font-size:25px}.feature h3{font-size:20px;margin:26px 0 9px}.feature p{color:var(--muted);font-size:15px;margin:0}.feature.wide{grid-column:span 2;background:linear-gradient(135deg,rgba(153,242,124,.12),var(--card) 52%)}.platforms{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}.chip{padding:9px 13px;border:1px solid var(--line);border-radius:999px;font:600 13px/1 var(--mono);color:#d6e5da;background:var(--card)}
+    .office-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.shot{margin:0;border:1px solid var(--line);border-radius:22px;overflow:hidden;background:var(--card)}.shot img{width:100%;display:block}.shot figcaption{padding:18px 20px 21px;color:var(--muted);font-size:14px}.shot b{display:block;color:var(--ink);font-size:17px;margin-bottom:4px}.wide-shot{grid-column:span 3}.wide-shot img{aspect-ratio:2.1/1;object-fit:cover;object-position:center}
+    .flow{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}.flow-step{position:relative;padding:21px 18px;border-radius:16px;background:var(--card);border:1px solid var(--line);min-height:155px}.flow-step:after{content:"→";position:absolute;right:-11px;top:62px;color:var(--lime);z-index:2}.flow-step:last-child:after{display:none}.flow-step small{font:700 11px/1 var(--mono);color:var(--lime)}.flow-step b{display:block;margin-top:16px}.flow-step span{display:block;color:var(--muted);font-size:13px;margin-top:6px}.checks{display:grid;grid-template-columns:1fr 1fr;gap:18px}.check{padding:26px;border:1px solid var(--line);border-radius:18px;background:var(--card)}.check .status{font:700 12px/1 var(--mono);color:var(--mint)}.check h3{margin:12px 0 8px;font-size:19px}.check p{color:var(--muted);font-size:14px;margin:0}
+    .terminal{border:1px solid var(--line);border-radius:20px;background:#040906;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.3)}.term-top{padding:13px 18px;border-bottom:1px solid #18251d;color:#6e7d72;font:12px/1 var(--mono)}pre{margin:0;padding:26px;overflow:auto;font:14px/1.8 var(--mono);color:#d6e5da}.cmd{color:var(--lime)}.comment{color:#6d7d72}.cta{padding:80px 0}.cta-box{padding:clamp(35px,6vw,70px);border-radius:30px;background:#f5f1e8;color:#0b1711;display:grid;grid-template-columns:1.3fr .7fr;gap:30px;align-items:center}.cta-box h2{margin:0}.cta-box p{color:#536159;margin:18px 0 0}.cta-box .btn{justify-self:end;background:#0b1711;color:white}.site-footer{padding:35px 0 60px;color:#839087;font-size:13px}.foot-row{display:flex;justify-content:space-between;gap:30px;flex-wrap:wrap}.foot-links{display:flex;gap:18px}.foot-links a{text-decoration:none}.foot-links a:hover{color:var(--ink)}
+    @media(max-width:850px){.nav-links a:not(.nav-cta){display:none}.proof-strip{grid-template-columns:1fr 1fr}.section-head,.demo-grid,.cta-box{grid-template-columns:1fr}.features{grid-template-columns:1fr 1fr}.feature.wide{grid-column:span 2}.flow{grid-template-columns:1fr 1fr}.flow-step:after{display:none}.office-grid{grid-template-columns:1fr 1fr}.wide-shot{grid-column:span 2}.cta-box .btn{justify-self:start}}@media(max-width:560px){.wrap{width:min(100% - 28px,1180px)}.hero{padding-top:72px;min-height:auto}.proof-strip,.features,.checks,.flow,.office-grid{grid-template-columns:1fr}.feature.wide,.wide-shot{grid-column:span 1}.wide-shot img{aspect-ratio:auto}.phone-stage{min-height:auto;padding:25px}.section{padding:72px 0}.section-head{gap:20px}.proof{padding:18px}.proof strong{font-size:23px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
 </head>
 <body>
-<div class="wrap">
+  <nav class="nav" aria-label="主导航"><div class="wrap nav-inner"><a class="brand" href="#top"><span class="mark">Q</span>Quotient</a><div class="nav-links"><a href="#product">产品</a><a href="#office">办公室</a><a href="#proof">可靠性</a><a href="app-store-readiness.html">上架状态</a><a class="nav-cta" href="https://github.com/scott987-cmd/quotient">GitHub ↗</a></div></div></nav>
+  <main id="top">
+    <header class="hero"><div class="wrap"><span class="kicker"><span class="pulse"></span>三台 Mac 的正式运行版本已统一</span><h1>别让订阅额度过期。<br><span>让它们组成一支队伍。</span></h1><p class="lede">Quotient 汇总九个 LLM 编码平台的额度，跨机器挑选合适的 Agent 执行任务，并把问题、进度、证据和成果送到 iPhone 与 iPad 供你决策。</p><div class="hero-actions"><a class="btn primary" href="#start">开始使用 <span>→</span></a><a class="btn secondary" href="#tour">观看真实录屏</a></div><div class="proof-strip" aria-label="已验证数据"><div class="proof"><strong>9</strong><span>个 LLM 平台统一观察</span></div><div class="proof"><strong>3 Macs</strong><span>正式版本一致并在线运行</span></div><div class="proof"><strong>1,431</strong><span>Core 测试用例完整回归</span></div><div class="proof"><strong>110 × 2</strong><span>iPhone 与 iPad 分别验收</span></div></div></div></header>
+    <section class="section" id="tour"><div class="wrap"><div class="section-head"><div><span class="eyebrow">Real product tour</span><h2>一部手机，看到整套系统</h2></div><p>下面是应用真实运行画面录屏。打开“现在”看待办，走进“办公室”看谁在忙，再到“看板”追踪进展，最后核对证据并确认成果。</p></div><div class="demo-grid"><div class="phone-stage"><div class="phone"><video controls playsinline preload="metadata" poster="media/product-tour-poster.jpg" aria-label="Quotient iOS 应用真实操作录屏"><source src="media/product-tour.mp4" type="video/mp4">浏览器无法播放视频时，可查看下方真实截图。</video></div></div><div class="story"><article class="story-card"><span class="n">01 · OBSERVE</span><h3>先看哪里正在浪费</h3><p>按额度窗口和作废风险排序，不必逐个平台打开网页找数字。</p></article><article class="story-card"><span class="n">02 · DISPATCH</span><h3>再把工作交给合适的人</h3><p>结合额度、平台能力、机器状态和项目上下文挑选执行者。</p></article><article class="story-card"><span class="n">03 · REVIEW</span><h3>最后只处理真正需要你的事</h3><p>问题、风险放行和待确认成果进入统一入口；操作有目标机器、版本和幂等保护。</p></article></div></div></div></section>
+    <section class="section" id="product"><div class="wrap"><div class="section-head"><div><span class="eyebrow">Why Quotient</span><h2>从“额度统计”走到“可靠交付”</h2></div><p>它既能单独作为零服务器的本地用量工具，也能逐层开启跨机汇总和 Agent 调度。每一层都能独立使用。</p></div><div class="features"><article class="feature"><span class="icon">◔</span><h3>盯住作废窗口</h3><p>统一平台口径，显示剩余量、重置时间与空窗浪费；不知道的额度不会编数字。</p></article><article class="feature"><span class="icon">⌁</span><h3>跨机但不建云服务</h3><p>各 Mac 写自己的快照，通过用户自己的 iCloud 目录同步，本地镜像负责稳定读取。</p></article><article class="feature"><span class="icon">◎</span><h3>额度感知调度</h3><p>按剩余额度、冷却状态、执行器能力和项目上下文挑选平台，避免无效重试烧额度。</p></article><article class="feature wide"><span class="icon">✓</span><h3>成果必须可验证</h3><p>任务完成前经过测试、证据、评审和版本检查。手机端只有在目标机器、仓库、分支和提交条件吻合时才允许合入；阻断原因直接展示。</p></article><article class="feature"><span class="icon">↻</span><h3>中断后能继续</h3><p>任务账本、移动端动作和成果决策都有恢复与幂等设计，进程重启不会把旧结果误当新结果。</p></article></div><div class="platforms" aria-label="支持平台"><span class="chip">Claude</span><span class="chip">Codex</span><span class="chip">Gemini</span><span class="chip">Qwen</span><span class="chip">Kimi</span><span class="chip">GLM</span><span class="chip">MiniMax</span><span class="chip">DeepSeek</span><span class="chip">火山方舟</span></div></div></section>
+    <section class="section" id="office"><div class="wrap"><div class="section-head"><div><span class="eyebrow">The living office</span><h2>状态会说话，办公室也会呼吸</h2></div><p>卡通形象把真实任务状态翻译成一眼就懂的动作：提问时出现问号，完成后举手，闲久了躺平，全员空闲时一起伸展，新任务到来会立即打断休息。</p></div><div class="office-grid">
+      <figure class="shot"><img loading="lazy" src="media/office-question.jpg" alt="iPhone 办公室中 Codex 头顶出现问号"><figcaption><b>有问题就举问号</b>问题绑定到准确的机器和角色，手机首页同时出现待办角标。</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="media/office-focus-rest.jpg" alt="iPhone 办公室中一个角色工作，另一个角色躺平休息"><figcaption><b>工作与休息不串人</b>同一办公室里，正在工作和长时间空闲的角色保持各自状态。</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="media/office-team-break.jpg" alt="iPhone 办公室中团队空闲时一起伸展休息"><figcaption><b>大家闲着就一起动一动</b>只有整块任务板确认无待办、无提问且状态可信时，才进入团队休息。</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="media/office-complete.jpg" alt="iPhone 办公室中完成任务的数字员工举手交付"><figcaption><b>完成后举手交活</b>最近完成事件必须精确匹配机器、任务和平台，成功者才会展示成果。</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="media/review-blocked.jpg" alt="iPhone 成果详情显示不可确认的具体原因"><figcaption><b>灰色按钮有明确原因</b>版本、证据或质量门槛不满足时，界面解释为什么暂时不能确认。</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="media/review-ready.jpg" alt="iPhone 成果详情显示可确认并合入"><figcaption><b>条件恢复后即可处理</b>目标机器和成果版本核对完成，操作按钮恢复，结果可追踪。</figcaption></figure>
+      <figure class="shot wide-shot"><img loading="lazy" src="media/ipad-team-overview.png" alt="iPad 横屏团队办公室与指标总览"><figcaption><b>跨机器团队总览</b>角色状态、机器选择与团队指标在宽屏上同时可读；该画面来自独立 UI 回归截图。</figcaption></figure>
+    </div></div></section>
+    <section class="section"><div class="wrap"><div class="section-head"><div><span class="eyebrow">End-to-end loop</span><h2>每一次派活都有闭环</h2></div><p>手机和 Mac 端共用带路由身份、版本和回执的协议，保证动作由正确机器处理。</p></div><div class="flow"><div class="flow-step"><small>01</small><b>发现额度</b><span>采集本地 CLI 日志和平台回报</span></div><div class="flow-step"><small>02</small><b>选择执行者</b><span>综合能力、额度、冷却和机器</span></div><div class="flow-step"><small>03</small><b>持续执行</b><span>保留上下文、进展和显式下一步</span></div><div class="flow-step"><small>04</small><b>独立审查</b><span>测试、截图、录屏与质量门槛</span></div><div class="flow-step"><small>05</small><b>手机确认</b><span>按精确版本合入或丢弃并回执</span></div></div></div></section>
+    <section class="section" id="proof"><div class="wrap"><div class="section-head"><div><span class="eyebrow">Verified on 2026-09-04</span><h2>可靠性有证据，不靠口号</h2></div><p>完整回归使用隔离夹具，不触碰真实任务。移动端分别覆盖 iPhone 与 iPad，并实际跑通 Core → App → Core → 回执链路。</p></div><div class="checks"><article class="check"><span class="status">PASS · CORE</span><h3>1,431 项完整测试</h3><p>1,429 通过，2 项登录钥匙串测试按隔离规则跳过，0 失败。</p></article><article class="check"><span class="status">PASS · iPHONE</span><h3>110 项移动端回归</h3><p>108 通过，2 个 iPad 专用条件跳过，0 失败；设备专用项在 iPad 补齐。</p></article><article class="check"><span class="status">PASS · iPAD</span><h3>110 项移动端回归</h3><p>109 通过，1 个 iPhone 专用条件跳过，0 失败；宽屏布局与操作区实看通过。</p></article><article class="check"><span class="status">PASS · DISTRIBUTION</span><h3>App Store 包可导出</h3><p>Release 归档、App Store Connect 分发签名、生产 APNs 权限、隐私清单和代码签名均已核验。</p></article></div></div></section>
+    <section class="section" id="start"><div class="wrap"><div class="section-head"><div><span class="eyebrow">Five-minute start</span><h2>先从本机额度汇总开始</h2></div><p>Core 没有第三方 Swift Package 依赖。装了哪个平台就采哪个；未配置上限时仍会统计用量，但不会伪造剩余百分比。</p></div><div class="terminal"><div class="term-top">Terminal · macOS</div><pre><span class="cmd">git clone https://github.com/scott987-cmd/quotient.git</span>
+<span class="cmd">cd quotient</span>
+<span class="cmd">swift build -c release</span>
 
-<header>
-  <div class="eyebrow">用不完就作废</div>
-  <h1>你的 LLM 订阅额度，<em>正在流走</em></h1>
-  <p class="lede">
-    Claude、Codex、Qwen、Kimi…… 每家都按窗口发额度，窗口一过，没用的部分直接清零。
-    你不会收到任何提醒，也没有账单告诉你「这周有多少份额白扔了」。
-  </p>
+<span class="comment"># 扫描本机已安装平台并查看汇总</span>
+<span class="cmd">./.build/release/llmq collect</span>
+<span class="cmd">./.build/release/llmq report</span>
 
-  <div class="meters">
-    <div class="meters-cap">实测空窗率 · 一台真实在用的开发机，连续 30 天</div>
-    <div class="meter">
-        <span class="meter-name">Codex</span>
-        <div class="track"><div class="fill" style="width:82%"></div></div>
-        <span class="meter-num">82%</span>
-      </div>
-    <div class="meter">
-        <span class="meter-name">Kimi</span>
-        <div class="track"><div class="fill" style="width:69%"></div></div>
-        <span class="meter-num">69%</span>
-      </div>
-    <div class="meter">
-        <span class="meter-name">GLM</span>
-        <div class="track"><div class="fill" style="width:60%"></div></div>
-        <span class="meter-num">60%</span>
-      </div>
-    <div class="meter">
-        <span class="meter-name">Qwen</span>
-        <div class="track"><div class="fill" style="width:53%"></div></div>
-        <span class="meter-num">53%</span>
-      </div>
-    <p class="meters-foot">
-      「空窗」= 一整个额度窗口从头到尾一次都没用过。
-      Codex 的 154 个五小时窗里，有 127 个完全空着 —— 那份订阅有八成的钱在打水漂。
-    </p>
-  </div>
-</header>
-
-<section>
-  <h2>三层，各自独立</h2>
-  <p class="sub">下面一层不需要上面一层。只用第一层是零门槛的。</p>
-  <div class="layers">
-    <div class="layer">
-      <span class="layer-n">01</span>
-      <div>
-        <h3>额度汇总</h3>
-        <p>扫本机各家 CLI 的用量，算出哪份订阅快到期还没用。不需要 API key，不联网 —— 读的是它们自己在本地留下的会话日志和额度回报。</p>
-        <span class="gate">swift build 完就能用</span>
-      </div>
-    </div>
-    <div class="layer">
-      <span class="layer-n">02</span>
-      <div>
-        <h3>跨机汇总</h3>
-        <p>几台电脑的用量合到一起看，手机 App 读同一份数据。走你自己的 iCloud，没有服务器。</p>
-        <span class="gate">需要 iCloud Drive</span>
-      </div>
-    </div>
-    <div class="layer">
-      <span class="layer-n">03</span>
-      <div>
-        <h3>Agent 调度</h3>
-        <p>窗口快过期还空着时，自动挑一个有余量的平台派活。跑完自己提交，附上实跑截图，等你在手机上验收。</p>
-        <span class="gate">需要先装好各家 CLI</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section>
-  <h2>手机上长这样</h2>
-  <p class="sub">下面四张是 App 内置演示模式的真实画面。</p>
-  <p style="text-align:center;margin:0 0 30px">
-    <img src="img/demo.gif" width="290"
-         style="border-radius:16px;border:1px solid var(--line)"
-         alt="从演示模式走一遍：现在 → 办公室 → 看板 → 等你验收">
-  </p>
-  <div class="shots">
-    <figure>
-        <img src="img/01-now.jpg" alt="现在">
-        <figcaption><b>现在</b>按「在漏什么」排序，不按平台罗列。要你做决定的事排在最上面。</figcaption>
-      </figure>
-    <figure>
-        <img src="img/02-office.jpg" alt="办公室">
-        <figcaption><b>办公室</b>每个平台一个工位。谁在干活、谁闲着、谁额度打空了，一眼看清。</figcaption>
-      </figure>
-    <figure>
-        <img src="img/03-board.jpg" alt="看板">
-        <figcaption><b>看板</b>各平台的窗口和剩余，按「最迟报」排序。</figcaption>
-      </figure>
-    <figure>
-        <img src="img/04-review.jpg" alt="等你验收">
-        <figcaption><b>等你验收</b>agent 交的活带着实跑截图。有冲突的合入按钮是灰的 —— 那种要去电脑上处理。</figcaption>
-      </figure>
-  </div>
-</section>
-
-<section>
-  <h2>五分钟跑起来</h2>
-  <p class="sub">需要 macOS 和 Xcode 命令行工具，没有别的前置。</p>
-  <pre><span class="c"># 装了哪个平台就采哪个，一个都没装也能跑</span>
-git clone https://github.com/scott987-cmd/quotient
-cd quotient &amp;&amp; swift build -c release
-
-./.build/release/llmq collect   <span class="c"># 扫一遍本机</span>
-./.build/release/llmq report    <span class="c"># 看结果</span></pre>
-  <p style="font-size:15px;color:var(--ink-dim)">
-    想先试试又不想弄脏自己的配置：<code>LLMQ_HOME=/tmp/试用 llmq collect</code>，
-    整个数据目录挪到那儿，删掉就干净了。
-  </p>
-</section>
-
-<section>
-  <h2>它不做什么</h2>
-  <p class="sub">这些约束不是省事，是设计选择。</p>
-  <div class="facts">
-    <div class="fact"><span class="fact-k">第三方依赖</span><span class="fact-v no">0 个</span></div>
-    <div class="fact"><span class="fact-k">需要注册的账号</span><span class="fact-v no">0 个</span></div>
-    <div class="fact"><span class="fact-k">需要填的 API key</span><span class="fact-v no">0 个</span></div>
-    <div class="fact"><span class="fact-k">数据离开你的设备</span><span class="fact-v no">不会</span></div>
-    <div class="fact"><span class="fact-k">对外监听的端口</span><span class="fact-v">0 个（跨机直连可选开 1 个）</span></div>
-    <div class="fact"><span class="fact-k">测试</span><span class="fact-v">508 个，自包含</span></div>
-  </div>
-  <p style="margin-top:18px;font-size:15px;color:var(--ink-dim)">
-    那个端口是**可选的**：只在你要「一台机器直接把任务送到另一台」时才开
-    （不想开就走 iCloud，慢几十秒而已）。手机不走它 —— iOS App 里
-    一行网络代码都没有，它只读 iCloud 里的文件。
-    约束写在 <code>SECURITY.md</code>，违反了 <code>swift test</code> 和
-    <code>llmq security</code> 都会失败。
-  </p>
-</section>
-
-<footer>
-  <p>
-    <a href="https://github.com/scott987-cmd/quotient">github.com/scott987-cmd/quotient</a>
-    · MIT · Swift · macOS
-  </p>
-  <p style="margin:0">
-    配套 iOS App「数字员工」在 TestFlight 内测中。
-  </p>
-</footer>
-
-</div>
-
+<span class="comment"># 需要常驻采集时再安装菜单栏 App 与定时任务</span>
+<span class="cmd">./build-app.sh --install</span>
+<span class="cmd">./.build/release/llmq install-agent</span></pre></div></div></section>
+    <section class="cta"><div class="wrap"><div class="cta-box"><div><h2>让每一份订阅额度，变成看得见的成果。</h2><p>查看源码、安装方法、架构说明和移动端上架状态。</p></div><a class="btn" href="https://github.com/scott987-cmd/quotient">查看 GitHub →</a></div></div></section>
+  </main>
+  <footer class="site-footer"><div class="wrap foot-row"><span>Quotient · 本地优先的 LLM 额度与 Agent 调度系统</span><span class="foot-links"><a href="privacy.html">隐私政策</a><a href="support.html">支持</a><a href="app-store-readiness.html">上架状态</a><a href="https://github.com/scott987-cmd/quotient">源代码</a></span></div></footer>
 </body>
 </html>

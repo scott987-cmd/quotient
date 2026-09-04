@@ -1,33 +1,26 @@
-# LLMQuotaBar
+# Quotient
 
-多平台 LLM 订阅额度汇总工具。macOS 菜单栏常驻 + 命令行，跨多台电脑汇总，重点盯**额度到期作废**。
+把九个 LLM 编码平台、多台 Mac 和 iPhone/iPad 变成一间可调度、可追踪、可验收的数字员工办公室。
 
-**零第三方依赖**：只用 Swift 标准库和系统框架（Foundation / AppKit / SwiftUI / Security 等），`Package.swift` 里没有任何外部 package，`swift build` 不联网拉依赖。
+- **看额度**：统一 Claude、Codex、Gemini、Qwen、Kimi、GLM、MiniMax、DeepSeek、火山方舟的用量与重置窗口。
+- **会派活**：结合额度、冷却状态、执行器能力、机器和项目上下文选择 Agent。
+- **能恢复**：任务账本、显式下一步、移动端动作和成果决策均有中断恢复与幂等保护。
+- **有证据**：问题、进展、截图、录屏、评审和成果版本贯穿完整交付链路。
+- **本地优先**：不运营业务数据服务器；多机与手机通过用户自己的 iCloud Drive 协作。
 
-覆盖平台：Claude、Codex、Gemini、Qwen、Kimi、GLM、MiniMax、DeepSeek、火山方舟。
+核心程序只使用 Swift 标准库和 Apple 系统框架，`Package.swift` 没有外部 package。
 
-另有配套 iOS App：在手机上看各平台额度汇总，也能直接派活给电脑上的常驻工作循环。
-它走的还是 iCloud 那条通道（见「多机汇总靠 iCloud」和 inbox/outbox），不需要额外服务器。
-
-<p align="center">
-  <img src="docs/img/demo.gif" width="300" alt="从演示模式走一遍：现在 → 办公室 → 看板 → 等你验收">
-</p>
-
-<p align="center">
-  <sub>不用装 Mac 端也能先看看 —— App 里点「先看看效果」进演示模式</sub>
-</p>
+**[打开项目主页与真实产品演示](https://scott987-cmd.github.io/quotient/)**
 
 <p align="center">
-  <img src="docs/img/01-now.jpg" width="23%" alt="现在">
-  <img src="docs/img/02-office.jpg" width="23%" alt="办公室">
-  <img src="docs/img/03-board.jpg" width="23%" alt="看板">
-  <img src="docs/img/04-review.jpg" width="23%" alt="等你验收">
+  <img src="docs/media/office-question.jpg" width="24%" alt="数字员工提问时显示问号">
+  <img src="docs/media/office-focus-rest.jpg" width="24%" alt="工作与躺平状态同时显示">
+  <img src="docs/media/review-ready.jpg" width="24%" alt="手机端核对成果并确认">
 </p>
 
-<p align="center">
-  <sub>配套 iOS App：按「在漏什么」排序 · 每个平台一个工位 ·
-  各窗口剩余 · agent 交的活带实跑截图</sub>
-</p>
+<p align="center"><sub>画面来自 2026-09-04 独立 iPhone UI 验收；完整录屏和 iPad 宽屏截图见项目主页。</sub></p>
+
+当前验证基线：Core 1,431 项完整回归；iPhone 与 iPad 各 110 项；三台 Mac 正式版本一致。移动端已经能生成 App Store Connect 分发包，正式提审前仍需完成真实 APNs、真实 iCloud 跨设备和 App Store 元数据验收，详见[上架状态](https://scott987-cmd.github.io/quotient/app-store-readiness.html)。
 
 **实测空窗率**（一台真实在用的开发机，连续 30 天）：
 
@@ -41,8 +34,6 @@
 「空窗」= 一整个额度窗口从头到尾没用过。那份订阅的钱直接打了水漂，
 而且不会有任何提醒。
 
-📖 **[项目主页](https://scott987-cmd.github.io/quotient/)**
-
 ---
 
 ## 五分钟跑起来
@@ -50,7 +41,7 @@
 需要 macOS 和 Xcode 命令行工具（`xcode-select --install`），没有别的前置。
 
 ```bash
-git clone <这个仓库> && cd LLMQuotaBar
+git clone https://github.com/scott987-cmd/quotient.git && cd quotient
 swift build -c release
 ./.build/release/llmq collect     # 扫一遍本机装了哪些 CLI、用了多少
 ./.build/release/llmq report      # 看结果
