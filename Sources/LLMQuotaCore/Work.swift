@@ -93,6 +93,10 @@ public struct WorkTask: Codable, Sendable {
     public var ownerPlatform: Platform?
     public var ownerRunnerID: String?
     public var ownerAssignedAt: Date?
+    /// 自动故障接力前的 Owner。备用平台只临时代班；它恢复后应回到这位
+    /// Owner 的稳定工作区和原生会话继续，而不是把一次故障变成永久换人。
+    public var recoveryOwnerPlatform: Platform?
+    public var recoveryOwnerRunnerID: String?
     /// 所有真实上下文转移，包括人工停用。
     public var handoffCount: Int = 0
     /// 只有系统因故障自动发起的交接；人工停用不占这一个救火名额。
@@ -310,6 +314,10 @@ public struct WorkTask: Codable, Sendable {
         ownerPlatform = try c.decodeIfPresent(Platform.self, forKey: .ownerPlatform)
         ownerRunnerID = try c.decodeIfPresent(String.self, forKey: .ownerRunnerID)
         ownerAssignedAt = try c.decodeIfPresent(Date.self, forKey: .ownerAssignedAt)
+        recoveryOwnerPlatform = try c.decodeIfPresent(
+            Platform.self, forKey: .recoveryOwnerPlatform)
+        recoveryOwnerRunnerID = try c.decodeIfPresent(
+            String.self, forKey: .recoveryOwnerRunnerID)
         handoffCount = try c.decodeIfPresent(Int.self, forKey: .handoffCount) ?? 0
         automaticHandoffCount = try c.decodeIfPresent(Int.self,
             forKey: .automaticHandoffCount) ?? 0

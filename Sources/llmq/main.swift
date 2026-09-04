@@ -2718,10 +2718,14 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     // runOneTask 一次只派一个，同轮互斥本来就不需要预占。
     let vettedQueue = vetted
     let dash = LLMQuota.dashboard()
+    // 自动接力前的 Owner 可能来自旧版任务，只存在不可覆盖的 attempt 账里。
+    // 一轮只读一次，避免候选循环反复扫描整份 JSONL。
+    let workAttemptHistory = WorkAttemptStore.all()
 
     var task: WorkTask! = nil
     var decision: WorkScheduler.Decision! = nil
     var ownerReleaseIsManual = false
+    var recoveringOwnerRunnerID: String?
     // 账本的 running 是状态，不是锁。多执行槽下两个子进程可能在同一毫秒
     // 读到 queued；内核租约把“选中 → 写 running”之间的竞态窗口封住。
     var repoExecutionLease: LocalExecutionLease?
@@ -2768,6 +2772,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             task: cand, history: history,
             bypassHumanActivityGrace: onlyTaskID != nil)
         var releaseIsManual = false
+        var recoveryRunnerID: String?
         if (cand.ownerRunnerID == nil) != (cand.ownerPlatform == nil) {
             cand.state = .blocked
             cand.waitReason = .ownerUnavailable
@@ -2796,7 +2801,30 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             let ownerDecision = scheduler.decide(
                 dashboard: dash, runners: [owner], task: cand, history: history,
                 bypassHumanActivityGrace: onlyTaskID != nil)
-            if let ownerPick = ownerDecision.pick {
+            // 故障接力只是临时代班。原 Owner 恢复后先让它回到原稳定工作区和
+            // 原生会话继续；旧任务从 attempt 账迁移，不要求人工重写任务记录。
+            var recoveryPick: WorkScheduler.Pick?
+            if let recoveryOwner = ContextAffinityPolicy.recoveryOwner(
+                for: cand, attempts: workAttemptHistory),
+               recoveryOwner.runnerID != owner.runnerID {
+                var recoveryTask = cand
+                recoveryTask.triedPlatforms.removeAll { $0 == recoveryOwner.platform }
+                recoveryTask.preferredPlatform = recoveryOwner.platform
+                recoveryPick = scheduler.decide(
+                    dashboard: dash, runners: [recoveryOwner], task: recoveryTask,
+                    history: history,
+                    bypassHumanActivityGrace: onlyTaskID != nil).pick
+            }
+            if let recoveryPick {
+                recoveryRunnerID = recoveryPick.runner.runnerID
+                d.rejected.removeAll { $0.platform == recoveryPick.platform }
+                var candidates = [recoveryPick]
+                if let ownerPick = ownerDecision.pick,
+                   ownerPick.runner.runnerID != recoveryPick.runner.runnerID {
+                    candidates.append(ownerPick)
+                }
+                d.candidates = candidates
+            } else if let ownerPick = ownerDecision.pick {
                 // owner 仍能接就永远排第一；历史 triedPlatforms 不得把它自己挡掉。
                 d.candidates.removeAll { $0.runner.runnerID == owner.runnerID }
                 let fallbacks = cand.automaticHandoffCount < 1 ? d.candidates : []
@@ -2853,6 +2881,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             task = cand
             decision = d
             ownerReleaseIsManual = releaseIsManual
+            recoveringOwnerRunnerID = recoveryRunnerID
             break
         }
         // 只对队头打印完整排除清单，后面的压成一行 —— 否则一晚上的日志全是排除表
@@ -3255,7 +3284,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         // 选中候选不等于形成上下文。直到真正准备启动进程，才建立/转移 owner；
         // 若连进程都没拉起，下面会把这次暂定绑定完整回滚。
         let assignmentCause: ContextAffinityPolicy.AssignmentCause
-        if task.ownerRunnerID == nil { assignmentCause = .initial }
+        if pick.runner.runnerID == recoveringOwnerRunnerID {
+            assignmentCause = .automaticRecovery
+        } else if task.ownerRunnerID == nil { assignmentCause = .initial }
         else if idx == 0 && ownerReleaseIsManual { assignmentCause = .manualDisable }
         else { assignmentCause = .automaticFailure }
         var ownerBeforeAttempt: ContextAffinityPolicy.Snapshot!

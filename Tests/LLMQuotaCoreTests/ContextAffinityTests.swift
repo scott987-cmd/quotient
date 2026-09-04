@@ -332,6 +332,8 @@ final class ContextAffinityTests: XCTestCase {
         let task = try SnapshotCoding.decoder().decode(WorkTask.self, from: Data(raw.utf8))
         XCTAssertNil(task.ownerPlatform)
         XCTAssertNil(task.ownerRunnerID)
+        XCTAssertNil(task.recoveryOwnerPlatform)
+        XCTAssertNil(task.recoveryOwnerRunnerID)
         XCTAssertEqual(task.handoffCount, 0)
         XCTAssertEqual(task.automaticHandoffCount, 0)
     }
@@ -506,6 +508,125 @@ final class ContextAffinityTests: XCTestCase {
         ContextAffinityPolicy.restore(task: &task, snapshot: beforeFailedLaunch)
         XCTAssertEqual(task.ownerRunnerID, "b")
         XCTAssertEqual(task.handoffCount, 1)
+        XCTAssertEqual(task.automaticHandoffCount, 0)
+    }
+
+    func testAutomaticFallbackRemembersOwnerAndRecoveryRestoresIt() {
+        var task = WorkTask(id: "recover", prompt: "继续实现", repo: "/tmp/r")
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "kimi.code", platform: .kimi, cause: .initial)
+
+        let beforeFallback = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "opencode.volcark.code", platform: .volcark,
+            cause: .automaticFailure)
+        XCTAssertEqual(task.recoveryOwnerRunnerID, "kimi.code")
+        XCTAssertEqual(task.recoveryOwnerPlatform, .kimi)
+        XCTAssertEqual(task.automaticHandoffCount, 1)
+
+        ContextAffinityPolicy.restore(task: &task, snapshot: beforeFallback)
+        XCTAssertNil(task.recoveryOwnerRunnerID)
+        XCTAssertNil(task.recoveryOwnerPlatform)
+        XCTAssertEqual(task.ownerRunnerID, "kimi.code")
+
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "opencode.volcark.code", platform: .volcark,
+            cause: .automaticFailure)
+        task.preferredPlatform = .volcark
+        let beforeRecovery = task
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "kimi.code", platform: .kimi,
+            cause: .automaticRecovery)
+        XCTAssertEqual(task.ownerRunnerID, "kimi.code")
+        XCTAssertEqual(task.preferredPlatform, .kimi)
+        XCTAssertNil(task.recoveryOwnerRunnerID)
+        XCTAssertNil(task.recoveryOwnerPlatform)
+        XCTAssertEqual(task.automaticHandoffCount, 0,
+                       "恢复原 Owner 后下一次真实故障仍应有一次接力机会")
+
+        var rollback = beforeRecovery
+        let snapshot = ContextAffinityPolicy.assign(
+            task: &rollback, runnerID: "kimi.code", platform: .kimi,
+            cause: .automaticRecovery)
+        ContextAffinityPolicy.restore(task: &rollback, snapshot: snapshot)
+        XCTAssertEqual(rollback.preferredPlatform, .volcark,
+                       "恢复进程未启动时必须连偏好一起回滚")
+    }
+
+    func testLegacyAutomaticFallbackInfersRecoveryOwnerFromAttempts() throws {
+        var task = WorkTask(id: "legacy", prompt: "继续实现", repo: "/tmp/r")
+        task.ownerRunnerID = "opencode.volcark.code"
+        task.ownerPlatform = .volcark
+        task.automaticHandoffCount = 1
+        task.triedPlatforms = [.kimi, .volcark]
+        let attempts = [
+            WorkAttempt(taskID: task.id, runnerID: "kimi.code", platform: .kimi,
+                        startedAt: Date(timeIntervalSince1970: 1), outcome: .failed,
+                        timedOut: false, sessionSupport: .projectLatest),
+            WorkAttempt(taskID: task.id, runnerID: "opencode.volcark.code",
+                        platform: .volcark,
+                        startedAt: Date(timeIntervalSince1970: 2), outcome: .failed,
+                        timedOut: false, sessionSupport: .projectLatest),
+        ]
+
+        let owner = try XCTUnwrap(ContextAffinityPolicy.recoveryOwner(
+            for: task, attempts: attempts))
+        XCTAssertEqual(owner.runnerID, "kimi.code")
+        XCTAssertEqual(owner.platform, .kimi)
+    }
+
+    func testLegacyRecoveryUsesOwnerBeforeCurrentFinalAttemptSegment() throws {
+        var task = WorkTask(id: "legacy-cycle", prompt: "继续实现", repo: "/tmp/r")
+        task.ownerRunnerID = "opencode.volcark.code"
+        task.ownerPlatform = .volcark
+        task.automaticHandoffCount = 1
+        let attempts = [
+            WorkAttempt(taskID: task.id, runnerID: "opencode.volcark.code",
+                        platform: .volcark,
+                        startedAt: Date(timeIntervalSince1970: 1), outcome: .failed,
+                        timedOut: false),
+            WorkAttempt(taskID: task.id, runnerID: "kimi.code", platform: .kimi,
+                        startedAt: Date(timeIntervalSince1970: 2), outcome: .failed,
+                        timedOut: false, sessionSupport: .projectLatest),
+            WorkAttempt(taskID: task.id, runnerID: "opencode.volcark.code",
+                        platform: .volcark,
+                        startedAt: Date(timeIntervalSince1970: 3), outcome: .failed,
+                        timedOut: false),
+        ]
+
+        let owner = try XCTUnwrap(ContextAffinityPolicy.recoveryOwner(
+            for: task, attempts: attempts))
+        XCTAssertEqual(owner.runnerID, "kimi.code")
+    }
+
+    func testManualOwnerChangeClearsAutomaticRecoveryTarget() {
+        var task = WorkTask(id: "manual", prompt: "继续实现", repo: "/tmp/r")
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "kimi.code", platform: .kimi, cause: .initial)
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "opencode.volcark.code", platform: .volcark,
+            cause: .automaticFailure)
+
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "codex.code", platform: .codex,
+            cause: .manualDisable)
+        XCTAssertNil(task.recoveryOwnerRunnerID)
+        XCTAssertNil(task.recoveryOwnerPlatform)
+        XCTAssertEqual(task.automaticHandoffCount, 0)
+    }
+
+    func testManualRetryOnCurrentFallbackAlsoClearsRecoveryTarget() {
+        var task = WorkTask(id: "manual-same", prompt: "继续实现", repo: "/tmp/r")
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "kimi.code", platform: .kimi, cause: .initial)
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "opencode.volcark.code", platform: .volcark,
+            cause: .automaticFailure)
+
+        _ = ContextAffinityPolicy.assign(
+            task: &task, runnerID: "opencode.volcark.code", platform: .volcark,
+            cause: .manualDisable)
+        XCTAssertNil(task.recoveryOwnerRunnerID)
+        XCTAssertNil(task.recoveryOwnerPlatform)
         XCTAssertEqual(task.automaticHandoffCount, 0)
     }
 

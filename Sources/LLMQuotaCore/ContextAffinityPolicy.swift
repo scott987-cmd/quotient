@@ -5,6 +5,7 @@ public enum ContextAffinityPolicy {
     public enum AssignmentCause: Sendable {
         case initial
         case automaticFailure
+        case automaticRecovery
         case manualDisable
     }
 
@@ -12,6 +13,9 @@ public enum ContextAffinityPolicy {
         var runnerID: String?
         var platform: Platform?
         var assignedAt: Date?
+        var recoveryRunnerID: String?
+        var recoveryPlatform: Platform?
+        var preferredPlatform: Platform?
         var handoffCount: Int
         var automaticHandoffCount: Int
         public var changed: Bool
@@ -47,13 +51,46 @@ public enum ContextAffinityPolicy {
     ) -> Snapshot {
         let snapshot = Snapshot(
             runnerID: task.ownerRunnerID, platform: task.ownerPlatform,
-            assignedAt: task.ownerAssignedAt, handoffCount: task.handoffCount,
+            assignedAt: task.ownerAssignedAt,
+            recoveryRunnerID: task.recoveryOwnerRunnerID,
+            recoveryPlatform: task.recoveryOwnerPlatform,
+            preferredPlatform: task.preferredPlatform,
+            handoffCount: task.handoffCount,
             automaticHandoffCount: task.automaticHandoffCount,
             changed: task.ownerRunnerID != runnerID)
-        guard snapshot.changed else { return snapshot }
+        guard snapshot.changed else {
+            // 人工明确保留当前 Owner 也代表接受新的负责人基线；不能让更早一次
+            // 自动接力的恢复目标在后台把它偷偷换回去。
+            if cause == .manualDisable {
+                task.recoveryOwnerRunnerID = nil
+                task.recoveryOwnerPlatform = nil
+                task.automaticHandoffCount = 0
+            }
+            return snapshot
+        }
         if task.ownerRunnerID != nil {
             task.handoffCount += 1
-            if cause == .automaticFailure { task.automaticHandoffCount += 1 }
+            switch cause {
+            case .automaticFailure:
+                if task.recoveryOwnerRunnerID == nil,
+                   let previousRunner = task.ownerRunnerID,
+                   let previousPlatform = task.ownerPlatform {
+                    task.recoveryOwnerRunnerID = previousRunner
+                    task.recoveryOwnerPlatform = previousPlatform
+                }
+                task.automaticHandoffCount += 1
+            case .automaticRecovery:
+                task.recoveryOwnerRunnerID = nil
+                task.recoveryOwnerPlatform = nil
+                task.automaticHandoffCount = 0
+                task.preferredPlatform = platform
+            case .manualDisable:
+                task.recoveryOwnerRunnerID = nil
+                task.recoveryOwnerPlatform = nil
+                task.automaticHandoffCount = 0
+            case .initial:
+                break
+            }
         }
         task.ownerRunnerID = runnerID
         task.ownerPlatform = platform
@@ -66,6 +103,9 @@ public enum ContextAffinityPolicy {
         task.ownerRunnerID = snapshot.runnerID
         task.ownerPlatform = snapshot.platform
         task.ownerAssignedAt = snapshot.assignedAt
+        task.recoveryOwnerRunnerID = snapshot.recoveryRunnerID
+        task.recoveryOwnerPlatform = snapshot.recoveryPlatform
+        task.preferredPlatform = snapshot.preferredPlatform
         task.handoffCount = snapshot.handoffCount
         task.automaticHandoffCount = snapshot.automaticHandoffCount
     }
@@ -77,8 +117,46 @@ public enum ContextAffinityPolicy {
         task.ownerPlatform = nil
         task.ownerRunnerID = nil
         task.ownerAssignedAt = nil
+        task.recoveryOwnerPlatform = nil
+        task.recoveryOwnerRunnerID = nil
+        task.automaticHandoffCount = 0
         task.platform = nil
         task.preferredPlatform = nil
+    }
+
+    /// 找到自动接力前的 Owner。新版任务直接使用持久字段；旧任务从不可覆盖的
+    /// attempt 账本迁移，取当前 Owner 最后一段尝试之前最近的不同 Runner。
+    public static func recoveryOwner(
+        for task: WorkTask,
+        attempts: [WorkAttempt],
+        runners: [AgentRunner] = RunnerRegistry.all
+    ) -> AgentRunner? {
+        guard task.automaticHandoffCount > 0,
+              let currentRunnerID = task.ownerRunnerID else { return nil }
+
+        let runnerID: String
+        let platform: Platform
+        if let storedRunnerID = task.recoveryOwnerRunnerID,
+           let storedPlatform = task.recoveryOwnerPlatform {
+            runnerID = storedRunnerID
+            platform = storedPlatform
+        } else {
+            let history = WorkAttemptStore.latestSnapshots(attempts.filter {
+                $0.taskID == task.id
+            }).sorted { $0.startedAt < $1.startedAt }
+            guard let lastCurrent = history.lastIndex(where: {
+                $0.runnerID == currentRunnerID
+            }), lastCurrent > history.startIndex,
+            let previous = history[..<lastCurrent].last(where: {
+                $0.runnerID != currentRunnerID
+            }) else { return nil }
+            runnerID = previous.runnerID
+            platform = previous.platform
+        }
+        guard runnerID != currentRunnerID else { return nil }
+        return RunnerRegistry.resolve(
+            ownerRunnerID: runnerID, platform: platform,
+            prompt: task.prompt, runners: runners)
     }
 
     public static func shouldRetryOwnerAfterTimeout(
