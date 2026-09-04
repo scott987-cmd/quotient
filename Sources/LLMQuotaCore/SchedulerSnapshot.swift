@@ -74,7 +74,7 @@ public struct SchedulerSnapshot: Codable, Sendable {
         self.maxConcurrentTasks = maxConcurrentTasks
         let visibleTasks = allTasks ?? ready
         pendingTaskCount = visibleTasks.filter {
-            $0.state == .queued || $0.state == .blocked
+            $0.pausedAt == nil && ($0.state == .queued || $0.state == .blocked)
         }.count
         runningTaskCount = visibleTasks.filter { $0.state == .running }.count
         self.heldTaskCount = heldTaskCount

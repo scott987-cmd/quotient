@@ -183,6 +183,21 @@ final class LocalWorkerPoolTests: XCTestCase {
         XCTAssertTrue(waiting.summary.contains("门禁") || waiting.summary.contains("依赖"))
     }
 
+    func testSchedulerSnapshotDoesNotCountPausedTasksAsPending() {
+        let scope = ProjectExecutionScope(allowedRepo: "/dev/A")
+        let emptyPlan = LocalWorkerSlotPlanner.Plan(selected: [], decisions: [])
+        var paused = task("paused", repo: "/dev/A", state: .blocked)
+        paused.pausedAt = Date(timeIntervalSince1970: 42)
+
+        let snapshot = SchedulerSnapshot(
+            scope: scope, ready: [], active: [], plan: emptyPlan,
+            maxConcurrentTasks: 2, allTasks: [paused])
+
+        XCTAssertEqual(snapshot.pendingTaskCount, 0)
+        XCTAssertEqual(snapshot.state, .idle)
+        XCTAssertTrue(snapshot.summary.contains("没有待执行任务"))
+    }
+
     func testSchedulerSnapshotJournalOnlyAppendsMeaningfulTransitions() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("llmq-snapshot-transitions-\(UUID().uuidString)")
