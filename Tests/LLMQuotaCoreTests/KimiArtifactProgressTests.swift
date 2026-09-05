@@ -227,4 +227,92 @@ final class KimiArtifactProgressTests: XCTestCase {
         XCTAssertNil(decoded.attemptID)
         XCTAssertEqual(decoded.summary, current.summary)
     }
+
+    // Independent acceptance regression: interrupted calls must not saturate the monitor.
+    func testAbandonedCallsDoNotPermanentlyDisableFutureProgress() throws {
+        let m = monitor()
+        for i in 0..<128 {
+            let abandoned = outputs.appendingPathComponent("abandoned-\(i).json")
+            try call(abandoned, id: "abandoned-\(i)")
+        }
+        let live = outputs.appendingPathComponent("live-after-abandoned.json")
+        try call(live, id: "live")
+        try json(["new": true], to: live)
+        try done(id: "live")
+        XCTAssertEqual(m.poll(), [live.resolvingSymlinksInPath().path],
+                       "中断留下的未配对调用不能永久关闭本轮后续产物观察")
+    }
+
+    // Independent acceptance regression: one successful overlapping call cannot
+    // authorize content written by a different call that eventually fails.
+    func testOverlappingFailedRewriteCannotBorrowAnotherCallsSuccess() throws {
+        let m = monitor()
+        let path = outputs.appendingPathComponent("shared-output.json")
+        try call(path, id: "seed")
+        try json(["version": 1], to: path)
+        try done(id: "seed")
+        XCTAssertEqual(m.poll(), [path.resolvingSymlinksInPath().path])
+
+        try call(path, id: "successful-overlap")
+        try call(path, id: "failed-overlap")
+        try done(id: "successful-overlap")
+        try json(["version": 2, "partial": true], to: path)
+        try done(id: "failed-overlap", error: true)
+        XCTAssertEqual(m.poll(), [],
+                       "失败调用写出的共享路径内容不能借另一个成功调用续租")
+
+        try call(path, id: "successful-before-failure")
+        try call(path, id: "failed-first")
+        try json(["version": 3, "partial": true], to: path)
+        try done(id: "failed-first", error: true)
+        try done(id: "successful-before-failure")
+        XCTAssertEqual(m.poll(), [],
+                       "失败先返回时，较早开始的成功调用也不能授权失败内容")
+
+        try call(path, id: "clean-recovery")
+        try json(["version": 4, "complete": true], to: path)
+        try done(id: "clean-recovery")
+        XCTAssertEqual(m.poll(), [path.resolvingSymlinksInPath().path],
+                       "失败之后新开始且成功的调用应恢复该路径的观察")
+    }
+
+    func testEvictedCallDoesNotBlockNewSuccessfulCallForSamePath() throws {
+        let m = monitor()
+        let shared = outputs.appendingPathComponent("evicted-then-retried.json")
+        let base = Date().addingTimeInterval(-5)
+        try call(shared, id: "old-shared", time: base)
+        for i in 1..<128 {
+            try call(outputs.appendingPathComponent("abandoned-\(i).json"),
+                     id: "old-\(i)", time: base.addingTimeInterval(Double(i) / 1_000))
+        }
+        try call(shared, id: "new-shared", time: Date())
+        try json(["complete": true], to: shared)
+        try done(id: "new-shared")
+        XCTAssertEqual(m.poll(), [shared.resolvingSymlinksInPath().path],
+                       "淘汰旧调用不能连同随后成功的新调用一起封死同一路径")
+    }
+
+    func testSameMillisecondFailureThenNewSuccessRecoversByEventOrder() throws {
+        let m = monitor()
+        let path = outputs.appendingPathComponent("same-millisecond.json")
+        try call(path, id: "seed")
+        try json(["version": 1], to: path)
+        try done(id: "seed")
+        XCTAssertEqual(m.poll(), [path.resolvingSymlinksInPath().path])
+
+        let sameTimestamp = Date()
+        try call(path, id: "failed", time: sameTimestamp)
+        try json(["version": 2, "partial": true], to: path)
+        try event("tool.result", id: "failed", time: sameTimestamp,
+                  fields: ["result": ["output": "failed", "isError": true]])
+        XCTAssertEqual(m.poll(), [])
+
+        try call(path, id: "recovery", time: sameTimestamp)
+        try json(["version": 3, "complete": true], to: path)
+        try event("tool.result", id: "recovery", time: sameTimestamp,
+                  fields: ["result": ["output": "finished", "isError": false]])
+        XCTAssertEqual(m.poll(), [path.resolvingSymlinksInPath().path],
+                       "同一毫秒内按事件顺序更晚的新成功调用应恢复观察")
+    }
+
 }

@@ -5,13 +5,15 @@ import Foundation
 /// A model response, waiting message, or file mtime alone is never progress.
 public final class KimiArtifactProgress {
     private struct Cursor { var offset: UInt64 = 0; var partial = Data() }
-    private struct Call { let time: Date; let paths: [URL] }
+    private struct Call { let time: Date; let order: Int; let paths: [URL] }
     private struct Artifact {
         var hash: String?
         var active: Bool
         let firstCallAt: Date
         var needsBaseline: Bool
         var observedStat: String?
+        var failedAt: Date?
+        var failedOrder: Int
     }
     private let workspace: URL
     private let home: URL
@@ -20,6 +22,7 @@ public final class KimiArtifactProgress {
     private var session: URL?
     private var cursors: [URL: Cursor] = [:]
     private var calls: [String: Call] = [:]
+    private var eventOrder = 0
     private var artifacts: [URL: Artifact] = [:]
     private var consumed = Set<String>()
     private var nextPoll = Date.distantPast
@@ -152,22 +155,57 @@ public final class KimiArtifactProgress {
               let id = event["toolCallId"] as? String else { return }
         let time = Date(timeIntervalSince1970: milliseconds.doubleValue / 1_000)
         guard time >= startedAt, time <= now else { return }
+        eventOrder += 1
         let key = wire.path + "#" + id
         if event["type"] as? String == "tool.call" {
-            guard calls.count < 128 else { return }
-            let paths = referencedPaths(event["args"])
-            for path in paths { register(path, callAt: time, active: false) }
-            calls[key] = Call(time: time, paths: paths)
-        } else if event["type"] as? String == "tool.result",
-                  let call = calls.removeValue(forKey: key),
-                  let result = event["result"] as? [String: Any],
-                  result["isError"] as? Bool != true, result["error"] == nil,
-                  (result["exitCode"] as? Int ?? 0) == 0 {
-            let output = result["output"] as? String ?? ""
-            guard !output.contains("Command failed with exit code") else { return }
-            for path in call.paths + referencedPaths(result) {
-                register(path, callAt: call.time, active: true)
+            if calls.count >= 128,
+               let oldest = calls.min(by: { $0.value.time < $1.value.time })?.key {
+                // Interrupted calls may never return. Keep the window moving;
+                // an evicted call's late result cannot activate any artifact.
+                if let evicted = calls.removeValue(forKey: oldest) {
+                    for path in evicted.paths {
+                        guard var item = artifacts[path] else { continue }
+                        item.active = false
+                        markFailed(&item, at: evicted.time, order: evicted.order)
+                        artifacts[path] = item
+                    }
+                }
             }
+            let paths = referencedPaths(event["args"])
+            for path in paths {
+                register(path, callAt: time)
+                artifacts[path]?.active = false
+            }
+            calls[key] = Call(time: time, order: eventOrder, paths: paths)
+        } else if event["type"] as? String == "tool.result",
+                  let call = calls.removeValue(forKey: key) {
+            let result = event["result"] as? [String: Any] ?? [:]
+            let output = result["output"] as? String ?? ""
+            let succeeded = event["result"] is [String: Any]
+                && result["isError"] as? Bool != true && result["error"] == nil
+                && (result["exitCode"] as? Int ?? 0) == 0
+                && !output.contains("Command failed with exit code")
+            for path in call.paths + referencedPaths(result) {
+                register(path, callAt: call.time)
+                guard var item = artifacts[path] else { continue }
+                if !succeeded { markFailed(&item, at: time, order: eventOrder) }
+                // Overlapping calls share the file, not each other's success.
+                // After any failure, only a later-started successful call may
+                // authorize it again, with no other known writer still pending.
+                let afterFailure = call.time > (item.failedAt ?? .distantPast)
+                    || (call.time == item.failedAt && call.order > item.failedOrder)
+                item.active = succeeded && afterFailure
+                    && !calls.values.contains(where: { $0.paths.contains(path) })
+                artifacts[path] = item
+            }
+        }
+    }
+
+    private func markFailed(_ item: inout Artifact, at time: Date, order: Int) {
+        if time > (item.failedAt ?? .distantPast)
+            || (time == item.failedAt && order > item.failedOrder) {
+            item.failedAt = time
+            item.failedOrder = order
         }
     }
 
@@ -188,13 +226,8 @@ public final class KimiArtifactProgress {
         }
     }
 
-    private func register(_ path: URL, callAt: Date, active: Bool) {
-        if var old = artifacts[path] {
-            // A new call suspends even previously accepted artifacts until success.
-            old.active = active
-            artifacts[path] = old
-            return
-        }
+    private func register(_ path: URL, callAt: Date) {
+        guard artifacts[path] == nil else { return }
         if artifacts.count >= 128,
            let oldest = artifacts.min(by: { $0.value.firstCallAt < $1.value.firstCallAt })?.key {
             artifacts.removeValue(forKey: oldest)
@@ -210,9 +243,9 @@ public final class KimiArtifactProgress {
            let modified = attrs?[.modificationDate] as? Date {
             stat = "\(bytes.intValue):\(modified.timeIntervalSince1970)"
         } else { stat = nil }
-        artifacts[path] = Artifact(hash: baseline, active: active, firstCallAt: callAt,
+        artifacts[path] = Artifact(hash: baseline, active: false, firstCallAt: callAt,
                                   needsBaseline: attrs != nil && created < callAt && baseline == nil,
-                                  observedStat: stat)
+                                  observedStat: stat, failedAt: nil, failedOrder: 0)
     }
 
     private func attributes(_ path: URL) -> [FileAttributeKey: Any]? {
