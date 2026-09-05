@@ -226,7 +226,7 @@ public enum WorkContinuationGate {
         baselineSequence: Int,
         progress: WorkProgress?
     ) -> String? {
-        guard task.state == .done,
+        guard task.state == .done, !TechnicalRecovery.isDiagnostic(task),
               let progress,
               progress.sequence > baselineSequence,
               progress.updatedAt >= startedAt,

@@ -232,6 +232,10 @@ public struct WorkTask: Codable, Sendable {
     /// 有了这个计数就能默认重排、又不至于让「每次都跑一半就死」的任务无限循环。
     public var interruptedCount: Int?
 
+    /// 技术故障的诊断票与任务级恢复预算；重启或新的 attempt 不会清零。
+    public var recoveryIncident: RecoveryIncident?
+    public var terminalAttemptID: String?
+
     /// 最近一次受控转换的审计信息。tasks.jsonl 本身保留每个 revision，因此
     /// 每条历史记录都能回答“谁、为什么、从什么状态改过来”。
     public var transitionActor: String?
@@ -304,6 +308,8 @@ public struct WorkTask: Codable, Sendable {
         terminalFailureKind = try c.decodeIfPresent(
             TerminalFailureKind.self, forKey: .terminalFailureKind)
         retryNotBefore = try c.decodeIfPresent(Date.self, forKey: .retryNotBefore)
+        recoveryIncident = try c.decodeIfPresent(RecoveryIncident.self, forKey: .recoveryIncident)
+        terminalAttemptID = try c.decodeIfPresent(String.self, forKey: .terminalAttemptID)
         profile = try c.decodeIfPresent(TaskProfile.self, forKey: .profile)
         let inferredResources = TaskResourcePolicy.infer(prompt: prompt)
         requiredCapabilities = try c.decodeIfPresent(
@@ -1062,7 +1068,7 @@ public enum TaskStore {
     }
 }
 
-private extension WorkTask {
+extension WorkTask {
     mutating func clearDispatchLease() {
         dispatchLeaseID = nil
         dispatchLeaseOwnerPID = nil

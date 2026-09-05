@@ -172,7 +172,7 @@ public enum TaskKind {
             "architect-review:", "architect-review-batch:",
             "merge-review-escalation:", "technical-disposition:",
             "quality-architecture-review:", "post-land-repair:",
-            "milestone-remediation:",
+            "milestone-remediation:", "technical-recovery:",
         ]
         return prefixes.contains { origin.hasPrefix($0) }
     }

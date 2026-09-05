@@ -2778,6 +2778,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             cand.waitReason = .ownerUnavailable
             cand.endedAt = Date()
             cand.note = "owner 数据不完整（runnerID/platform 必须同时存在），已停止自动猜人"
+            cand.retryNotBefore = Date().addingTimeInterval(600)
             cand = try TaskStore.transition(
                 cand, actor: "scheduler", reason: "Owner 数据不完整，停止自动猜测")
             _ = StuckAsk.raise(task: cand, reason: cand.note ?? "owner 数据不完整")
@@ -2792,6 +2793,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 cand.waitReason = .ownerUnavailable
                 cand.endedAt = Date()
                 cand.note = "原 owner \(runnerID) 已不存在，且无法唯一迁移；已停止自动猜人"
+                cand.retryNotBefore = Date().addingTimeInterval(600)
                 cand = try TaskStore.transition(
                     cand, actor: "scheduler", reason: "原 Owner 已不存在，停止自动猜测")
                 _ = StuckAsk.raise(task: cand, reason: cand.note ?? "owner 无法恢复")
@@ -2917,8 +2919,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 .map { "\($0.platform.displayName)（\($0.reason)）" }
                 .joined(separator: "；")
                 + dispatcherNote
-                + "。等下去不会变 —— 要么放宽某个角色的上限，要么人工处理。"
+                + "。系统每 10 分钟复查配置和可用性，保留原 Owner；无需点击继续。"
                 + (elsewhereHint.map { "\n" + $0 } ?? "")
+            cand.retryNotBefore = Date().addingTimeInterval(600)
             cand = try TaskStore.transition(
                 cand, actor: "scheduler", reason: "没有永久可用的执行平台")
             // 卡死弹窗：推一条带按钮的提问到手机（重试/放弃），
@@ -2927,7 +2930,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 .map { "\($0.platform.displayName)（\($0.reason)）" }
                 .joined(separator: "；"))
             if !quiet {
-                print(Ansi.yellow("没有平台**能**接 \(cand.id)，已弹窗问手机，继续看下一个。"))
+                print(Ansi.yellow("没有平台能接 \(cand.id)，已安排 10 分钟后复查，继续看下一个。"))
             }
         }
     }
@@ -3076,8 +3079,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         // 进程重启后必然是 nil，于是会走下面的 prepare —— 而 prepare 会
         // `worktree remove --force` 把上一轮的进度**铲掉**。
         // 任务记录里持久化的 handoff / pendingAsk 才是跨进程恢复的真凭据。
-        let isResuming = handoff != nil || task.handoff != nil || resumedAnswer != nil
-        let resumeBase = handoff?.wipCommit ?? task.handoff?.wipCommit ?? "main"
+        let technicalResume = task.recoveryIncident?.phase == "resuming"
+        let isResuming = handoff != nil || task.handoff != nil || resumedAnswer != nil || technicalResume
+        let resumeBase = handoff?.wipCommit ?? task.handoff?.wipCommit
+            ?? (technicalResume ? task.recoveryIncident?.head : nil) ?? "main"
         if let expectedBranch = task.branch,
            let existing = GitWorkspace.existingWorkspace(
                 repo: task.repo, platform: pick.platform, graphID: task.graphID),
@@ -3320,6 +3325,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             branch: ws.branch))
         var executionEnv = cmd.env
         executionEnv["LLMQ_TASK_ID"] = task.id
+        executionEnv["LLMQ_ATTEMPT_ID"] = attemptID
         executionEnv["LLMQ_WORKSPACE"] = ws.path
         executionEnv["LLMQ_INITIAL_LEASE_SECONDS"] = String(Int(attemptTimeout))
         if mayAsk { executionEnv["LLMQ_ASK_FILE"] = askFile.path }
@@ -3454,6 +3460,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         func recordAttempt(_ outcome: WorkAttempt.Outcome,
                            failureKind: String? = nil,
                            handoffReason: String? = nil) {
+            task.terminalAttemptID = attemptID
             let attemptChanged = headBefore.map {
                 GitWorkspace.changedFileCount(in: ws.path, base: $0)
             } ?? changed
@@ -3632,8 +3639,6 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 failureName = "agentFailed"; baseTerminalFailure = .agentFailed
             }
             task.terminalFailureKind = sessionFailed ? .sessionInvalid : baseTerminalFailure
-            recordAttempt(.failed, failureKind: sessionFailed ? "sessionInvalid" : failureName,
-                          handoffReason: failure.describe)
 
             // 把平台侧失败记进冷却账本。下次调度直接跳过，不再白建 worktree。
             //
@@ -3690,6 +3695,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 print(Ansi.yellow("  已记入冷却：超时，"
                     + Format.duration(cd.remaining) + "内不再派给它"))
             }
+            // 记录最终分类，认证/环境分类不能只更新 WorkTask 而让 attempt 仍写 agentFailed。
+            recordAttempt(.failed, failureKind: task.terminalFailureKind?.rawValue ?? failureName,
+                          handoffReason: failure.describe)
             // 失败的分支上什么都没提交，连分支一起删掉。
             // 默认由同一 owner 带着原会话和 WIP 再收一次尾；需要故障演练时
             // 可显式设 0 关闭。上下文亲和不该藏在实验开关后面。
@@ -3879,7 +3887,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 let touchedCode = touched.contains {
                     codeExts.contains(($0 as NSString).pathExtension.lowercased())
                 }
-                let skipVerify = !touched.isEmpty && !touchedCode
+                let skipVerify = (!touched.isEmpty && !touchedCode)
+                    || TechnicalRecovery.isReportOnlyChange(task, files: touched)
                 let v = skipVerify
                     ? Verifier.Outcome(ran: false, passed: true,
                         summary: "没碰可构建源码（\(touched.count) 个文件，文档/资产类），跳过构建验收",
@@ -3959,7 +3968,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                     let finalAttemptCommits = headBefore.map {
                         GitWorkspace.commitsAhead(in: ws.path, base: $0)
                     } ?? myCommits
-                    if let violation = QualityGuardrailGate.violation(
+                    if !TechnicalRecovery.isReportOnlyChange(task, files: touched),
+                       let violation = QualityGuardrailGate.violation(
                         repo: task.repo, branch: ws.branch) {
                         task = TaskPause.requestArchitectureReview(task, reason: violation)
                         print(Ansi.red("  " + violation))

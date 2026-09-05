@@ -125,7 +125,10 @@ public enum TaskBoard {
         let paused = t.pausedAt != nil
         let technicalBlock = TechnicalDisposition.isBlocked(t)
         let humanBlock = t.state == .blocked && t.waitReason == .humanApproval
-        let presentationBlock = paused || technicalBlock || humanBlock
+        let recoveryBlock = TechnicalRecovery.holds(t)
+        let recoveryQueued = t.recoveryIncident?.phase == "resuming" && t.state == .queued
+        let availabilityBlock = t.state == .blocked && t.waitReason == .ownerUnavailable && t.retryNotBefore != nil
+        let presentationBlock = paused || technicalBlock || humanBlock || recoveryBlock || recoveryQueued || availabilityBlock
         let ownerQuotaWait = ownerQuotaWait(for: t, reports: platformReports, now: now)
         let delivery: (phase: String, summary: String, next: String?)? = {
             if t.landedAt != nil {
@@ -159,6 +162,10 @@ public enum TaskBoard {
             visiblePhase = "等待架构师技术处置"
         } else if humanBlock {
             visiblePhase = "等待你的确认"
+        } else if recoveryBlock {
+            visiblePhase = t.recoveryIncident?.phase == "diagnosing" ? "系统诊断中" : "技术故障尚未解决"
+        } else if recoveryQueued {
+            visiblePhase = "原 Owner 等待续作"
         } else if t.state == .blocked, let waitReason = t.waitReason {
             visiblePhase = switch waitReason {
             case .humanAnswer: "等待你的答复"
@@ -204,6 +211,13 @@ public enum TaskBoard {
             if technicalBlock {
                 return "架构师只复核隔离分支；实现 Owner 和项目会话保持不变"
             }
+            if recoveryBlock {
+                return t.recoveryIncident?.phase == "diagnosing"
+                    ? "架构师验证处置后自动交回原 Owner；无需点击继续"
+                    : "系统尚无可验证的处置；保留现场，未恢复执行"
+            }
+            if recoveryQueued { return "等待原 Owner 领取后验证实际产出；排队不代表已经恢复" }
+            if availabilityBlock { return "系统每 10 分钟复查配置与可用性；保留原 Owner，无需点击继续" }
             return t.note
         }()
         let visibleSummary = delivery?.summary ?? blockedSummary ?? ownerQuotaWait?.summary

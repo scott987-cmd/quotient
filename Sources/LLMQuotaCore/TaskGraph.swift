@@ -245,6 +245,8 @@ public enum TaskGraph {
         func applyDerived(_ candidate: WorkTask) {
             if let current = byID[candidate.id] {
                 guard candidate.rev >= current.rev else { return }
+                if TechnicalRecovery.holds(current), candidate.state != current.state
+                    || candidate.waitReason != current.waitReason { return }
                 if current.state == .running && candidate.state != .running { return }
                 if current.state == .failed,
                    current.terminalFailureKind?.blocksDerivedRequeue == true,
@@ -281,6 +283,25 @@ public enum TaskGraph {
             ready.note = "平台冷却已到期，沿用原 Owner、分支和上下文重新排队"
             byID[ready.id] = ready
             touched[ready.id] = ready
+        }
+
+        for task in TechnicalRecovery.reconcile(Array(byID.values), now: now) {
+            byID[task.id] = task
+            touched[task.id] = task
+        }
+
+        // 可用性复查只重新评估候选，不更换 Owner、不增加实际执行预算。
+        // 没有新配置/可用平台时，调度器仍会阻塞并约定下一次复查。
+        for current in byID.values where current.state == .blocked
+            && current.waitReason == .ownerUnavailable && current.pendingAsk == nil
+            && current.pausedAt == nil && current.discardedAt == nil && current.frozenBy == nil {
+            guard let retryAt = current.retryNotBefore, retryAt <= now else { continue }
+            var ready = current
+            ready.state = .queued; ready.waitReason = nil; ready.retryNotBefore = nil
+            ready.startedAt = nil; ready.endedAt = nil; ready.runnerPID = nil
+            ready.clearDispatchLease()
+            ready.note = "系统正在重新检查原 Owner 和执行平台是否可用；尚未恢复执行"
+            byID[ready.id] = ready; touched[ready.id] = ready
         }
 
         while changed {
@@ -440,6 +461,7 @@ public enum TaskGraph {
                     }
                     persisted[saved.id] = saved
                 }
+                TechnicalRecovery.syncAsks(TaskStore.all())
                 return persisted.values.sorted { $0.id < $1.id }
             } catch let error as StaleWrite {
                 guard attempt < attempts else { throw error }

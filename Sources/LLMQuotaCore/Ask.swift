@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// agent 干到一半发现缺信息时的提问机制。
 ///
@@ -247,12 +248,27 @@ public enum AskStore {
     /// state=blocked 但没有问题文件的任务 —— 手机上看不到要回答什么，
     /// 而任务已经出了 queued 队列，永远不会再被调度，只能人工捞。
     /// 反过来则只留下一个孤儿问题文件，无害，下轮会被覆盖。
-    public static func publish(_ ask: Ask) throws {
+    public static func publish(_ ask: Ask, onlyIfMissing: Bool = false) throws {
+        let published = try withQuestionLock(taskID: ask.taskID, machine: ask.machineID) {
+            try publishLocked(ask, onlyIfMissing: onlyIfMissing)
+            return true
+        }
+        guard published == true else {
+            throw NSError(domain: "AskStore", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "问题正在更新，稍后对账重试"])
+        }
+    }
+
+    private static func publishLocked(_ ask: Ask, onlyIfMissing: Bool) throws {
         guard let dir = questionsDir(machine: ask.machineID) else {
             throw NSError(domain: "AskStore", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "找不到 iCloud 目录"])
         }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // 发布新问题与撤回旧问题共用本机锁。对账补发布不得覆盖后来产生的真实问题。
+        if onlyIfMissing, FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(ask.taskID).json").path) {
+            return
+        }
         let data = try SnapshotCoding.prettyEncoder().encode(ask)
         guard ICloudSafe.write(data, to: dir.appendingPathComponent("\(ask.taskID).json")) else {
             throw NSError(domain: "Ask", code: 1, userInfo: [
@@ -277,10 +293,38 @@ public enum AskStore {
     }
 
     /// 问题已经处理完了，撤下来。
-    public static func retract(taskID: String, machine: String) {
+    public static func retract(taskID: String, machine: String, matchingAskID: String? = nil) {
+        _ = try? withQuestionLock(taskID: taskID, machine: machine) {
+            retractLocked(taskID: taskID, machine: machine, matchingAskID: matchingAskID)
+        }
+    }
+
+    private static func retractLocked(taskID: String, machine: String, matchingAskID: String?) {
         guard let dir = questionsDir(machine: machine) else { return }
+        if let matchingAskID {
+            let url = dir.appendingPathComponent("\(taskID).json")
+            guard let data = try? Data(contentsOf: url),
+                  let ask = try? SnapshotCoding.decoder().decode(Ask.self, from: data),
+                  ask.id == matchingAskID else { return }
+        }
         try? FileManager.default.removeItem(
             at: dir.appendingPathComponent("\(taskID).json"))
+    }
+
+    /// 所属机器是问题的唯一写入方；跨进程序列化“核对身份→撤回”和发布。
+    /// 非阻塞锁，避免 iCloud 卡顿再拖住另一个协调器，失败留给下一轮重试。
+    private static func withQuestionLock<T>(taskID: String, machine: String,
+                                             _ operation: () throws -> T) throws -> T? {
+        let directory = scratchDir.appendingPathComponent("question-locks")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let key = SHA256.hash(data: Data((machine + ":" + taskID).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let fd = open(directory.appendingPathComponent(key).path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { return nil }
+        defer { flock(fd, LOCK_UN) }
+        return try operation()
     }
 
     /// 取回本机的答案。
@@ -570,14 +614,8 @@ public enum AskIngest {
 
 // MARK: - 系统提问（卡死弹窗）
 
-/// 任务卡死时**系统自己**向手机发问 —— 不是 agent 在问，是调度器在问。
-///
-/// 起因是一句用户反问：「游戏制作又卡住了，这种不应该弹窗找我确认继续吗？」
-/// 在此之前，卡死的任务只是安静地躺在看板上变灰，人得自己巡逻才发现。
-/// 现在：任务进入「等下去不会变」的状态（没人能接 / 重试用尽的失败）时，
-/// 自动生成一条带按钮的提问推到手机 ——「重试」把它放回队列并清掉
-/// 已试名单（换人再来），「放弃」走 abandon 丢弃。答复走的是和
-/// agent 提问完全同一条通道（AskIngest），不另起炉灶。
+/// 兼容旧系统问题入口；只有确定需要本人认证的故障才向手机提问。
+/// 技术失败交给 TechnicalRecovery，可用性问题由调度器定期复查。
 public enum StuckAsk {
     public static func recoveryOption(for task: WorkTask) -> (label: String, platform: Platform?) {
         let fixed = task.ownerPlatform
@@ -591,15 +629,14 @@ public enum StuckAsk {
     /// 每个任务只弹一次：已经挂着 pendingAsk 就不再重复发。
     @discardableResult
     public static func raise(task: WorkTask, reason: String) -> Bool {
-        guard task.pendingAsk == nil else { return false }
-        // 已知冷却会自行到期，不是需要用户决策的“卡死”。即使调用方顺序
-        // 回归，也不能再给手机推一张无意义的恢复问题。
-        guard task.terminalFailureKind != .quotaExhausted,
-              task.retryNotBefore == nil else { return false }
+        guard !TechnicalRecovery.isDiagnostic(task), task.pendingAsk == nil,
+              task.terminalFailureKind == .authenticationFailed,
+              task.retryNotBefore == nil, task.pausedAt == nil,
+              task.discardedAt == nil, task.state == .failed else { return false }
         var t = task
         let recovery = recoveryOption(for: t)
         let ask = Ask(
-            taskID: t.id, machineID: Paths.machineID(), round: 1,
+            taskID: t.id, machineID: Paths.machineID(), round: t.askRounds + 1,
             platform: recovery.platform ?? t.preferredPlatform,
             taskPrompt: String(t.prompt.prefix(200)),
             repoName: RepoRegistry.all().first {
@@ -607,24 +644,18 @@ public enum StuckAsk {
                     == NSString(string: t.repo).expandingTildeInPath
             }?.alias ?? t.repo,
             questions: [Ask.Question(
-                text: "这个任务卡死了：\(String(reason.prefix(200)))。怎么处理？",
-                // 放弃是手机页底部带二次确认的危险按钮，不能再混进普通单选；
-                // 否则用户点中它再按“回复并继续”，旧客户端会把放弃当成续写。
-                options: [recovery.label],
-                suggestion: recovery.label)],
-            progressNote: "系统代发：卡死等确认，不是 agent 在提问")
+                text: "原 Owner 认证失败，需要你在所属机器完成登录或修复账号授权。系统无法代替本人验证。\n"
+                    + String(reason.prefix(300)) + "\n完成后回复，原任务将沿用现有会话与分支续作。")],
+            progressNote: "系统检测到账号认证失败，需要本人处理")
         t.pendingAsk = ask
+        t.askRounds = ask.round
         t.state = .blocked
         t.waitReason = .humanAnswer
-        // 固定负责人继续时保留失败史；owner 本身有明确豁免，别的候选仍不能
-        // 借一次手机点击绕过历史。只有真正的「换人再来」才清空名单。
-        if recovery.platform == nil { t.triedPlatforms = [] }
-        t.interruptedCount = nil
         do {
             try AskStore.publish(ask)
             do {
                 _ = try TaskStore.transition(
-                    t, actor: "stuck-ask", reason: "任务卡死，等待人工选择恢复或放弃")
+                    t, actor: "authentication-ask", reason: "账号认证失败，等待本人完成登录授权")
                 return true
             } catch {
                 AskStore.retract(taskID: t.id, machine: ask.machineID)

@@ -30,7 +30,7 @@ public enum SmartConsultationPolicy {
     ]
     private static let derivedReviewOrigins = [
         "architect-review:", "visual-quality-review", "technical-disposition:",
-        "consultation:",
+        "consultation:", "technical-recovery:",
     ]
 
     /// CLI/MCP 的只读提示。绝不把状态机提示伪装成 Agent 事件写回账本。
