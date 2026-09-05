@@ -417,8 +417,13 @@ public enum CollaborationStore {
     static func resolvedIDs(in events: [CollaborationEvent]) -> Set<String> {
         var resolved = Set(events.compactMap { event -> String? in
             guard event.kind == .answer || event.kind == .ack else { return nil }
-            guard let target = events.first(where: { $0.id == event.replyTo && $0.project == event.project }),
-                  target.recipientRunnerID == nil || target.recipientRunnerID == event.senderRunnerID,
+            guard let target = events.first(where: { $0.id == event.replyTo && $0.project == event.project }) else { return nil }
+            // 旧协议允许人把答案转交给问题的接收者；它没有目标机器字段。
+            // 现代定向 Agent 回复仍必须匹配执行器与机器，不能借此代签问题复验。
+            let legacyHumanAnswer = target.recipientMachineID == nil && target.kind == .question
+                && event.kind == .answer && event.senderRunnerID == "human"
+                && event.taskID == target.taskID && event.recipientRunnerID == target.recipientRunnerID
+            guard target.recipientRunnerID == nil || target.recipientRunnerID == event.senderRunnerID || legacyHumanAnswer,
                   target.recipientMachineID == nil || target.recipientMachineID == event.senderMachineID else { return nil }
             return target.id
         })
