@@ -3328,7 +3328,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         let leaseGate = ExecutionLeaseGate(
             taskID: task.id,
             baselineFingerprint: baselineFingerprint,
-            existing: progressBeforeAttempt)
+            existing: progressBeforeAttempt, attemptID: attemptID)
         let objectiveLeaseGate = ObjectiveProgressLeaseGate(
             baselineHead: headBefore, baselineFingerprint: baselineFingerprint)
         let r = Proc.run(
@@ -4491,10 +4491,37 @@ func cmdWorkLoop(_ args: [String]) throws {
         return launchedAny
     }
 
+    let artifactObserver = KimiArtifactProgressCoordinator(kimiHome:
+        ProcessInfo.processInfo.environment["KIMI_CODE_HOME"].map { URL(fileURLWithPath: $0) })
     while true {
         // 独立 Executor 自己写终态；Coordinator 只观察持久化事实，不再持有
         // `Process` 对象。换版后的新 Coordinator 也能从同一账本继续观察。
         let latest = Dictionary(uniqueKeysWithValues: TaskStore.all().map { ($0.id, $0) })
+        // The coordinator can observe an already-running executor after an update;
+        // no model process or original session needs to be restarted to gain this fix.
+        let liveTasks = latest.values.filter {
+            $0.state == .running && $0.platform == .kimi
+                && ($0.runnerPID.map { kill($0, 0) == 0 } ?? false)
+        }
+        let observations = artifactObserver.poll(tasks: liveTasks,
+            attempts: WorkAttemptStore.latestSnapshots(WorkAttemptStore.all())) { task in
+                task.branch.flatMap { Review.worktreePath(repo: task.repo, branch: $0) }
+            }
+        for observation in observations {
+            guard let task = TaskStore.all().first(where: { $0.id == observation.taskID }),
+                  task.state == .running, task.runnerPID == observation.runnerPID,
+                  task.ownerRunnerID == observation.runnerID,
+                  WorkAttemptStore.unresolvedRunning(taskID: task.id)
+                    .max(by: { $0.startedAt < $1.startedAt })?.attemptID == observation.attemptID else { continue }
+            do {
+                _ = try WorkProgressStore.record(taskID: task.id, phase: "子任务产物已更新",
+                    summary: "检测到当前执行会话生成或更新 \(observation.evidence.count) 份临时产物；尚未质量验收",
+                    nextStep: nil, evidence: observation.evidence, requestedMinutes: 20,
+                    repo: observation.workspace, automatic: true, attemptID: observation.attemptID)
+                ProjectionInvalidation.markDirty()
+                print(Ansi.dim("  临时产物进度 \(task.id)：\(observation.evidence.count) 份，保留当前会话"))
+            } catch { print(Ansi.yellow("  临时产物进度暂未保存：" + error.localizedDescription)) }
+        }
         _ = executorLauncher.cleanupFinished(tasks: Array(latest.values))
         for active in DetachedExecutorRegistry.active(tasks: Array(latest.values)) {
             observedExecutors.insert(active.taskID)

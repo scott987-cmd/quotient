@@ -28,12 +28,14 @@ public struct WorkProgress: Codable, Sendable, Equatable {
     /// 最近一次真实 checkpoint 的时间。普通 diff 只能续租；显式里程碑或
     /// 新提交里真实出现的证据文件才能刷新它。
     public var checkpointAt: Date?
+    /// Optional for old producers; automatic artifact observations bind to one attempt.
+    public var attemptID: String?
 
     public init(taskID: String, sequence: Int, phase: String, summary: String,
                 nextStep: String? = nil, evidence: [String] = [],
                 evidenceFingerprint: String, requestedMinutes: Int = 20,
                 updatedAt: Date = Date(), checkpointAt: Date? = nil,
-                automatic: Bool = false) {
+                automatic: Bool = false, attemptID: String? = nil) {
         self.taskID = taskID
         self.sequence = sequence
         self.phase = phase
@@ -44,6 +46,7 @@ public struct WorkProgress: Codable, Sendable, Equatable {
         self.requestedMinutes = requestedMinutes
         self.updatedAt = updatedAt
         self.automatic = automatic
+        self.attemptID = attemptID
         self.explicitNextStep = automatic ? nil : nextStep
         self.explicitNextStepSequence = automatic || nextStep == nil ? nil : sequence
         self.explicitNextStepAt = automatic || nextStep == nil ? nil : updatedAt
@@ -78,6 +81,7 @@ public struct WorkProgress: Codable, Sendable, Equatable {
             // 其余旧记录按主动汇报兼容，避免升级瞬间制造一批假告警。
             checkpointAt = looksAutomatic ? nil : updatedAt
         }
+        attemptID = try c.decodeIfPresent(String.self, forKey: .attemptID)
     }
 }
 
@@ -121,7 +125,8 @@ public enum WorkProgressStore {
     public static func record(taskID: String, phase: String, summary: String,
                               nextStep: String?, evidence: [String],
                               requestedMinutes: Int, repo: String,
-                              now: Date = Date(), automatic: Bool = false) throws -> WorkProgress {
+                              now: Date = Date(), automatic: Bool = false,
+                              attemptID: String? = nil) throws -> WorkProgress {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let old = load(taskID: taskID)
         let incomingEvidence = evidence.prefix(12).map { String($0.prefix(240)) }
@@ -146,7 +151,7 @@ public enum WorkProgressStore {
             checkpointAt: automatic
                 ? (incomingEvidence.isEmpty ? old?.checkpointAt : now)
                 : now,
-            automatic: automatic)
+            automatic: automatic, attemptID: attemptID)
         if automatic {
             item.explicitNextStep = old?.explicitNextStep
             item.explicitNextStepSequence = old?.explicitNextStepSequence
@@ -286,13 +291,16 @@ public enum WorkProgressSentinel {
 /// 每次最多续 60 分钟，但总次数不封顶：方向正确就让同一个会话继续做。
 public final class ExecutionLeaseGate {
     private let taskID: String
+    private let attemptID: String?
     private var lastAcceptedSequence: Int
     private var lastAcceptedFingerprint: String
     public let freshness: TimeInterval
 
     public init(taskID: String, baselineFingerprint: String,
-                existing: WorkProgress? = nil, freshness: TimeInterval = 5 * 60) {
+                existing: WorkProgress? = nil, freshness: TimeInterval = 5 * 60,
+                attemptID: String? = nil) {
         self.taskID = taskID
+        self.attemptID = attemptID
         self.lastAcceptedSequence = existing?.sequence ?? 0
         self.lastAcceptedFingerprint = baselineFingerprint
         self.freshness = freshness
@@ -303,6 +311,7 @@ public final class ExecutionLeaseGate {
     public func renewal(now: Date = Date(), progress: WorkProgress?)
         -> (seconds: TimeInterval, progress: WorkProgress)? {
         guard let progress, progress.taskID == taskID,
+              progress.attemptID == nil || attemptID == nil || progress.attemptID == attemptID,
               progress.sequence > lastAcceptedSequence,
               !progress.phase.isEmpty, !progress.summary.isEmpty,
               !progress.evidenceFingerprint.isEmpty,
