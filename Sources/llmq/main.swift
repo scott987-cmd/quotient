@@ -3080,9 +3080,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         // `worktree remove --force` 把上一轮的进度**铲掉**。
         // 任务记录里持久化的 handoff / pendingAsk 才是跨进程恢复的真凭据。
         let technicalResume = task.recoveryIncident?.phase == "resuming"
-        let isResuming = handoff != nil || task.handoff != nil || resumedAnswer != nil || technicalResume
+        let findingResume = !(task.findingRequeueIDs ?? []).isEmpty
+        let isResuming = handoff != nil || task.handoff != nil || resumedAnswer != nil || technicalResume || findingResume
         let resumeBase = handoff?.wipCommit ?? task.handoff?.wipCommit
-            ?? (technicalResume ? task.recoveryIncident?.head : nil) ?? "main"
+            ?? (technicalResume ? task.recoveryIncident?.head : nil)
+            ?? (findingResume ? task.branch : nil) ?? "main"
         if let expectedBranch = task.branch,
            let existing = GitWorkspace.existingWorkspace(
                 repo: task.repo, platform: pick.platform, graphID: task.graphID),

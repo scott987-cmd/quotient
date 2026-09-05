@@ -1100,6 +1100,16 @@ public enum Review {
                                            base: String = "main",
                                            tasks: [WorkTask] = TaskStore.all()) -> String? {
         let want = URL(fileURLWithPath: repo).standardizedFileURL.path
+        for task in tasks where CollaborationStore.normalizeProject(task.repo) == want {
+            if task.branch == branch && StageFindingLoop.hasUnverifiedTrackedFinding(task) {
+                return "已登记阶段问题尚未取得完整独立复验记录，不能合入"
+            }
+            if StageFindingLoop.findings(for: task).contains(where: {
+                !$0.resolved && (task.branch == branch || $0.context.sourceBranch == branch)
+            }) {
+                return "阶段观察的适用问题尚未完成独立复验，不能合入"
+            }
+        }
         guard RepoRegistry.all().contains(where: {
             URL(fileURLWithPath: $0.localPath).standardizedFileURL.path == want
                 && !($0.qualityContract ?? "").isEmpty

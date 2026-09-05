@@ -242,9 +242,16 @@ public enum TaskGraph {
         // 所有派生对账共用一条状态优先级。过去每个 reconciler 都直接覆盖 byID，
         // 实际语义变成“最后运行的规则获胜”；历史视觉票因此能覆盖刚写下的平台
         // 失败。这里至少保护真实运行态、较新 revision 和基础设施失败终态。
-        func applyDerived(_ candidate: WorkTask) {
+        func applyDerived(_ candidate: WorkTask, resolvingStageFinding: Bool = false) {
             if let current = byID[candidate.id] {
                 guard candidate.rev >= current.rev else { return }
+                if StageFindingLoop.holds(current) && !resolvingStageFinding { return }
+                // 旧质量元数据不能回答新问题；只有 AskIngest 消费真实答复后
+                // 才能推进它。派生规则不拥有人工问题的状态。
+                if current.pendingAsk != nil && current.answeredAsk == nil,
+                   candidate.state != current.state || candidate.waitReason != current.waitReason {
+                    return
+                }
                 if TechnicalRecovery.holds(current), candidate.state != current.state
                     || candidate.waitReason != current.waitReason { return }
                 if current.state == .running && candidate.state != .running { return }
@@ -426,6 +433,9 @@ public enum TaskGraph {
         }
         // 生产质量闸和图依赖共用同一条“每轮对账”入口，避免新增一种 blocked
         // 却漏掉 retry / done / worker 启动等恢复路径。
+        for task in StageFindingLoop.reconcile(Array(byID.values)) {
+            applyDerived(task, resolvingStageFinding: true)
+        }
         for task in GoldenSampleGate.reconcile(Array(byID.values)) {
             applyDerived(task)
         }
@@ -462,6 +472,7 @@ public enum TaskGraph {
                     persisted[saved.id] = saved
                 }
                 TechnicalRecovery.syncAsks(TaskStore.all())
+                StageFindingLoop.synchronize(TaskStore.all())
                 return persisted.values.sorted { $0.id < $1.id }
             } catch let error as StaleWrite {
                 guard attempt < attempts else { throw error }

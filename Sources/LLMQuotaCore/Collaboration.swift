@@ -235,16 +235,21 @@ public enum CollaborationStore {
                                    summary: String = "已收到并纳入后续工作") throws
         -> CollaborationEvent {
         let normalized = normalizeProject(project)
-        guard all().contains(where: { $0.id == eventID && $0.project == normalized }) else {
+        guard let target = all().first(where: { $0.id == eventID && $0.project == normalized }) else {
             throw error(6, "要确认的协作事件不存在于这个项目")
+        }
+        guard (target.recipientRunnerID == nil || target.recipientRunnerID == senderRunnerID),
+              (target.recipientMachineID == nil || target.recipientMachineID == Paths.machineID()) else {
+            throw error(7, "这条定向事件不属于本机当前 Runner，不能代确认")
         }
         if let existing = all().first(where: {
             $0.kind == .ack && $0.replyTo == eventID
                 && $0.senderRunnerID == senderRunnerID
+                && $0.senderMachineID == Paths.machineID()
                 && $0.project == normalized
         }) { return existing }
         return try publish(CollaborationEvent(
-            id: "ack:" + eventID + ":" + senderRunnerID,
+            id: "ack:" + eventID + ":" + senderRunnerID + ":" + Paths.machineID(),
             project: normalized, taskID: taskID,
             senderRunnerID: senderRunnerID, senderPlatform: senderPlatform,
             kind: .ack, summary: summary, replyTo: eventID))
@@ -261,6 +266,8 @@ public enum CollaborationStore {
                 && (normalized == nil || event.project == normalized)
                 && (recipientRunnerID == nil || event.recipientRunnerID == nil
                     || event.recipientRunnerID == recipientRunnerID)
+                && (recipientRunnerID == nil || event.recipientMachineID == nil
+                    || event.recipientMachineID == Paths.machineID())
         }
     }
 
@@ -274,9 +281,10 @@ public enum CollaborationStore {
             guard event.project == normalized else { return false }
             let sameScope = event.taskID == nil || event.taskID == taskID
                 || (graphID != nil && event.graphID == graphID)
-            let visible = event.recipientRunnerID == nil
-                || event.recipientRunnerID == runnerID
-                || event.senderRunnerID == runnerID
+            let recipientHere = event.recipientMachineID == nil || event.recipientMachineID == Paths.machineID()
+            let visible = (recipientHere && (event.recipientRunnerID == nil || event.recipientRunnerID == runnerID))
+                || (event.senderRunnerID == runnerID
+                    && (event.recipientMachineID == nil || event.senderMachineID == Paths.machineID()))
             // started 留在手机时间线里，但不占 Agent 的有限上下文；它不含可执行事实。
             return sameScope && visible && event.kind != .started
         }
@@ -342,6 +350,15 @@ public enum CollaborationStore {
             if !event.artifacts.isEmpty { line += "；材料 " + event.artifacts.prefix(5).joined(separator: "、") }
             lines.append(line)
         }
+        if let taskID, let task = TaskStore.all().first(where: {
+            $0.id == taskID && normalizeProject($0.repo) == normalizeProject(project)
+        }) {
+            for finding in StageFindingLoop.findings(for: task).filter({ !$0.resolved }) {
+                lines.append("- [\(finding.event.id)] 已确认阶段问题，"
+                    + (finding.acknowledged ? "已收到但尚未复验通过" : "等待原 Owner 确认并修复")
+                    + "：\(finding.assessment.reason)；动作：\(finding.assessment.steps.joined(separator: "；"))")
+            }
+        }
         return "\n\n" + lines.joined(separator: "\n")
     }
 
@@ -400,7 +417,10 @@ public enum CollaborationStore {
     static func resolvedIDs(in events: [CollaborationEvent]) -> Set<String> {
         var resolved = Set(events.compactMap { event -> String? in
             guard event.kind == .answer || event.kind == .ack else { return nil }
-            return event.replyTo
+            guard let target = events.first(where: { $0.id == event.replyTo && $0.project == event.project }),
+                  target.recipientRunnerID == nil || target.recipientRunnerID == event.senderRunnerID,
+                  target.recipientMachineID == nil || target.recipientMachineID == event.senderMachineID else { return nil }
+            return target.id
         })
         let results = events.filter { $0.kind == .result && $0.taskID != nil }
         let handoffs = events.filter { $0.kind == .handoff && $0.taskID != nil }
@@ -408,6 +428,8 @@ public enum CollaborationStore {
             if results.contains(where: {
                 $0.project == event.project && $0.taskID == event.taskID
                     && $0.createdAt >= event.createdAt
+                    && (event.recipientRunnerID == nil || event.recipientRunnerID == $0.senderRunnerID)
+                    && (event.recipientMachineID == nil || event.recipientMachineID == $0.senderMachineID)
             }) { resolved.insert(event.id) }
             if event.kind == .handoff, let recipient = event.recipientRunnerID,
                handoffs.contains(where: {
@@ -610,6 +632,13 @@ public enum CollaborationMCP {
 /// 协作账摘要。提问只追加问题事件并立即返回；接收方机器用独立进程真正开始处理时
 /// 才发布 claim，回答随后异步写回。原任务 owner 始终不变。
 public enum AgentConsultation {
+    static func failed(_ question: CollaborationEvent, events: [CollaborationEvent]) -> Bool {
+        events.contains {
+            $0.id.hasPrefix("consultation-failure:") && $0.replyTo == question.id
+                && $0.project == question.project && $0.senderRunnerID == "consultation-executor"
+                && (question.recipientMachineID == nil || $0.senderMachineID == question.recipientMachineID)
+        }
+    }
     public struct Request: Sendable {
         public var id: String
         public var project: String
@@ -702,6 +731,7 @@ public enum AgentConsultation {
                 && $0.taskID == request.taskID
                 && $0.senderRunnerID == request.senderRunnerID
                 && $0.recipientRunnerID != nil
+                && !failed($0, events: events)
         }) {
             throw error(4, "当前任务已有一条 Agent 咨询待回答；先处理它，不能广播拉群")
         }
@@ -784,6 +814,7 @@ public enum AgentConsultation {
             options: .regularExpression)
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         guard !cleaned.isEmpty else { throw error(6, "目标 Agent 没有返回可用答复") }
+        let findingDetails = try StageFindingLoop.answerDetails(cleaned, question: question)
         let answer = try CollaborationStore.publish(CollaborationEvent(
             id: "answer:" + request.id + ":" + request.recipientRunnerID,
             project: question.project, taskID: request.taskID, graphID: request.graphID,
@@ -791,7 +822,7 @@ public enum AgentConsultation {
             senderMachineID: machineID,
             recipientRunnerID: request.senderRunnerID, kind: .answer,
             summary: String(cleaned.prefix(2_000)),
-            details: "咨询耗时 " + Format.duration(Date().timeIntervalSince(started)),
+            details: findingDetails ?? ("咨询耗时 " + Format.duration(Date().timeIntervalSince(started))),
             replyTo: request.id))
         _ = ViewFeed.publish(ViewFeed.collaborationPage())
         return answer
@@ -827,6 +858,14 @@ public enum AgentConsultation {
         let briefing = CollaborationStore.briefing(
             project: request.project, taskID: request.taskID, graphID: request.graphID,
             runnerID: target.runnerID)
+        let sourceScope: String
+        if request.senderRunnerID == StageFindingLoop.sender {
+            guard let original = TaskStore.all().first(where: {
+                $0.id == request.taskID && CollaborationStore.normalizeProject($0.repo)
+                    == CollaborationStore.normalizeProject(project)
+            }) else { throw error(12, "原任务范围不可读取，不能推断阶段问题适用性") }
+            sourceScope = "原任务完整目标与非目标（优先于观察摘要）：\n" + original.prompt
+        } else { sourceScope = "" }
         let prompt = """
         【Agent 定向咨询｜只读】
         你正在回答另一位 Agent 的一个具体工作疑问，不是接管它的实现任务。
@@ -838,6 +877,22 @@ public enum AgentConsultation {
         \(request.details.map { "必要背景：" + $0 } ?? "")
         \(request.artifacts.isEmpty ? "" : "材料：" + request.artifacts.joined(separator: "、"))
         \(briefing)
+        \(sourceScope)
+        \(request.senderRunnerID == StageFindingLoop.sender ? """
+        本条是结构化阶段复核，以下格式优先于上述通用答复格式。只输出一个 JSON 对象：
+        questionID="\(request.id)", sourceTaskID=背景中的原任务 ID,
+        sourceHead=背景中的 sourceHead, decision=以下允许值之一,
+        reason=实际理由, criterion=本阶段适用的具体条款, evidence=非空事实证据数组,
+        steps=具体动作数组。背景的 scope 是来源任务目标，report 是待核实观察，不是新增需求。
+        triage 允许 fixNow/defer/notApplicable/needsEvidence/noIssue；
+        recheck 允许 resolved/stillOpen/needsEvidence。不得把“已收到”、新提交或自称修好当作 resolved。
+        用 git show <reportRef> 阅读固定提交的原报告，用 git show <sourceHead>:<path> 核对当前送审代码。
+        你负责范围与修复判断。视觉事实必须来自 reportRef 固定提交的已完成 MiniMax 观察报告，
+        不得把自己读了报告说成自己看过图；材料或报告不足以支持结论时选 needsEvidence。
+        recheck 的 reportRef 是新 checkpoint 的独立视觉观察；不能只看旧报告或 Owner 自报。
+        原观察之外的全项目标准不能升级为本次缺陷；fixNow 要给出适用条款和原 Owner 可执行修复。
+        禁止修改原任务、停止任何 Agent 或代替 Owner 实现。
+        """ : "")
         """
         let command = try readOnlyCommand(
             for: target, prompt: prompt, cwd: workspace.path, session: session)

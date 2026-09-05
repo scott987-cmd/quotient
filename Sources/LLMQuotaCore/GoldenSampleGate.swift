@@ -163,6 +163,8 @@ public enum GoldenSampleGate {
         for task in tasks {
             guard var context = task.production, context.stage == .fanOut,
                   task.state == .queued || task.state == .blocked else { continue }
+            guard task.pendingAsk == nil || task.answeredAsk != nil else { continue }
+            guard !StageFindingLoop.holds(task) else { continue }
             let reason = blockReason(for: task, in: tasks)
             if let reason {
                 guard task.state == .queued || context.blockedReason != reason else { continue }

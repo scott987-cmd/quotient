@@ -225,7 +225,8 @@ public enum Milestone {
         let r = try? TaskIntake.enqueue(
             prompt: prompt, repo: repoPath, classify: false, split: false,
             force: true, origin: "milestone-eyes",
-                idempotencyKey: "milestone-eyes:" + item.mergeSHA,
+                idempotencyKey: "milestone-eyes:" + item.mergeSHA + ":"
+                    + StageFindingLoop.evidenceDigests(item.evidenceFiles).joined(separator: ","),
             source: "milestone",
             preferredPlatform: .minimax)
         if case .single(let t)? = r { return t.id }
@@ -245,8 +246,10 @@ public enum Milestone {
 
         成果：\(item.subject)
         阶段：\(item.phase ?? "未记录；只观察本次已提交证据，不推断全项目完成度")
+        \(item.taskID.map { "来源任务：" + $0 } ?? "")
         来源分支：\(item.branch)
         证据提交：\(item.mergeSHA)
+        证据摘要：\(StageFindingLoop.evidenceDigests(visual).joined(separator: ","))
         文件（都在 \(dir) 下）：
         \(visual.map { "  - " + $0 }.joined(separator: "\n"))
 

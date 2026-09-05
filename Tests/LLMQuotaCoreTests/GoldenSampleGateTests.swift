@@ -125,6 +125,25 @@ final class GoldenSampleGateTests: XCTestCase {
         XCTAssertTrue(TaskGraph.isReady(released, in: [sample, released]))
     }
 
+    func testHistoricalQualityBlockCannotReplaceUnansweredHumanQuestion() throws {
+        var sample = sampleTask(kind: "zombie-character", sampleID: "zombie-v1")
+        var fan = fanOutTask(source: sample)
+        fan.state = .blocked
+        fan.waitReason = .humanAnswer
+        fan.production?.blockedReason = "旧的质量阻塞"
+        fan.pendingAsk = Ask(taskID: fan.id, machineID: "isolated", round: 1,
+            platform: .kimi, taskPrompt: fan.prompt, repoName: fan.repo,
+            questions: [Ask.Question(text: "请选择素材授权方案")])
+        for ready in [false, true] {
+            if ready { sample.state = .done; sample.landedAt = Date() }
+            let changes = TaskGraph.reconcile([sample, fan])
+            let current = changes.first { $0.id == fan.id } ?? fan
+            XCTAssertEqual(current.state, .blocked)
+            XCTAssertEqual(current.waitReason, .humanAnswer)
+            XCTAssertEqual(current.pendingAsk?.id, fan.pendingAsk?.id)
+        }
+    }
+
     func testUnifiedIntakeValidatesContractAndRegistersFanOutAsBlocked() throws {
         let sampleOutcome = try TaskIntake.enqueue(
             prompt: "做出第一只达到参考标准的僵尸", repo: repo.path,
