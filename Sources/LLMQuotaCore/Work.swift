@@ -318,6 +318,13 @@ public struct WorkTask: Codable, Sendable {
             [String].self, forKey: .requiredCapabilities) ?? inferredResources.capabilities
         resourceClaims = try c.decodeIfPresent(
             [String].self, forKey: .resourceClaims) ?? inferredResources.claims
+        // 只迁移完全等于旧推断结果的记录，保留诊断任务空约束和额外显式资源。
+        let legacyResources = TaskResourcePolicy.infer(prompt: prompt, excludingProhibitedOperations: false)
+        if Set(requiredCapabilities) == Set(legacyResources.capabilities),
+           Set(resourceClaims) == Set(legacyResources.claims) {
+            requiredCapabilities = inferredResources.capabilities
+            resourceClaims = inferredResources.claims
+        }
         triedPlatforms = try c.decodeIfPresent([Platform].self, forKey: .triedPlatforms) ?? []
         ownerPlatform = try c.decodeIfPresent(Platform.self, forKey: .ownerPlatform)
         ownerRunnerID = try c.decodeIfPresent(String.self, forKey: .ownerRunnerID)
@@ -2688,6 +2695,7 @@ public enum Proc {
     /// 分成两份的话，早晚会出现「找得到、跑不起来」。
     static let toolDirs = [
         "\(NSHomeDirectory())/.local/bin",
+        "\(NSHomeDirectory())/.npm-global/bin",
         "\(NSHomeDirectory())/.hermes/node/bin",
         "\(NSHomeDirectory())/.kimi-code/bin",
         "/opt/homebrew/bin",

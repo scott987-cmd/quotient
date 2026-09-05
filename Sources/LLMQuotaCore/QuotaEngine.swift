@@ -426,15 +426,24 @@ public struct QuotaEngine: Sendable {
     /// 步长取窗口的 1/12：太密了白算，太疏了会漏掉峰值刚好落在两步之间的情况。
     static func peakInWindow(_ buckets: [UsageBucket], windowSeconds: TimeInterval,
                              metric: QuotaMetric, pricing: Pricing?, now: Date) -> Double? {
-        guard let earliest = buckets.map(\.start).min(),
+        guard windowSeconds.isFinite, windowSeconds > 0,
+              let earliest = buckets.map(\.start).min(),
               now.timeIntervalSince(earliest) >= windowSeconds * 2 else { return nil }
+        let ordered = buckets.sorted { $0.start < $1.start }
+        let values = ordered.map { metric.value(from: [$0], pricing: pricing) }
         let step = max(60, windowSeconds / 12)
-        var peak = 0.0
+        var peak = 0.0, sum = 0.0
+        var left = 0, right = 0
         var end = earliest.addingTimeInterval(windowSeconds)
         while end <= now {
             let from = end.addingTimeInterval(-windowSeconds)
-            let inWindow = buckets.filter { $0.start >= from && $0.start < end }
-            peak = max(peak, metric.value(from: inWindow, pricing: pricing))
+            while right < ordered.count && ordered[right].start < end {
+                sum += values[right]; right += 1
+            }
+            while left < right && ordered[left].start < from {
+                sum -= values[left]; left += 1
+            }
+            peak = max(peak, sum)
             end = end.addingTimeInterval(step)
         }
         return peak > 0 ? peak : nil

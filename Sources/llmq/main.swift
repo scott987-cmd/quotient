@@ -7213,6 +7213,14 @@ func relativeTime(_ d: Date) -> String {
     return "\(Int(t / 86400)) 天前"
 }
 
+func refreshReleaseChannel() {
+    // 隔离 CLI/测试根目录不允许读写用户真实 iCloud。
+    let isolated = ProcessInfo.processInfo.environment["LLMQ_HOME"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard Paths.appSupportOverride == nil, isolated == nil || isolated == "" else { return }
+    _ = MirrorService.syncReleaseChannel(local: Paths.sharedRoot, cloud: Push.mirrorDir)
+}
+
 func releaseWaitSeconds(_ args: [String], default value: Int) -> Int {
     guard let i = args.firstIndex(of: "--wait-seconds"), i + 1 < args.count,
           let parsed = Int(args[i + 1]) else { return value }
@@ -7241,8 +7249,8 @@ func waitForReleaseFanout(target: String, seconds: Int) -> Bool {
     while !missing.isEmpty, Date() < deadline {
         Thread.sleep(forTimeInterval: min(5, max(0.2, deadline.timeIntervalSinceNow)))
         // CLI 平时只读本地镜像；等待期间主动拉一次，不能要求人另开窗口刷新。
-        _ = MirrorService.sync(local: Paths.sharedRoot, cloud: Push.mirrorDir,
-                               selfMachineID: localID)
+        _ = MirrorService.syncReleasePresence(local: Paths.sharedRoot, cloud: Push.mirrorDir,
+                                               selfMachineID: localID)
         missing = pending()
     }
     guard missing.isEmpty else {
@@ -7251,7 +7259,7 @@ func waitForReleaseFanout(target: String, seconds: Int) -> Bool {
             print("  " + Ansi.red("✗ ") + p.machineName + Ansi.dim(
                 "  当前 " + (p.installedRelease ?? "未知")))
         }
-        print(Ansi.dim("  自动更新每分钟检查；稍后用 llmq release verify 再确认。"))
+        print(Ansi.dim("  自动更新每分钟检查；稍后用 llmq release verify --target \(target) 再确认。"))
         return false
     }
     print(Ansi.green("  ✓ 所有在线机器已确认 ") + target.prefix(12))
@@ -7413,8 +7421,17 @@ func cmdRelease(_ rest: [String]) throws {
         try installUpdater(interval: secs)
 
     case "verify":
+        let expected = try ReleaseFanout.verificationTarget(rest)
+        refreshReleaseChannel()
         switch ReleaseChannel.check() {
         case .upToDate(let sha):
+            if let expected, sha != expected {
+                print(Ansi.red("本机已知渠道仍是 ") + sha.prefix(12)
+                    + "，尚未安装指定发布 " + expected.prefix(12)); exit(3)
+            }
+            if expected == nil {
+                print(Ansi.dim("按本机已同步的渠道核对；验证指定新发布请附 --target 完整SHA256"))
+            }
             guard waitForReleaseFanout(
                 target: sha, seconds: releaseWaitSeconds(rest, default: 0))
             else { exit(3) }
@@ -7563,6 +7580,7 @@ func installUpdater(interval: Int) throws {
 }
 
 func cmdUpdate(_ rest: [String]) throws {
+    refreshReleaseChannel()
     let checkOnly = rest.contains("--check")
     switch ReleaseChannel.check() {
     case .noChannel:

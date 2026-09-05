@@ -13,8 +13,15 @@ public enum TaskResourcePolicy {
         }
     }
 
-    public static func infer(prompt: String) -> Requirements {
-        let text = prompt.lowercased()
+    public static func infer(prompt: String, excludingProhibitedOperations: Bool = true) -> Requirements {
+        // 否定条款描述的是禁止的操作；不应因此锁住本次不使用的工具。
+        // 只识别明确的独立禁止句，其余含糊文本保留保守能力约束。
+        let text = excludingProhibitedOperations ? prompt.lowercased().components(separatedBy: CharacterSet(charactersIn: "。；;，,.\n"))
+            .filter { clause in
+                let trimmed = clause.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.range(of: #"^(?:(?:禁止|不要|不准|不得)\s*(?:发布|签名|启动|运行|使用|调用|打开|用|上传)|(?:do not|never)\s+(?:publish|sign|launch|run|use|open|upload)\b)"#,
+                    options: .regularExpression) == nil
+            }.joined(separator: "；") : prompt.lowercased()
         var capabilities = Set<String>()
         var claims = Set<String>()
 
