@@ -148,7 +148,7 @@ public enum TechnicalRecovery {
         return diagnostic
     }
 
-    private static func report(_ diagnostic: WorkTask, incident: RecoveryIncident,
+    private static func report(_ diagnostic: WorkTask, sourceTaskID: String, incident: RecoveryIncident,
                                attempts: [WorkAttempt]) -> Report? {
         guard diagnostic.state == .done, let branch = diagnostic.branch,
               branch.hasPrefix("agent/"),
@@ -172,7 +172,8 @@ public enum TechnicalRecovery {
         let shown = GitWorkspace.git(["show", path], in: diagnostic.repo, timeout: 5)
         guard shown.exitCode == 0,
               let report = try? JSONDecoder().decode(Report.self, from: Data(shown.stdout.utf8)),
-              report.incidentID == incident.id, report.sourceAttemptID == incident.sourceAttemptID,
+              report.incidentID == incident.id, report.sourceTaskID == sourceTaskID,
+              report.sourceAttemptID == incident.sourceAttemptID,
               report.sourceHead == incident.head, report.sourceBranch == incident.branch,
               report.sourceOwner == incident.ownerRunnerID, report.failureKind == incident.failureKind,
               report.diagnosticTaskID == diagnostic.id, report.diagnosticAttemptID == attempt.attemptID,
@@ -231,7 +232,9 @@ public enum TechnicalRecovery {
                 updates.append(task)
                 continue
             }
-            let validReport = diagnostic.flatMap { report($0, incident: incident, attempts: attempts) }
+            let validReport = diagnostic.flatMap {
+                report($0, sourceTaskID: task.id, incident: incident, attempts: attempts)
+            }
             if now > incident.deadline && validReport == nil {
                 incident.phase = "unresolved"
                 task.note = "技术诊断 \(incident.diagnosticTaskID) 超过 30 分钟仍未形成可用处置；系统尚未解决，保留原 Owner 与现场"

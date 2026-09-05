@@ -277,6 +277,55 @@ extension TechnicalRecoveryTests {
 }
 
 extension TechnicalRecoveryTests {
+    func testLegacyMigrationRejectsEachNearMatchBindingVariant() throws {
+        let (source, _) = try diagnosed()
+        var exact = failed()
+        exact.state = .blocked
+        exact.waitReason = .humanAnswer
+        exact.transitionActor = "stuck-ask"
+        var ask = realAsk(exact)
+        ask.progressNote = TechnicalRecovery.legacyMarker
+        ask.questions = [Ask.Question(
+            text: "这个任务卡死了：超时。怎么处理？",
+            options: [StuckAsk.recoveryOption(for: exact).label])]
+        exact.pendingAsk = ask
+
+        var wrongProgress = exact
+        wrongProgress.pendingAsk?.progressNote = TechnicalRecovery.legacyMarker + "（人工补充）"
+
+        var wrongActor = exact
+        wrongActor.transitionActor = "human"
+
+        var wrongOnlyOption = exact
+        wrongOnlyOption.pendingAsk?.questions[0].options = [
+            StuckAsk.recoveryOption(for: exact).label + "（稍后）"
+        ]
+
+        for candidate in [wrongProgress, wrongActor, wrongOnlyOption] {
+            let changes = TechnicalRecovery.reconcile(
+                [candidate],
+                now: source.recoveryIncident!.createdAt)
+            XCTAssertTrue(changes.isEmpty)
+            XCTAssertNil(candidate.recoveryIncident)
+            XCTAssertNotNil(candidate.pendingAsk)
+        }
+    }
+
+    func testSameRunnerWithChangedOwnerPlatformCannotResume() throws {
+        let (source, diagnostic) = try diagnosed()
+        let done = try finish(source, diagnostic)
+        var changed = source
+        changed.ownerPlatform = .codex
+
+        let changes = TechnicalRecovery.reconcile([changed, done])
+        XCTAssertFalse(changes.contains {
+            $0.id == source.id && $0.state == .queued
+        })
+        XCTAssertTrue(changes.isEmpty)
+    }
+}
+
+extension TechnicalRecoveryTests {
     func testStaleFailureCannotBeMisattributedToNewerTaskTermination() throws {
         var task = failed()
         try seed(task)
@@ -423,5 +472,15 @@ extension TechnicalRecoveryTests {
         var running = diagnostic; running.state = .running
         XCTAssertFalse(TechnicalRecovery.reconcile([source, running], now: source.recoveryIncident!.deadline.addingTimeInterval(1))
             .contains { $0.id == diagnostic.id })
+    }
+}
+
+extension TechnicalRecoveryTests {
+    func testWrongSourceReportCannotExtendExpiredDiagnosticBudget() throws {
+        let (source, diagnostic) = try diagnosed()
+        let done = try finish(source, diagnostic) { $0.sourceTaskID = "another-task" }
+        let changes = TechnicalRecovery.reconcile([source, done], now: source.recoveryIncident!.deadline.addingTimeInterval(1))
+        XCTAssertEqual(changes.first { $0.id == source.id }?.recoveryIncident?.phase, "unresolved")
+        XCTAssertFalse(changes.contains { $0.id == diagnostic.id && $0.state == .queued })
     }
 }
