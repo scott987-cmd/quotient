@@ -65,5 +65,14 @@ iPhone 完整回归 107 通过、iPad 108 通过。首次按设备/夹具跳过�
 16:22Z 使用现有 `work retry --same-platform` 恢复，保留 Kimi Owner、工作分支和
 原 native session；16:27Z 已观察到同一 session 内新的 main/agent-11 工具日志。
 真实模型请求停滞仍受超时保护，本修复不等于消除所有后端故障。
-发布与三机验证结果在实际完成后另行补记。
+签名版本 `5528c46d17bc18fb3360ffb3e472b4d82dc12ae936aebd4efe674433a9baf5a8`
+已部署 Mac mini、ARM MacBook Pro、Intel MacBook Pro，发布命令和最终
+`release verify` 均退出 0。共享目录传播较慢，两台从机补送同一份签名包后
+由原 updater 验证证书/签名/哈希安装，没有跳过校验。
+三机已安装 CLI 的 SHA-256 同为
+`939bccc04171c51e6817030a90a7537294a24ba2c741fd6de26dfa460ab67fcc`。
+ARM 新协调器 PID 57733；Flint 当前执行器 PID 54232 在更新前后未变，
+当前 attempt `2d40ce4b-b24f-4d9f-b6e6-ded5f8b03289`、原 Kimi session 与 Owner 保持。
+部署后只读检查已见继续调用工具；尚未观察到最终版本写入第一条真实临时产物续期，
+不能把测试夹具通过当作真实产物续期已触发。手机实体设备仍未做安装或验收。
 原始证据目录：`LLMQuotaApp/qa-reports/2026-09-05-artifact-progress-fix/`。
