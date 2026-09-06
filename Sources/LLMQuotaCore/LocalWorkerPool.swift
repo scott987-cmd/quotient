@@ -120,8 +120,10 @@ public enum LocalWorkerSlotPlanner {
             })
         }
 
-        var busyRepos = Set(running.map { RepoLease.normalize($0.repo) })
-        busyRepos.formUnion(active.map { RepoLease.normalize($0.repo) })
+        var busyRepos = Set(running.map { StageObservationExecution.executionKey($0) })
+        let knownTasks = Dictionary(uniqueKeysWithValues: allTasks.map { ($0.id, $0) })
+        busyRepos.formUnion(active.compactMap { knownTasks[$0.taskID].map(StageObservationExecution.executionKey) })
+        let unknownActiveRepos = Set(active.filter { knownTasks[$0.taskID] == nil }.map { RepoLease.normalize($0.repo) })
         let ownerByTaskID = Dictionary(uniqueKeysWithValues: allTasks.compactMap { task in
             task.ownerRunnerID.map { (task.id, $0) }
         })
@@ -146,8 +148,13 @@ public enum LocalWorkerSlotPlanner {
                     reason: "原 Owner \(owner) 正在执行另一任务"))
                 continue
             }
-            let repo = RepoLease.normalize(task.repo)
-            guard !busyRepos.contains(repo) else {
+            if StageObservationExecution.snapshot(task) != nil,
+               StageObservationExecution.validatedSnapshot(task, tasks: allTasks) == nil {
+                decisions.append(Decision(taskID: task.id, selected: false, reason: "阶段观察等待匹配的提交与证据"))
+                continue
+            }
+            let repo = StageObservationExecution.executionKey(task)
+            guard !busyRepos.contains(repo), !unknownActiveRepos.contains(RepoLease.normalize(task.repo)) else {
                 decisions.append(Decision(
                     taskID: task.id, selected: false, reason: "同项目已有任务执行中"))
                 continue

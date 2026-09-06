@@ -4,6 +4,24 @@ import XCTest
 /// MirrorService 的规则测试。**纯本地**：两个临时目录当 local/cloud，
 /// 不碰真 iCloud —— 「云端列不动」「抢占输了」用注入口模拟。
 final class MirrorServiceTests: XCTestCase {
+    func testProcessedPlanFailureAndOriginalIntentReachPhoneWithoutDeletingOtherMachines() throws {
+        let id = UUID().uuidString
+        let body = "{\"id\":\"\(id)\",\"kind\":\"plan-go\",\"planID\":\"plan-A\",\"targetMachineID\":\"\(mid)\"}"
+        let input = put(local, "config-intents/\(id).json", body)
+        let done = local.appendingPathComponent("config-intents/processed")
+        try FileManager.default.createDirectory(at: done, withIntermediateDirectories: true)
+        _ = ConfigIntentIngest.park(input, to: done, id: id, verdict: "rejected", note: "查重拦下")
+        let results = try FileManager.default.contentsOfDirectory(at: done, includingPropertiesForKeys: nil)
+        let receipt = try XCTUnwrap(results.first { $0.lastPathComponent.hasSuffix(".result.json") })
+        put(cloud, "config-intents/processed/other-machine.result.json", "preserve other machine")
+        _ = sync()
+        XCTAssertNotNil(read(cloud, "config-intents/processed/" + receipt.lastPathComponent), "CLI 的拒绝回执必须经过 Mirror 到手机")
+        let original = receipt.lastPathComponent.replacingOccurrences(of: ".result.json", with: ".json")
+        XCTAssertEqual(read(cloud, "config-intents/processed/" + original), body, "手机必须能核对原始意图的目标机器与计划")
+        XCTAssertEqual(read(cloud, "config-intents/processed/other-machine.result.json"), "preserve other machine")
+        XCTAssertFalse(exists(local, "config-intents/processed/other-machine.result.json"))
+    }
+
     func testActionReceiptsPushWithoutPullingOtherMachineState() {
         put(local, "action-receipts/a.json", "A completed")
         put(cloud, "action-receipts/b.json", "B failed")

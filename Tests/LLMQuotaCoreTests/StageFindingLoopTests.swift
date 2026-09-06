@@ -70,6 +70,25 @@ final class StageFindingLoopTests: XCTestCase {
         XCTAssertEqual(r.exitCode, 0, r.stderr)
         return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    func testLateArchitectAnswerCannotOrderRepairOfAnOldCommit() throws {
+        StageFindingLoop.synchronize(TaskStore.all())
+        let q = try XCTUnwrap(CollaborationStore.all().first { $0.kind == .question })
+        try git(["checkout", source.branch!])
+        try "new progress".write(to: repo.appendingPathComponent("source.txt"), atomically: true, encoding: .utf8)
+        try git(["add", "."]); try git(["commit", "-m", "owner advanced before answer"])
+        try answer(q, decision: "fixNow")
+        StageFindingLoop.synchronize(TaskStore.all())
+        XCTAssertFalse(CollaborationStore.all().contains { $0.kind == .finding })
+    }
+
+    func testLateObservationCannotTriageAfterSourceCommitHasAdvanced() throws {
+        try git(["checkout", source.branch!])
+        try "already repaired".write(to: repo.appendingPathComponent("source.txt"), atomically: true, encoding: .utf8)
+        try git(["add", "."]); try git(["commit", "-m", "new owner progress"])
+        StageFindingLoop.synchronize(TaskStore.all())
+        XCTAssertFalse(CollaborationStore.all().contains { $0.kind == .question })
+    }
+
     func testCompletedObservationCreatesDirectedScopeTriageWithoutInterruptingOwner() throws {
         try TaskGraph.persistReconciliation(actor: "fixture", reason: "isolated")
         let question = try XCTUnwrap(CollaborationStore.all().first {

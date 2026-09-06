@@ -139,8 +139,8 @@ public enum MirrorService {
     static let bidirectionalDirs = ["config", "releases", "approvals", "push-tokens", "verdicts", "actions"]
     /// 多写者不可变事件目录：文件名全局唯一，两边只做集合并集，不按 mtime 覆盖。
     static let appendOnlyDirs = ["config-journal", "cooldown-events"]
-    /// 只推不拉的目录：证据截图是 Mac 端产的，手机只看。
-    static let pushOnlyDirs = ["evidence", "views", "action-receipts"]
+    /// 控制回执先推，避免大媒体传输挡住手机确认。多机记录只增不删。
+    static let pushOnlyDirs = ["action-receipts", "config-intents/processed", "views", "evidence"]
 
     /// 永不搬的文件：`.sb-` 半成品（原子写卡在 rename 留下的）、
     /// 心跳文件、一切点开头的文件。
@@ -170,6 +170,10 @@ public enum MirrorService {
         try? FileManager.default.createDirectory(
             at: local.appendingPathComponent("answers/\(selfMachineID)", isDirectory: true),
             withIntermediateDirectories: true)
+
+        // 发布控制信息先走，不能排在大批截图和历史快照之后。
+        syncBidirectional(localDir: local.appendingPathComponent("releases"),
+            cloudDir: cloud.appendingPathComponent("releases"), label: "releases", list: list, stats: &stats)
 
         // snapshots/ taskboards/ presence/：本机的推、别人的拉，各自新者胜。
         for d in perMachineDirs {
@@ -201,7 +205,7 @@ public enum MirrorService {
         }
 
         // config/ releases/：双向，每文件新者胜。
-        for d in bidirectionalDirs {
+        for d in bidirectionalDirs where d != "releases" {
             syncBidirectional(
                 localDir: local.appendingPathComponent(d, isDirectory: true),
                 cloudDir: cloud.appendingPathComponent(d, isDirectory: true),
@@ -315,6 +319,51 @@ public enum MirrorService {
         }
     }
 
+    /// Updater 独立进程只同步当前渠道，不等待整轮媒体镜像或其卡住的线程。
+    public static func syncReleaseChannel(local: URL, cloud: URL) -> MirrorStats {
+        var stats = MirrorStats()
+        let destination = local.appendingPathComponent("releases")
+        try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        syncBidirectional(localDir: destination, cloudDir: cloud.appendingPathComponent("releases"),
+            label: "releases", list: { ICloudSafe.list($0) }, stats: &stats)
+        return stats
+    }
+
+    /// 发布回执只需要机器在线状态，不能被历史媒体同步拖延。
+    public static func syncReleasePresence(local: URL, cloud: URL, selfMachineID: String) -> MirrorStats {
+        var stats = MirrorStats()
+        let destination = local.appendingPathComponent("presence")
+        try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        syncPerMachine(localDir: destination, cloudDir: cloud.appendingPathComponent("presence"),
+            label: "presence", selfMachineID: selfMachineID, list: { ICloudSafe.list($0) }, stats: &stats)
+        return stats
+    }
+
+    /// 未验证的清单只能决定下载哪一个普通文件；安装仍必须过完整签名校验。
+    static func releaseSyncNames(_ names: Set<String>, localDir: URL, cloudDir: URL) -> [String] {
+        var payloads: Set<String> = []
+        for dir in [localDir, cloudDir] {
+            guard let data = ICloudSafe.read(dir.appendingPathComponent("current.json")),
+                  let manifest = try? SnapshotCoding.decoder().decode(ReleaseChannel.Manifest.self, from: data),
+                  manifest.file == URL(fileURLWithPath: manifest.file).lastPathComponent,
+                  manifest.file.hasSuffix(".tar.gz") else { continue }
+            payloads.insert(manifest.file)
+        }
+        let metadata: Set<String> = ["current.json", "current.sig", "release-signer.crt"]
+        // 有可解码清单时只同步其引用包，不重复搬运历史发布档案。
+        let selected = names.intersection(metadata.union(payloads))
+        return selected.sorted { a, b in
+            func rank(_ name: String) -> Int {
+                if name == "release-signer.crt" { return 0 }
+                if name == "current.sig" { return 1 }
+                if payloads.contains(name) { return 2 }
+                if name == "current.json" { return 3 }
+                return 4
+            }
+            return rank(a) == rank(b) ? a < b : rank(a) < rank(b)
+        }
+    }
+
     /// config/ releases/：双向，每文件新者胜。
     static func syncBidirectional(
         localDir: URL, cloudDir: URL, label: String,
@@ -327,7 +376,10 @@ public enum MirrorService {
         let cloudNames = Set(cloudFiles.map(\.lastPathComponent))
         let localNames = Set(localFiles.map(\.lastPathComponent))
 
-        for name in cloudNames.union(localNames) where !excluded(name) {
+        let names = cloudNames.union(localNames)
+        let ordered = label == "releases"
+            ? releaseSyncNames(names, localDir: localDir, cloudDir: cloudDir) : names.sorted()
+        for name in ordered where !excluded(name) {
             let localURL = localDir.appendingPathComponent(name)
             let cloudURL = cloudDir.appendingPathComponent(name)
             switch (localNames.contains(name), cloudNames.contains(name)) {

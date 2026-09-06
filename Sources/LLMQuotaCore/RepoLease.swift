@@ -45,6 +45,8 @@ import Foundation
 /// **代价必须说清楚**：峰值吞吐会降，平台会闲着。这是明知故犯 ——
 /// 「没有真需求时闲着是零成本的，产出垃圾要花人的时间去丢弃」这条
 /// 已经是这套系统的既定取舍（见 ReservePool）。
+// 固定媒体脚本的阶段观察使用单独快照/报告工作区；例外由
+// StageObservationExecution 验证，普通实现、媒体制作与共享设备仍独占。
 public enum RepoLease {
 
     /// 这个仓库现在有没有人在改。
@@ -55,6 +57,12 @@ public enum RepoLease {
     public static func holder(repo: String, tasks: [WorkTask]) -> WorkTask? {
         let want = normalize(repo)
         return tasks.first { $0.state == .running && normalize($0.repo) == want }
+    }
+
+    /// 系统阶段观察只写自己的固定报告工作区；实现任务继续独占主项目。
+    public static func holder(for task: WorkTask, tasks: [WorkTask]) -> WorkTask? {
+        let key = StageObservationExecution.executionKey(task)
+        return tasks.first { $0.state == .running && StageObservationExecution.executionKey($0) == key }
     }
 
     /// 项目身份同时用于专注过滤、摄入和独占锁。linked worktree 不是另一个
@@ -91,14 +99,14 @@ public enum RepoLease {
                                                      deferred: [(WorkTask, String)]) {
         var busy = Set<String>()
         for t in tasks where t.state == .running {
-            busy.insert(normalize(t.repo))
+            busy.insert(StageObservationExecution.executionKey(t))
         }
         var allowed: [WorkTask] = []
         var deferred: [(WorkTask, String)] = []
         for t in queue {
-            let r = normalize(t.repo)
+            let r = StageObservationExecution.executionKey(t)
             if busy.contains(r) {
-                let who = holder(repo: t.repo, tasks: tasks)
+                let who = holder(for: t, tasks: tasks)
                 let note = who.map {
                     "仓库 \(URL(fileURLWithPath: r).lastPathComponent) 正被 "
                         + ($0.platform?.displayName ?? "另一个 agent")

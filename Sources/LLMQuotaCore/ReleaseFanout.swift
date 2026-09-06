@@ -11,7 +11,18 @@ public enum ReleaseFanout {
     public static func matches(target: String, installed: String?) -> Bool {
         guard let installed, installed.count >= identityLength,
               target.count >= identityLength else { return false }
+        if installed.count == 64 && target.count == 64 { return installed == target }
         return installed.prefix(identityLength) == target.prefix(identityLength)
+    }
+
+    public static func verificationTarget(_ args: [String]) throws -> String? {
+        guard let index = args.firstIndex(of: "--target") else { return nil }
+        guard index + 1 < args.count, args[index + 1].count == 64,
+              args[index + 1].allSatisfy({ $0.isHexDigit }) else {
+            throw NSError(domain: "ReleaseFanout", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "--target 必须是发布包完整的 64 位 SHA256"])
+        }
+        return args[index + 1].lowercased()
     }
 
     public static func pending(target: String, localMachineID: String,
