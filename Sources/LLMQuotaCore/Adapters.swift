@@ -180,6 +180,11 @@ public struct CodexAdapter: UsageAdapter {
 
             if let rl = payload["rate_limits"] as? [String: Any] {
                 let planType = rl["plan_type"] as? String
+                let group = (rl["limit_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "codex"
+                let specialized = group != "codex"
+                let groupLabel = (rl["limit_name"] as? String) ?? group
+                let active = ["primary", "secondary"].filter { rl[$0] is [String: Any] }
+                    .map { group + ":" + $0 }
                 for (key, label) in [("primary", "主额度"), ("secondary", "次额度")] {
                     guard let w = rl[key] as? [String: Any],
                           let used = JSONHelp.double(w["used_percent"])
@@ -190,14 +195,20 @@ public struct CodexAdapter: UsageAdapter {
                         resets = Date(timeIntervalSince1970: epoch)
                     }
                     quotas.append(OfficialQuota(
-                        id: key,
-                        label: Self.windowLabel(minutes: minutes, fallback: label),
+                        id: group + ":" + key,
+                        label: (specialized ? groupLabel + " · " : "")
+                            + Self.windowLabel(minutes: minutes, fallback: label),
                         usedPercent: used,
                         windowMinutes: minutes,
                         resetsAt: resets,
                         planType: planType,
-                        observedAt: ts
+                        observedAt: ts,
+                        advisory: specialized,
+                        rateLimitID: group,
+                        activeWindowIDs: active
                     ))
+                    // 无 token 增量的额度回报也不能被 Collector 当作过期空文件丢弃。
+                    if last == nil || ts > last! { last = ts }
                 }
             }
 

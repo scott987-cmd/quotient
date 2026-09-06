@@ -291,7 +291,7 @@ struct AdapterCache: Codable {
     /// 缓存存的是解析结果，不是原始文件。所以解析逻辑一变，旧缓存就是错的 ——
     /// 而文件本身没动，(size, mtime) 判定会命中，于是静默复用旧结果，
     /// 新加的字段永远是空的。加 prompts 口径时就踩了这个坑。
-    static let parserVersion = 2
+    static let parserVersion = 3
 
     var adapterID: String
     var parserVersion: Int
@@ -828,12 +828,7 @@ public final class Collector {
 
     /// 同一条额度（同 id）只留观测时间最新的那条。
     private func dedupeQuotas(_ quotas: [OfficialQuota]) -> [OfficialQuota] {
-        var latest: [String: OfficialQuota] = [:]
-        for q in quotas {
-            if let cur = latest[q.id], cur.observedAt >= q.observedAt { continue }
-            latest[q.id] = q
-        }
-        return latest.values.sorted { $0.windowMinutes < $1.windowMinutes }
+        OfficialQuota.latest(quotas)
     }
 
     // MARK: Cache IO

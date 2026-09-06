@@ -1418,7 +1418,7 @@ public struct WorkScheduler: Sendable {
             // 在用它），拿它当「剩余最少的那条」，整个平台就永远够不着 ——
             // 实测评审任务因此一直派不出去，而评审根本不消耗视频额度。
             let configured = quotaStatuses.compactMap { s -> (QuotaStatus, Double)? in
-                guard !s.advisory, let f = s.usedFraction else { return nil }
+                guard !s.advisory, s.isFresh(now: now), let f = s.usedFraction else { return nil }
                 return (s, f)
             }
             if let tightest = configured.max(by: { $0.1 < $1.1 }) {

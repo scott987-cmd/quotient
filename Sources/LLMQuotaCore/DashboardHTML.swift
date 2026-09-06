@@ -445,13 +445,28 @@ public enum DashboardHTML {
       var totalReq = working.reduce(function (s, r) { return s + r.last30dRequests; }, 0);
       var totalTok = working.reduce(function (s, r) { return s + r.last30dBillableTokens; }, 0);
 
-      function worstHealth(r) {
-        var order = { exhausted: 5, atRisk: 4, wasting: 3, idle: 2, unconfigured: 1, healthy: 0 };
-        var worst = null;
-        (r.statuses || []).forEach(function (s) {
-          if (!worst || order[s.health] > order[worst]) worst = s.health;
+      function quotaIsCurrent(s) {
+        var deadline = s.expiresAt || s.resetsAt;
+        return !s.advisory && s.sourceKind !== "unknown" && s.used != null
+          && Number.isFinite(s.usedFraction)
+          && (!deadline || Date.parse(deadline) >= Date.now());
+      }
+      function executionQuota(r) {
+        var pools = r.quotaPools && r.quotaPools.length ? r.quotaPools : [r];
+        var heads = pools.map(function (pool) {
+          var usable = (pool.statuses || []).filter(quotaIsCurrent);
+          usable.sort(function (a, b) { return b.usedFraction - a.usedFraction; });
+          return usable[0] || null;
         });
-        return worst;
+        var known = heads.filter(function (s) { return s !== null; });
+        if (known.every(function (s) { return s.usedFraction >= 1; })
+            && heads.some(function (s) { return s === null; })) return null;
+        known.sort(function (a, b) { return a.usedFraction - b.usedFraction; });
+        return known[0] || null;
+      }
+      function worstHealth(r) {
+        var quota = executionQuota(r);
+        return quota ? quota.health : null;
       }
 
       // 状态判定的顺序有讲究：先看"在不在岗"，再看"岗上干得怎么样"。
@@ -601,7 +616,7 @@ public enum DashboardHTML {
         var share = totalTok > 0 ? r.last30dBillableTokens / totalTok : 0;
 
         // 有上限的额度条优先展示；一条都没配就说明"编制未定"，这是默认状态，不该显示成异常。
-        var quota = (r.statuses || []).filter(function (s) { return s.limit != null; })[0];
+        var quota = executionQuota(r);
         var meter = "";
         if (quota) {
           var f = Math.min(1, Math.max(0, quota.usedFraction || 0));
@@ -673,20 +688,20 @@ public enum DashboardHTML {
       }
 
       exhausted.forEach(function (r) {
-        var s = (r.statuses || []).filter(function (x) {
-          return x.health === "exhausted" || x.health === "atRisk";
-        })[0];
+        var s = executionQuota(r);
         var reset = s ? until(s.resetsAt, now) : null;
         findings.push({
-          cls: "f-crit", mark: "产能耗尽",
-          title: NAMES[r.platform] + " 的" + (s ? s.label : "") + "额度已经用满",
-          desc: (reset ? reset + "后才恢复。" : "") +
-                "这段时间派给它的任务只会失败，调度器必须把它从候选里摘掉，否则会白白浪费任务重试。"
+          cls: "f-crit", mark: s && s.health === "exhausted" ? "产能耗尽" : "烧速预警",
+          title: NAMES[r.platform] + " 的" + (s ? s.label : "")
+            + (s && s.health === "exhausted" ? "额度已经用满" : "用量增长较快"),
+          desc: s && s.health === "exhausted"
+            ? (reset ? reset + "后重置。" : "") + "当前主额度已用尽。"
+            : "这是按近期速度的预测；是否继续派活由实际剩余额度和预留配置决定。"
         });
       });
 
       wasting.forEach(function (r) {
-        var s = (r.statuses || []).filter(function (x) { return x.health === "wasting"; })[0];
+        var s = executionQuota(r);
         var left = s && s.projectedUsedFraction != null ? Math.max(0, 1 - s.projectedUsedFraction) : null;
         var reset = s ? until(s.resetsAt, now) : null;
         findings.push({

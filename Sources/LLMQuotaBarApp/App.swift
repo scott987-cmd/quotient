@@ -297,13 +297,13 @@ struct WasteSection: View {
     let dashboard: Dashboard
 
     private var wasting: [QuotaStatus] {
-        dashboard.reports.flatMap(\.statuses)
+        dashboard.alerts
             .filter { $0.health == .wasting }
             .sorted { ($0.projectedWaste ?? 0) > ($1.projectedWaste ?? 0) }
     }
 
     private var risky: [QuotaStatus] {
-        dashboard.reports.flatMap(\.statuses)
+        dashboard.alerts
             .filter { $0.health == .atRisk || $0.health == .exhausted }
     }
 

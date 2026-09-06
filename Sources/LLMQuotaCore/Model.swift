@@ -343,6 +343,9 @@ public struct BucketKey: Hashable, Sendable {
 /// 含 used_percent / window_minutes / resets_at）。
 public struct OfficialQuota: Codable, Sendable, Hashable {
     public var id: String
+    /// 独立额度桶身份；同一回报中的有效窗口列表用于撤销已消失的窗口。
+    public var rateLimitID: String?
+    public var activeWindowIDs: [String]?
     public var label: String
     public var usedPercent: Double
     public var windowMinutes: Int
@@ -377,6 +380,8 @@ public struct OfficialQuota: Codable, Sendable, Hashable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
+        rateLimitID = try c.decodeIfPresent(String.self, forKey: .rateLimitID)
+        activeWindowIDs = try c.decodeIfPresent([String].self, forKey: .activeWindowIDs)
         label = try c.decode(String.self, forKey: .label)
         usedPercent = try c.decode(Double.self, forKey: .usedPercent)
         windowMinutes = try c.decode(Int.self, forKey: .windowMinutes)
@@ -400,9 +405,13 @@ public struct OfficialQuota: Codable, Sendable, Hashable {
         usedCount: Double? = nil,
         totalCount: Double? = nil,
         countUnit: String? = nil,
-        advisory: Bool = false
+        advisory: Bool = false,
+        rateLimitID: String? = nil,
+        activeWindowIDs: [String]? = nil
     ) {
         self.id = id
+        self.rateLimitID = rateLimitID
+        self.activeWindowIDs = activeWindowIDs
         self.label = label
         self.usedPercent = usedPercent
         self.windowMinutes = windowMinutes
@@ -417,10 +426,35 @@ public struct OfficialQuota: Codable, Sendable, Hashable {
 
     /// 观测已经太旧就别拿来当真 —— 窗口早就滚过去了。
     public func isStale(now: Date = Date()) -> Bool {
-        guard let resetsAt else {
-            return now.timeIntervalSince(observedAt) > 6 * 3600
+        now > expiresAt
+    }
+
+    public var expiresAt: Date {
+        min(resetsAt ?? .distantFuture, observedAt.addingTimeInterval(6 * 3600))
+    }
+
+    /// 先按独立额度桶取最新的窗口集合，再对仍有效的窗口去重。
+    /// 新版 Codex 已提供明确身份后，旧节点无身份的 primary/secondary 不可覆盖它。
+    static func latest(_ quotas: [OfficialQuota]) -> [OfficialQuota] {
+        let hasCodexIdentity = quotas.contains { $0.rateLimitID == "codex" }
+        var samples: [String: OfficialQuota] = [:]
+        for q in quotas {
+            guard let group = q.rateLimitID, q.activeWindowIDs != nil else { continue }
+            if let current = samples[group], current.observedAt >= q.observedAt { continue }
+            samples[group] = q
         }
-        return now > resetsAt
+        var latest: [String: OfficialQuota] = [:]
+        for q in quotas {
+            if hasCodexIdentity, q.rateLimitID == nil,
+               q.id == "primary" || q.id == "secondary" { continue }
+            if let group = q.rateLimitID, let active = samples[group]?.activeWindowIDs,
+               !active.contains(q.id) { continue }
+            if let current = latest[q.id], current.observedAt >= q.observedAt { continue }
+            latest[q.id] = q
+        }
+        return latest.values.sorted {
+            $0.windowMinutes == $1.windowMinutes ? $0.id < $1.id : $0.windowMinutes < $1.windowMinutes
+        }
     }
 }
 

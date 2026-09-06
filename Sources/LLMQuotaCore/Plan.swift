@@ -886,12 +886,21 @@ public struct PlatformReport: Codable, Sendable, Identifiable {
     /// 装了却一直没用 —— 在所有平台里，这是最该考虑退订的那种。
     public var installedButIdle: Bool { installed && !detected }
 
-    /// 最该被提醒的那条额度。
+    /// 同一账号取最紧窗口，不同账号独立判断；特殊模型/媒体额度不代表编码主额度。
     public var headline: QuotaStatus? {
-        statuses.max { a, b in
-            if a.health.urgency != b.health.urgency { return a.health.urgency < b.health.urgency }
-            return (a.usedFraction ?? 0) < (b.usedFraction ?? 0)
+        let now = Date()
+        func tightest(_ values: [QuotaStatus]) -> QuotaStatus? {
+            values.filter { !$0.advisory && $0.isFresh(now: now)
+                && $0.sourceKind != .unknown && $0.usedFraction?.isFinite == true }.max {
+                ($0.usedFraction ?? 0) < ($1.usedFraction ?? 0)
+            }
         }
+        guard let pools = quotaPools, !pools.isEmpty else { return tightest(statuses) }
+        let heads = pools.map { tightest($0.statuses) }
+        let known = heads.compactMap { $0 }
+        if known.allSatisfy({ ($0.usedFraction ?? 0) >= 1 }),
+           heads.contains(where: { $0 == nil }) { return nil }
+        return known.min { ($0.usedFraction ?? 0) < ($1.usedFraction ?? 0) }
     }
 
     public func quotaPool(id: String) -> QuotaPoolReport? {
@@ -1204,8 +1213,9 @@ public struct Dashboard: Codable, Sendable {
         reports
             .flatMap(\.statuses)
             .filter {
-                $0.health == .wasting || $0.health == .atRisk || $0.health == .exhausted
-                    || ($0.health == .idle && $0.kind.canExpire && $0.limit != nil)
+                !$0.advisory && $0.isFresh() && $0.sourceKind != .unknown
+                    && ($0.health == .wasting || $0.health == .atRisk || $0.health == .exhausted
+                        || ($0.health == .idle && $0.kind.canExpire && $0.limit != nil))
             }
             .sorted { a, b in
                 if a.health.urgency != b.health.urgency { return a.health.urgency > b.health.urgency }

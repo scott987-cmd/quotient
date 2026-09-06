@@ -220,26 +220,33 @@ public struct QuotaEngine: Sendable {
         }
 
         // 官方额度是账号级的，不分机器 —— 同一条只留观测时间最新的那次。
-        var latestOfficial: [String: OfficialQuota] = [:]
-        for q in officials {
-            if let cur = latestOfficial[q.id], cur.observedAt >= q.observedAt { continue }
-            latestOfficial[q.id] = q
+        let liveOfficial = OfficialQuota.latest(officials).filter { !$0.isStale(now: now) }
+        var effectivePlan = plan
+        if plan.platform == .codex,
+           let tier = liveOfficial.filter({ !$0.advisory && $0.planType != nil })
+            .max(by: { $0.observedAt < $1.observedAt })?.planType {
+            let names = ["pro": "ChatGPT Pro", "plus": "ChatGPT Plus", "free": "ChatGPT Free",
+                         "team": "ChatGPT Team", "business": "ChatGPT Business",
+                         "enterprise": "ChatGPT Enterprise", "edu": "ChatGPT Edu"]
+            if let name = names[tier.lowercased()] { effectivePlan.planName = name }
         }
-        let liveOfficial = latestOfficial.values
-            .filter { !$0.isStale(now: now) }
-            .sorted { $0.windowMinutes < $1.windowMinutes }
 
         var statuses: [QuotaStatus] = []
         var coveredWindows: Set<Int> = []
 
         if plan.preferOfficialQuota {
             for q in liveOfficial {
-                statuses.append(officialStatus(q, plan: plan, now: now))
+                statuses.append(officialStatus(q, plan: effectivePlan, now: now))
                 coveredWindows.insert(q.windowMinutes)
             }
         }
 
         for limit in plan.limits {
+            // Codex 当前完整回报可能只有周窗口；旧模板的空 5 小时窗口不能冒充现行额度。
+            if plan.platform == .codex, plan.preferOfficialQuota, limit.limit == nil,
+               liveOfficial.contains(where: { $0.rateLimitID == "codex" && !$0.advisory }) {
+                continue
+            }
             // 官方已经给了同长度窗口的真实数字，就不再用本地推算的那份覆盖它。
             if coveredWindows.contains(limit.windowMinutes) { continue }
             // **窗口长度对不上，也不要再摆一条「未配置上限」。**
@@ -293,7 +300,7 @@ public struct QuotaEngine: Sendable {
 
         return PlatformReport(
             platform: plan.platform,
-            planName: plan.planName,
+            planName: effectivePlan.planName,
             monthlyCost: plan.monthlyCost,
             currency: plan.currency,
             detected: detected,
@@ -411,7 +418,7 @@ public struct QuotaEngine: Sendable {
             advisory: q.advisory,
             sourceKind: .officialFact,
             observedAt: q.observedAt,
-            expiresAt: q.resetsAt ?? q.observedAt.addingTimeInterval(6 * 3600)
+            expiresAt: q.expiresAt
         )
     }
 
