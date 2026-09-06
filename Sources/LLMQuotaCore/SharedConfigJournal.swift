@@ -93,9 +93,58 @@ public enum SharedConfigJournal {
         }
         let matching = entries().filter { $0.document == document }
         if let head = matching.max(by: entryOrder) {
-            return Snapshot(data: head.payload, revision: head.revision, entryID: head.id)
+            let payload = document == "roles"
+                ? mergeReserveFields(head: head.payload, payloads: matching.map(\.payload)) : head.payload
+            return Snapshot(data: payload, revision: head.revision, entryID: head.id)
         }
         return Snapshot(data: ICloudSafe.read(compatibilityFile), revision: 0, entryID: nil)
+    }
+
+    /// 同一手机的请求可被不同离线节点摄入。预留字段有请求顺序，
+    /// 不能由节点 ID 决定哪次手势获胜；其余岗位字段保持原有版本冲突语义。
+    private static func mergeReserveFields(head: Data, payloads: [Data]) -> Data {
+        guard var rows = (try? JSONSerialization.jsonObject(with: head)) as? [[String: Any]]
+        else { return head }
+        var latest: [String: [String: Any]] = [:]
+        for data in payloads {
+            for row in ((try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]]) ?? [] {
+                guard let platform = row["platform"] as? String,
+                    let stamp = row["reserveUpdatedAt"] as? Double, stamp.isFinite else { continue }
+                let old = latest[platform]?["reserveUpdatedAt"] as? Double ?? -Double.greatestFiniteMagnitude
+                if stamp > old { latest[platform] = row }
+                else if stamp == old, var prior = latest[platform],
+                    (prior["reserveConflict"] as? Bool == true
+                        || row["reserveConflict"] as? Bool == true
+                        || prior["reserveIntentID"] as? String != row["reserveIntentID"] as? String
+                        || prior["reserveFraction"] as? Double != row["reserveFraction"] as? Double) {
+                    // 离线时两端可能各自已接受；合流时不能按 UUID 冒称用户选了谁。
+                    // 明确冲突，暂取较高预留保护额度，等一次有序的新请求解决。
+                    prior["reserveFraction"] = max(prior["reserveFraction"] as? Double ?? 0,
+                                                   row["reserveFraction"] as? Double ?? 0)
+                    prior["reserveIsDefault"] = false
+                    prior["reserveIntentID"] = nil
+                    prior["reserveConflict"] = true
+                    latest[platform] = prior
+                }
+            }
+        }
+        for (platform, reserve) in latest {
+            let index: Int
+            if let existing = rows.firstIndex(where: { $0["platform"] as? String == platform }) {
+                index = existing
+            } else {
+                // 当前赢家省略的平台表示继承岗位默认，只恢复明确设置的预留字段。
+                guard let kind = Platform(rawValue: platform),
+                    let role = AgentRoles.defaults().first(where: { $0.platform == kind }),
+                    let data = try? SnapshotCoding.encoder().encode(role),
+                    let row = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+                rows.append(row); index = rows.count - 1
+            }
+            for key in ["reserveFraction", "reserveIsDefault", "reserveIntentID", "reserveUpdatedAt", "reserveConflict"] {
+                rows[index][key] = reserve[key]
+            }
+        }
+        return (try? JSONSerialization.data(withJSONObject: rows, options: [.sortedKeys])) ?? head
     }
 
     @discardableResult

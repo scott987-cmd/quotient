@@ -4985,6 +4985,10 @@ func cmdRunner(_ args: [String]) throws {
                 } else {
                     print(Ansi.red("--reserve 要一个 0–100 的百分数，或者 default")); exit(2)
                 }
+                // 显式重设（含同值确认）才解除冲突，普通岗位编辑不能代替用户确认。
+                r.reserveUpdatedAt = max(Date().timeIntervalSince1970, (r.reserveUpdatedAt ?? 0) + 0.001)
+                r.reserveIntentID = nil
+                r.reserveConflict = nil
             }
             // 指挥：和静音一样按机器。
             if rest.contains("--dispatcher-here") {
@@ -7959,6 +7963,9 @@ func cmdCollaboration(_ args: [String]) throws {
         do {
             let answer = try AgentConsultation.respond(questionID: questionID)
             print(Ansi.green("咨询已回答：") + answer.summary)
+        } catch let deferred as AgentConsultation.Deferred {
+            try ConsultationJobLauncher.markDeferred(questionID: questionID)
+            print(Ansi.yellow("咨询等待：") + deferred.reason + "；额度恢复后继续原问题")
         } catch {
             // 失败本身也是持久化事实，Coordinator 看见后会停止自动重复消费，
             // 问题仍保持待处理，供人修复配置后显式重试。

@@ -505,6 +505,48 @@ final class CollaborationTests: XCTestCase {
         XCTAssertEqual(CollaborationStore.all().count, 3, "重试复用答案，不能再耗一次 token")
     }
 
+    func testConsultationWaitsAtReserveAndResumesOriginalQuestion() throws {
+        struct Stub: AgentRunner {
+            let platform: Platform = .codex
+            let runnerID = "codex.code"
+            let binaryName = "echo"
+            let binaryPath: String? = "/bin/echo"
+            func command(prompt: String, cwd: String)
+                -> (launchPath: String, args: [String], env: [String: String]) {
+                ("/bin/echo", [prompt], [:])
+            }
+        }
+        let now = Date()
+        try Paths.ensureDirectories()
+        var roles = AgentRoles.defaults()
+        let i = try XCTUnwrap(roles.firstIndex { $0.platform == .codex })
+        roles[i].reserveFraction = 0.25
+        try AgentRoles.save(roles)
+        func writeQuota(_ used: Double) throws {
+            let snapshot = MachineSnapshot(machineID: Paths.machineID(), machineName: "Fixture",
+                generatedAt: Date(), retentionStart: now.addingTimeInterval(-86400),
+                platforms: [PlatformSnapshot(platform: .codex, detected: true, installed: true,
+                    officialQuotas: [OfficialQuota(id: "weekly", label: "每周", usedPercent: used,
+                        windowMinutes: 10080, resetsAt: now.addingTimeInterval(3600), observedAt: now)])])
+            try SnapshotCoding.encoder().encode(snapshot).write(to: Paths.localSnapshotsDir
+                .appendingPathComponent(SnapshotStore.fileName(machineID: Paths.machineID())))
+        }
+        try writeQuota(80)
+        var runs = 0
+        AgentConsultation.responseOverride = { _ in runs += 1; return "实际答复" }
+        let q = try CollaborationStore.publish(CollaborationEvent(id: "quota-wait-question",
+            project: "/tmp/project-a", taskID: "task-a", senderRunnerID: "kimi.code",
+            recipientRunnerID: "codex.code", recipientMachineID: Paths.machineID(),
+            kind: .question, summary: "等待额度恢复后复核同一个问题"))
+        XCTAssertThrowsError(try AgentConsultation.respond(questionID: q.id, runners: [Stub()]))
+        XCTAssertEqual(runs, 0, "命中预留线时不能启动模型调用")
+        XCTAssertEqual(CollaborationStore.all().map(\.kind), [.question], "等待不能冒充认领/答复")
+        try writeQuota(20)
+        let answer = try AgentConsultation.respond(questionID: q.id, runners: [Stub()])
+        XCTAssertEqual(answer.replyTo, q.id)
+        XCTAssertEqual(runs, 1)
+    }
+
     func testKimiCanConsultCodexArchitectThroughReadOnlyRunner() throws {
         struct CodexStub: AgentRunner {
             let platform: Platform = .codex

@@ -21,9 +21,12 @@ import Foundation
 public struct ConfigIntent: Codable, Sendable {
 
     /// 意图 id。手机生成，Mac 只拿来做日志和回执，不做去重 ——
-    /// 去重靠「处理完就移走文件」，比在内存里记 id 可靠。
+    /// 归档移走已处理文件；预留配置另持久保存最近请求 ID，防止重复或迟到覆盖。
     public var id: String
     public var createdAt: Date
+    /// 新手机保留亚秒且按提交顺序单调递增；旧客户端仍读取 createdAt。
+    public var requestedAt: Double?
+    var orderingTime: Double { requestedAt ?? createdAt.timeIntervalSince1970 }
 
     /// 去重用的键：同一轮里同一个目标只让最后一条生效。
     ///
@@ -75,6 +78,7 @@ public struct ConfigIntent: Codable, Sendable {
 
     public init(id: String = UUID().uuidString, createdAt: Date = Date(),
                 source: String = "phone", kind: String = ConfigIntent.kindReserve,
+                requestedAt: Double? = nil,
                 platform: String, fraction: Double? = nil,
                 planID: String? = nil, targetMachineID: String? = nil,
                 title: String? = nil, maxRisk: String? = nil,
@@ -82,6 +86,7 @@ public struct ConfigIntent: Codable, Sendable {
                 note: String? = nil) {
         self.id = id
         self.createdAt = createdAt
+        self.requestedAt = requestedAt
         self.source = source
         self.kind = kind
         self.platform = platform
@@ -100,13 +105,9 @@ public struct ConfigIntent: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
-        // **不能让日期格式把整条意图带走。**
-        //
-        // `decodeIfPresent(Date.self)` 在格式不符时抛 typeMismatch，
-        // 而调用方是 `try?` —— 于是一条完全合法的意图会被判成「不是 JSON」
-        // 归档掉，用户那边只看到设置没生效、文件不见了。
-        // 解不出来就退回「现在」：顺序可能不准，但意图不会丢。
-        createdAt = (try? c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
+        // 保留坏日期意图以生成明确拒绝回执；不得伪装成当前时间覆盖新配置。
+        createdAt = (try? c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? .distantPast
+        requestedAt = try c.decodeIfPresent(Double.self, forKey: .requestedAt)
         source = try c.decodeIfPresent(String.self, forKey: .source) ?? "unknown"
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? ""
         platform = try c.decodeIfPresent(String.self, forKey: .platform) ?? ""
@@ -210,9 +211,9 @@ public enum ConfigIntentIngest {
 
         // 时间相同才拿文件名当兜底 —— 只是为了让顺序确定，不是判据。
         pending.sort {
-            $0.intent.createdAt == $1.intent.createdAt
+            $0.intent.orderingTime == $1.intent.orderingTime
                 ? $0.url.lastPathComponent < $1.url.lastPathComponent
-                : $0.intent.createdAt < $1.intent.createdAt
+                : $0.intent.orderingTime < $1.intent.orderingTime
         }
 
         // 同一轮里同一个「作用目标」只让最后一条生效。
@@ -223,8 +224,18 @@ public enum ConfigIntentIngest {
         var lastIndex: [String: Int] = [:]
         for (i, p) in pending.enumerated() { lastIndex[p.intent.target] = i }
 
+        let ambiguous = Set(Dictionary(grouping: pending.filter {
+            $0.intent.kind == ConfigIntent.kindReserve
+        }, by: { $0.intent.target + "|" + String($0.intent.orderingTime) }).values
+            .filter { Set($0.map { $0.intent.id }).count > 1 }
+            .flatMap { $0.map { $0.intent.id } })
         for (i, p) in pending.enumerated() {
             let (url, intent) = (p.url, p.intent)
+            if ambiguous.contains(intent.id) {
+                out.append(park(url, to: doneDir, id: intent.id, verdict: "rejected",
+                                note: "多次修改的顺序无法区分，未改配置；请重新提交一次"))
+                continue
+            }
             if lastIndex[intent.target] != i {
                 out.append(park(url, to: doneDir, id: intent.id, verdict: "superseded",
                                 note: "同一轮里有更晚的一条改了同一个目标，这条不生效"))
@@ -333,8 +344,21 @@ public enum ConfigIntentIngest {
 
         var all = AgentRoles.all()
         var role = all[p] ?? AgentRole(platform: p, title: "未分配", maxRisk: .safe)
+        guard intent.orderingTime.isFinite, intent.createdAt != .distantPast else {
+            return .rejected("缺少有效的请求时间，不能判断修改顺序")
+        }
+        if role.reserveIntentID == intent.id {
+            guard role.reserveFraction == f else { return .rejected("同一请求 ID 携带不同配置") }
+            return .applied("此请求已应用，未重复修改配置")
+        }
+        if let latest = role.reserveUpdatedAt, intent.orderingTime <= latest {
+            return .rejected("此修改早于已生效请求或顺序冲突，未覆盖当前配置")
+        }
         let before = role.reserveFraction
         role.reserveFraction = f
+        role.reserveUpdatedAt = intent.orderingTime
+        role.reserveIntentID = intent.id
+        role.reserveConflict = nil
         all[p] = role
         do {
             // **必须走 save**：它是 diff-based 的，只写和出厂默认不一样的那些，

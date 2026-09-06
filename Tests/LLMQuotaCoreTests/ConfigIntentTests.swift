@@ -154,7 +154,14 @@ final class ConfigIntentTests: XCTestCase {
     private func drop(_ json: String, name: String = UUID().uuidString) -> URL {
         ConfigIntentIngest.ensureDirectories()
         let url = ConfigIntentIngest.dir!.appendingPathComponent("\(name).json")
-        try? Data(json.utf8).write(to: url)
+        var object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any]
+        if object?["createdAt"] == nil {
+            let now = Date()
+            object?["createdAt"] = ISO8601DateFormatter().string(from: now)
+            object?["requestedAt"] = now.timeIntervalSince1970
+        }
+        let data = object.flatMap { try? JSONSerialization.data(withJSONObject: $0) } ?? Data(json.utf8)
+        try? data.write(to: url)
         return url
     }
 
@@ -231,15 +238,16 @@ final class ConfigIntentTests: XCTestCase {
     /// 原来 `decodeIfPresent(Date.self)` 遇到格式不符会抛 typeMismatch，
     /// 而调用方是 `try?` —— 一条完全合法的意图会被归档成「不是 JSON」，
     /// 用户那边只看到设置没生效、文件不见了。
-    func testWeirdDateStillApplies() {
+    func testWeirdDateIsExplicitlyRejectedWithoutChangingReserve() {
+        let before = AgentRoles.role(for: .minimax).reserveFraction
         drop("""
         {"id":"x","createdAt":"昨天下午","source":"phone",
          "kind":"reserve","platform":"minimax","fraction":0.3}
         """)
         let out = ConfigIntentIngest.run()
-        XCTAssertTrue(out.first?.accepted ?? false,
-                      "日期解不出来只该影响排序，不该丢掉意图：\(out.first?.note ?? "")")
-        XCTAssertEqual(AgentRoles.all()[.minimax]?.reserveFraction, 0.3)
+        XCTAssertFalse(out.first?.accepted ?? true)
+        XCTAssertTrue(out.first?.note.contains("请求时间") == true)
+        XCTAssertEqual(AgentRoles.role(for: .minimax).reserveFraction, before)
     }
 
     /// 合法意图要真的改到配置上 —— 不是「收到了」，是**调度下一次判定会用它**。

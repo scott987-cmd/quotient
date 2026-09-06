@@ -105,7 +105,9 @@ public final class ConsultationJobLauncher {
     /// 猜测接收方，避免两台机器同时回答并重复扣额度。
     @discardableResult
     public func dispatchPending(events: [CollaborationEvent], executable: String,
-                                machineID: String = Paths.machineID()) -> Int {
+                                machineID: String = Paths.machineID(),
+                                runners: [AgentRunner] = RunnerRegistry.all,
+                                dashboard: Dashboard? = nil) -> Int {
         let answered = Set(events.compactMap { event in
             event.kind == .answer ? event.replyTo : nil
         })
@@ -113,9 +115,14 @@ public final class ConsultationJobLauncher {
             event.id.hasPrefix("consultation-failure:") ? event.replyTo : nil
         })
         var launched = 0
+        let quotaDashboard = dashboard ?? LLMQuota.dashboard()
         for question in events where question.kind == .question
             && question.recipientMachineID == machineID
             && !answered.contains(question.id) && !failed.contains(question.id) {
+            guard let runner = runners.first(where: {
+                $0.runnerID == question.recipientRunnerID && $0.isAvailable
+            }), AgentConsultation.blockedReason(for: runner, dashboard: quotaDashboard) == nil
+            else { continue }
             let safe = String(question.id.map {
                 $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "-"
             })
@@ -127,6 +134,17 @@ public final class ConsultationJobLauncher {
             if (try? launch(spec)) == true { launched += 1 }
         }
         return launched
+    }
+
+    /// 派出后到实际启动之间额度可能触线。只清理本次启动记录，
+    /// 保留问题，下一轮恢复准入后仍回答同一个 ID。
+    public static func markDeferred(questionID: String, machineID: String = Paths.machineID()) throws {
+        let spec = ConsultationJobSpec(questionID: questionID, machineID: machineID,
+                                       executable: "", logPath: "")
+        let record = jobsDirectory.appendingPathComponent(spec.label + ".json")
+        guard FileManager.default.fileExists(atPath: record.path) else { return }
+        guard ICloudSafe.write(Data(), to: jobsDirectory.appendingPathComponent(spec.label + ".deferred"))
+        else { throw Self.error(2, "咨询延后标记写盘失败") }
     }
 
     @discardableResult
@@ -143,11 +161,13 @@ public final class ConsultationJobLauncher {
             guard let data = try? Data(contentsOf: file),
                   let record = try? JSONDecoder().decode(Record.self, from: data) else { continue }
             let stale = now.timeIntervalSince(record.createdAt) > 15 * 60
-            guard terminal.contains(record.questionID) || stale else { continue }
+            let deferredFile = Self.jobsDirectory.appendingPathComponent(record.label + ".deferred")
+            let deferred = FileManager.default.fileExists(atPath: deferredFile.path)
+            guard terminal.contains(record.questionID) || stale || deferred else { continue }
             let target = "gui/\(getuid())/\(record.label)"
             let loaded = launchctl(["print", target]) == 0
             if loaded && launchctl(["bootout", target]) != 0 { continue }
-            if stale, !terminal.contains(record.questionID),
+            if stale, !deferred, !terminal.contains(record.questionID),
                let question = events.first(where: {
                    $0.id == record.questionID && $0.kind == .question
                }) {
@@ -160,6 +180,7 @@ public final class ConsultationJobLauncher {
                     summary: "咨询独立进程 15 分钟内未形成回答，已停止自动重试",
                     replyTo: record.questionID))
             }
+            try? FileManager.default.removeItem(at: deferredFile)
             try? FileManager.default.removeItem(atPath: record.plistPath)
             try? FileManager.default.removeItem(at: file)
             removed += 1

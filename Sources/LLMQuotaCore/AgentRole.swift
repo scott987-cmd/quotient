@@ -77,6 +77,10 @@ public struct AgentRole: Codable, Sendable {
     /// **不能给它一个非 nil 的默认值** —— 那等于把所有平台一次性钉死在某个数上，
     /// 而全局默认将来调整时它们不会跟着动。
     public var reserveFraction: Double?
+    /// 与生效配置一起持久化，迟到意图不能回滚新值。
+    public var reserveUpdatedAt: Double?
+    public var reserveIntentID: String?
+    public var reserveConflict: Bool?
 
     /// 上面那个数是**沿用的全局默认**，还是给这个平台单独设过的。
     ///
@@ -146,6 +150,8 @@ public struct AgentRole: Codable, Sendable {
             && Set(mutedOn) == Set(o.mutedOn) && muteReason == o.muteReason
             && Set(dispatcherOn) == Set(o.dispatcherOn)
             && reserveFraction == o.reserveFraction
+            && reserveUpdatedAt == o.reserveUpdatedAt && reserveIntentID == o.reserveIntentID
+            && reserveConflict == o.reserveConflict
     }
 
     public init(from decoder: Decoder) throws {
@@ -173,6 +179,9 @@ public struct AgentRole: Codable, Sendable {
         // 缺键时按 reserveFraction 推：那是这一位唯一的真相来源。
         // 而越界的值上面已经被当成没配了，推出来自然是「用默认」——
         // 正是想要的：手机上显示「默认 25%」，而不是显示用户写的那个 1.5。
+        reserveUpdatedAt = try c.decodeIfPresent(Double.self, forKey: .reserveUpdatedAt)
+        reserveIntentID = try c.decodeIfPresent(String.self, forKey: .reserveIntentID)
+        reserveConflict = try c.decodeIfPresent(Bool.self, forKey: .reserveConflict)
         reserveIsDefault = try c.decodeIfPresent(Bool.self, forKey: .reserveIsDefault)
             ?? (reserveFraction == nil)
 
@@ -378,7 +387,21 @@ public enum AgentRoles {
         try Paths.ensureDirectories()
         let base = Dictionary(defaults().map { ($0.platform, $0) },
                               uniquingKeysWith: { a, _ in a })
-        let changed = roles.filter { r in
+        let current = all()
+        let updatedRoles = roles.map { original -> AgentRole in
+            var role = original
+            if let old = current[role.platform],
+               role.reserveFraction != old.reserveFraction,
+               role.reserveIntentID == old.reserveIntentID,
+               role.reserveUpdatedAt == old.reserveUpdatedAt {
+                // CLI 直接调整也必须使此前手机请求失效；岗位字段修改不动此版本。
+                role.reserveUpdatedAt = max(Date().timeIntervalSince1970, (old.reserveUpdatedAt ?? 0) + 0.001)
+                role.reserveIntentID = nil
+                role.reserveConflict = nil
+            }
+            return role
+        }
+        let changed = updatedRoles.filter { r in
             guard let d = base[r.platform] else { return true }
             return !r.sameAs(d)
         }.map { r -> AgentRole in

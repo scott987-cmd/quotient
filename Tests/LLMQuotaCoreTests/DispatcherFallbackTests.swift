@@ -84,6 +84,55 @@ final class DispatcherFallbackTests: XCTestCase {
         XCTAssertTrue(decision.candidates.first?.reason.contains("指挥兼任") == true)
     }
 
+    private func quotaDashboard(used: Double) -> Dashboard {
+        let now = Date()
+        var d = dash([.claude])
+        let plan = PlatformPlan(platform: .claude, planName: "Claude")
+        d.reports[0].statuses = [QuotaEngine(config: PlansConfig(plans: [plan])).officialStatus(
+            OfficialQuota(id: "weekly", label: "每周", usedPercent: used * 100,
+                          windowMinutes: 10080, resetsAt: now.addingTimeInterval(3600),
+                          observedAt: now), plan: plan, now: now)]
+        return d
+    }
+
+    func testDispatcherFallbackCannotSpendReservedQuota() throws {
+        try makeClaudeDispatcher()
+        let decision = WorkScheduler().decide(dashboard: quotaDashboard(used: 0.9),
+            runners: [StubRunner(platform: .claude)], task: sensitiveTask())
+        XCTAssertTrue(decision.candidates.isEmpty, "兜底也是派单，必须遵守用户预留线")
+        XCTAssertTrue(decision.rejected.contains { $0.reason.contains("预留") })
+    }
+
+    func testDispatcherFallbackCannotUseExhaustedQuota() throws {
+        try makeClaudeDispatcher()
+        let decision = WorkScheduler().decide(dashboard: quotaDashboard(used: 1),
+            runners: [StubRunner(platform: .claude)], task: sensitiveTask())
+        XCTAssertTrue(decision.candidates.isEmpty)
+    }
+
+    func testDispatcherFallbackCannotRunWhenMuted() throws {
+        try makeClaudeDispatcher()
+        var roles = Array(AgentRoles.all().values)
+        let i = try XCTUnwrap(roles.firstIndex { $0.platform == .claude })
+        roles[i].mutedOn = [Paths.machineName()]
+        try AgentRoles.save(roles)
+        let decision = WorkScheduler().decide(dashboard: quotaDashboard(used: 0.1),
+            runners: [StubRunner(platform: .claude)], task: sensitiveTask())
+        XCTAssertTrue(decision.candidates.isEmpty)
+    }
+
+    func testReserveBoundaryRejectsThirtyPercentExactly() throws {
+        try makeClaudeDispatcher()
+        var roles = Array(AgentRoles.all().values)
+        let i = try XCTUnwrap(roles.firstIndex { $0.platform == .claude })
+        roles[i].dispatcherOn = []
+        roles[i].reserveFraction = 0.3
+        try AgentRoles.save(roles)
+        let decision = WorkScheduler().decide(dashboard: quotaDashboard(used: 0.7),
+            runners: [StubRunner(platform: .claude)], task: sensitiveTask())
+        XCTAssertTrue(decision.candidates.isEmpty, "浮点误差不能在剩余刚好30%时越过30%预留线")
+    }
+
     /// 普通任务不触发兜底 —— 指挥照旧不竞选，活归别人。
     func testNormalTaskDoesNotWakeTheDispatcher() throws {
         try makeClaudeDispatcher()

@@ -171,7 +171,7 @@ public enum AgentRegistry {
         String(value.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_" })
     }
 
-    private static func quotaFacts(for platform: Platform, dashboard: Dashboard,
+    static func quotaFacts(for platform: Platform, dashboard: Dashboard,
                                    now: Date) -> (available: Double?, blockedReason: String?) {
         guard let report = dashboard.reports.first(where: { $0.platform == platform }) else {
             return (nil, nil)
@@ -192,7 +192,7 @@ public enum AgentRegistry {
         }
         let reserve = AgentRoles.reserve(
             for: platform, default: WorkScheduler.defaultHumanReserve)
-        let available = max(0, 1 - tightest.1 - reserve)
+        let available = max(0, (1 - reserve) - tightest.1)
         if available <= 0 {
             return (0, "\(tightest.0.label)已触及调度预留线")
         }

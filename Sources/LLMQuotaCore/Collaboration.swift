@@ -644,6 +644,26 @@ public enum AgentConsultation {
                 && (question.recipientMachineID == nil || $0.senderMachineID == question.recipientMachineID)
         }
     }
+    public struct Deferred: Error, LocalizedError {
+        public let reason: String
+        public var errorDescription: String? { reason }
+    }
+
+    /// 咨询也消耗同一订阅，启动前按接收机器的本池额度检查。
+    /// 指挥身份只允许接咨询，不豁免预留、静音或冷却。
+    static func blockedReason(for runner: AgentRunner, dashboard: Dashboard,
+                              now: Date = Date()) -> String? {
+        if AgentRoles.isMuted(runner.platform) { return "目标平台在本机已静音" }
+        let pool = dashboard.reports.first { $0.platform == runner.platform }?.localQuotaPoolID
+        if let cooldown = CooldownLedger.active(platform: runner.platform,
+            runnerID: runner.runnerID, capability: PlatformHealth.capability(for: runner).rawValue,
+            quotaPoolID: pool, now: now) {
+            return "\(cooldown.cause.displayName)，等待额度恢复后继续原问题"
+        }
+        return AgentRegistry.quotaFacts(for: runner.platform, dashboard: dashboard,
+                                       now: now).blockedReason
+    }
+
     public struct Request: Sendable {
         public var id: String
         public var project: String
@@ -693,7 +713,15 @@ public enum AgentConsultation {
         var byIdentity = Dictionary(uniqueKeysWithValues: AgentRegistry.all().map {
             ($0.machineID + "|" + $0.runnerID, $0)
         })
-        for item in local { byIdentity[item.machineID + "|" + item.runnerID] = item }
+        for var item in local {
+            let key = item.machineID + "|" + item.runnerID
+            if let published = byIdentity[key] {
+                item.quotaPoolID = published.quotaPoolID
+                item.quotaAvailableFraction = published.quotaAvailableFraction
+                item.quotaBlockedReason = published.quotaBlockedReason
+            }
+            byIdentity[key] = item
+        }
         return byIdentity.values.filter { $0.canConsult && !$0.platform.isRetired }.sorted {
             if $0.runnerID != $1.runnerID { return $0.runnerID < $1.runnerID }
             return $0.machineID < $1.machineID
@@ -787,6 +815,9 @@ public enum AgentConsultation {
                 && (responseOverride != nil || supportsReadOnlyConsultation($0))
         }) else {
             throw error(5, "本机没有可回答问题的 Agent：" + (question.recipientRunnerID ?? "unknown"))
+        }
+        if let reason = blockedReason(for: target, dashboard: LLMQuota.dashboard()) {
+            throw Deferred(reason: reason)
         }
         let request = Request(
             id: question.id, project: question.project, taskID: question.taskID,

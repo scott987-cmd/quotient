@@ -139,4 +139,32 @@ final class QuotaAccuracyTests: XCTestCase {
         XCTAssertTrue(d.alerts.isEmpty)
     }
 
+    func testAuxiliaryQuotaDoesNotFreezeReadOnlyHelperSelection() {
+        let time = Date()
+        let plan = PlatformPlan(platform: .qwen, planName: "Qwen")
+        let engine = QuotaEngine(config: PlansConfig(plans: [plan]))
+        var r = report([], platform: .qwen)
+        r.quotaPools = nil
+        r.statuses = [engine.officialStatus(OfficialQuota(id: "code", label: "代码", usedPercent: 20,
+            windowMinutes: 300, resetsAt: time.addingTimeInterval(3600), observedAt: time), plan: plan, now: time),
+            engine.officialStatus(OfficialQuota(id: "video", label: "视频", usedPercent: 100,
+            windowMinutes: 300, resetsAt: time.addingTimeInterval(3600), observedAt: time,
+            advisory: true), plan: plan, now: time)]
+        let available = LowValueDelegationPolicy.currentHeadroom(
+            dashboard: Dashboard(generatedAt: time, machines: [], reports: [r]), now: time)
+        XCTAssertEqual(available[.qwen], 0.8, "只读编码咨询不能被辅助媒体额度冻结")
+    }
+
+    func testLegacyHelperFallbackCannotSpendPlatformReserve() throws {
+        var roles = AgentRoles.defaults()
+        let i = try XCTUnwrap(roles.firstIndex { $0.platform == .qwen })
+        roles[i].reserveFraction = 0.3
+        try AgentRoles.save(roles)
+        var candidate = AgentRegistration(machineID: "fixture", machineName: "fixture",
+            runnerID: "qwen.test", platform: .qwen, canConsult: true)
+        candidate.schemaVersion = 1
+        XCTAssertNil(LowValueDelegationPolicy.selectHelper(senderRunnerID: "kimi.code",
+            candidates: [candidate], headroom: [.qwen: 0.2]), "旧注册数据回退同样必须扣除预留")
+    }
+
 }

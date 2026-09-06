@@ -1200,6 +1200,11 @@ public struct WorkScheduler: Sendable {
         var rejected: [Rejection] = []
         var dispatcherPlatform: Platform?
         var candidates: [(Pick, Double)] = []
+        var dispatcherCandidates: [(Pick, Double)] = []
+        func appendCandidate(_ candidate: (Pick, Double), dispatcher: Bool) {
+            if dispatcher { dispatcherCandidates.append(candidate) }
+            else { candidates.append(candidate) }
+        }
 
         let isMediaTask = TaskKind.isMedia(task?.prompt ?? "")
         let isReviewTask = TaskKind.isReview(task?.prompt ?? "")
@@ -1333,9 +1338,11 @@ public struct WorkScheduler: Sendable {
             // 派活给它等于饿死那个决定「该干什么」的环节。
             // **指挥不进候选枚举。** 它不是「接不了」，它是发活的那个。
             // 记在 Decision.dispatcher 上，诊断里单独一行。
-            if AgentRoles.isDispatcher(p), !isControlReviewTask {
+            let dispatcherFallback = AgentRoles.isDispatcher(p) && !isControlReviewTask
+            if dispatcherFallback {
                 dispatcherPlatform = p
-                continue
+                // 兼任只改变候选优先级，仍须通过下面全部准入检查。
+                guard task?.profile?.risk == .sensitive else { continue }
             }
 
             if AgentRoles.isMuted(p) {
@@ -1427,15 +1434,15 @@ public struct WorkScheduler: Sendable {
                 // MiniMax 那份额度你还要拿去生图，吃光了自己没得用；
                 // 而 Qwen 的日额度不用即作废，留白反而是浪费。
                 let reserve = AgentRoles.reserve(for: p, default: humanReserve)
-                guard headroom > reserve else {
+                guard tightest.1 < 1 - reserve else {
                     rejected.append(Rejection(
                         platform: p,
                         reason: "\(tightest.0.label)已用 \(Format.percent(tightest.1))"
-                            + "，剩余不足为它预留的 \(Format.percent(reserve))"))
+                            + "，已达到为它预留的 \(Format.percent(reserve))"))
                     continue
                 }
                 let pin = pinBonus(platform: p, task: task)
-                candidates.append((Pick(
+                appendCandidate((Pick(
                     platform: p, runner: runner,
                     reason: (pin > 0 ? "点名优先；" : "")
                         + "\(tightest.0.label)已用 \(Format.percent(tightest.1))"
@@ -1443,18 +1450,18 @@ public struct WorkScheduler: Sendable {
                 ), headroom + pin
                     + overkillPenalty(platform: p, task: task, history: history)
                     + rolePreferenceBonus(platform: p, task: task)
-                    + stickinessBonus(platform: p, task: task, history: history)))
+                    + stickinessBonus(platform: p, task: task, history: history)), dispatcher: dispatcherFallback)
             } else {
                 // 一条上限都没配。不能因此排除它 —— 那是默认状态，
                 // 排除的话调度器一个平台都挑不出来。给个中性分，排在有数据的后面。
                 let pin = pinBonus(platform: p, task: task)
-                candidates.append((Pick(
+                appendCandidate((Pick(
                     platform: p, runner: runner,
                     reason: (pin > 0 ? "点名优先；" : "")
                         + "未配额度上限，按中性优先级参与调度"
                 ), 0.5 + pin
                     + overkillPenalty(platform: p, task: task, history: history)
-                    + stickinessBonus(platform: p, task: task, history: history)))
+                    + stickinessBonus(platform: p, task: task, history: history)), dispatcher: dispatcherFallback)
             }
         }
 
@@ -1473,14 +1480,12 @@ public struct WorkScheduler: Sendable {
         // 留在控制面，不能因为普通开发暂时不可用就被降级成实现者。
         // 兜底同样过角色的风险闸：指挥自己的 maxRisk 也够不着时，
         // 该转人工就转人工，不能因为「总得有人干」硬塞。
-        if ordered.isEmpty,
-           task?.profile?.risk == .sensitive,
-           let dp = dispatcherPlatform,
-           dp != AgentRoles.architectPlatform(),
-           AgentRoles.accepts(.sensitive, platform: dp),
-           let dr = runners.first(where: { $0.platform == dp && $0.canEdit && !$0.mediaOnly }) {
-            ordered.append(Pick(platform: dp, runner: dr,
-                reason: "高危无人可接，具备权限的非架构师指挥兼任"))
+        if ordered.isEmpty {
+            ordered = dispatcherCandidates.sorted { $0.1 > $1.1 }.map {
+                var pick = $0.0
+                pick.reason = "高危无人可接，具备权限的非架构师指挥兼任；" + pick.reason
+                return pick
+            }
         }
         return Decision(candidates: ordered, rejected: rejected,
                         dispatcher: dispatcherPlatform)

@@ -117,7 +117,8 @@ public enum LowValueDelegationPolicy {
                 continue
             }
             let known = report.localQuotaStatuses.compactMap { status -> Double? in
-                guard status.isFresh(now: now), let used = status.usedFraction else { return nil }
+                guard !status.advisory, status.sourceKind != .unknown, status.isFresh(now: now),
+                      let used = status.usedFraction, used.isFinite else { return nil }
                 return max(0, min(1, 1 - used))
             }
             if let tightest = known.min() { result[report.platform] = tightest }
@@ -130,7 +131,7 @@ public enum LowValueDelegationPolicy {
         headroom: [Platform: Double]
     ) -> AgentRegistration? {
         let eligible = candidates.filter {
-            $0.canConsult && $0.runnerID != senderRunnerID
+            $0.canConsult && !$0.isMuted && !$0.isDispatcher && $0.runnerID != senderRunnerID
                 && $0.platform != AgentRoles.architectPlatform()
                 && !AgentRoles.isMuted($0.platform, machineID: $0.machineID,
                                        machineName: $0.machineName)
@@ -158,8 +159,13 @@ public enum LowValueDelegationPolicy {
             return max(0, min(1, available))
         }
         // schema v1 注册记录没有额度池字段；只为这些旧记录保留平台级回退。
-        return fallback[candidate.platform]
-            ?? (1 - AgentRoles.reserve(for: candidate.platform, default: 0.25))
+        let reserve = AgentRoles.reserve(for: candidate.platform,
+                                         default: WorkScheduler.defaultHumanReserve)
+        if candidate.schemaVersion < 2, let remaining = fallback[candidate.platform] {
+            return max(0, remaining - reserve)
+        }
+        // 新注册明确没有本池比例时，不借用另一份订阅的余额。
+        return 1 - reserve
     }
 
     private static func normalizedProject(_ path: String) -> String {
