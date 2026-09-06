@@ -219,9 +219,13 @@ public enum StageFindingLoop {
             guard matches.count == 1, let source = matches.first,
                   source.landedAt == nil, source.discardedAt == nil,
                   let owner = source.ownerRunnerID, let ownerPlatform = source.ownerPlatform,
-                  seen.insert(source.id).inserted else { continue }
+                  !seen.contains(source.id) else { continue }
             guard let id = nextQuestionID("stage-triage:" + observation.id, events: events) else { continue }
             if findings(for: source, events: events).contains(where: { !$0.resolved }) { continue }
+            // 原 Owner 已经提交新版本后，迟到的旧画面不能再触发当前整改。
+            let currentHead = GitWorkspace.git(["rev-parse", "--verify", branch + "^{commit}"], in: source.repo, timeout: 5)
+            guard currentHead.exitCode == 0,
+                  currentHead.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == head else { continue }
             guard let report = report(observation, source: source) else { continue }
             let items = milestones.filter { $0.taskID == source.id && $0.mergeSHA == head && $0.branch == branch }
             let boundDigest = field("证据摘要", in: observation.prompt)
@@ -231,6 +235,7 @@ public enum StageFindingLoop {
             if observation.prompt.components(separatedBy: .newlines).contains(where: { $0.hasPrefix("证据摘要：") }) {
                 guard field("证据摘要", in: observation.prompt) == proof.digests.sorted().joined(separator: ",") else { continue }
             }
+            seen.insert(source.id)
             let c = Context(observationID: observation.id, sourceTaskID: source.id,
                 sourceOwner: owner, sourceOwnerMachineID: Paths.machineID(), sourceOwnerPlatform: ownerPlatform.rawValue,
                 sourceBranch: branch, sourceHead: head, reportRef: report.ref,
@@ -244,11 +249,13 @@ public enum StageFindingLoop {
                   let a = assessment(q, events: events) else { continue }
             let id = "stage-finding:" + q.id
             guard !events.contains(where: { $0.id == id }) else { continue }
+            let current = GitWorkspace.git(["rev-parse", "--verify", c.sourceBranch + "^{commit}"], in: q.project, timeout: 5)
+            let stale = current.exitCode != 0 || current.stdout.trimmingCharacters(in: .whitespacesAndNewlines) != c.sourceHead
             _ = try? CollaborationStore.publish(CollaborationEvent(id: id, project: q.project,
                 taskID: c.sourceTaskID, senderRunnerID: sender, recipientRunnerID: c.sourceOwner,
                 recipientMachineID: c.sourceOwnerMachineID,
-                kind: a.decision == "fixNow" ? .finding : .checkpoint,
-                summary: a.decision + "：" + a.reason,
+                kind: a.decision == "fixNow" && !stale ? .finding : .checkpoint,
+                summary: stale ? "范围过期：原 Owner 已推进提交，旧结论不触发整改" : a.decision + "：" + a.reason,
                 details: "适用条款：\(a.criterion)\n处置：\(a.steps.joined(separator: "；"))\n"
                     + "原 Owner 用 collaboration ack 确认此事件，修复后提交新的截图/录屏 checkpoint，等待独立复验；收到不代表修好。",
                 replyTo: q.id, branch: c.sourceBranch, commitSHA: c.sourceHead))

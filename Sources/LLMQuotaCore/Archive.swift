@@ -163,9 +163,16 @@ public enum Archive {
             for d in dirs {
                 let id = d.lastPathComponent
                 // 图的 worktree 用图 id 命名，任务是 <图id>sN —— 前缀匹配。
-                let related = byID.values.filter { $0.id == id || $0.graphID == id }
+                let related = byID.values.filter { $0.id == id || $0.graphID == id || StageObservationExecution.workspaceKey($0) == id }
                 guard !related.isEmpty else { continue }          // 认不出来的不碰
                 guard related.allSatisfy({ isTerminal($0.state) }) else { continue }
+                if let observation = related.first(where: { StageObservationExecution.workspaceKey($0) == id }) {
+                    let size = dirSize(d)
+                    if StageObservationExecution.cleanupWorkspace(observation, dryRun: dryRun) {
+                        r.removedWorktrees += 1; r.freedBytes += size
+                    }
+                    continue
+                }
 
                 // **未提交的改动一律不删。**
                 //

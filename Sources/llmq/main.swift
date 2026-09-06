@@ -981,7 +981,8 @@ func cmdWork(_ args: [String]) throws {
         guard let runnerID = t.ownerRunnerID,
               let platform = t.ownerPlatform ?? t.platform,
               let workspace = GitWorkspace.existingWorkspace(
-                repo: t.repo, platform: platform, graphID: t.graphID) else {
+                repo: t.repo, platform: platform, graphID: t.graphID,
+                workspaceKey: StageObservationExecution.workspaceKey(t)) else {
             print(Ansi.red("找不到任务的 owner 或稳定工作区，未清任何会话")); exit(1)
         }
         let context = GraphSession.Context(
@@ -2729,7 +2730,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
     // 账本的 running 是状态，不是锁。多执行槽下两个子进程可能在同一毫秒
     // 读到 queued；内核租约把“选中 → 写 running”之间的竞态窗口封住。
     var repoExecutionLease: LocalExecutionLease?
-    defer { repoExecutionLease?.release() }
+    defer {
+        repoExecutionLease?.release()
+        if let finished = task { StageObservationExecution.cleanupWorkspace(finished) }
+    }
     // 调度快照只能说明“刚才看起来没冲突”，不能充当锁。手工 `work run`、
     // 两个 worker 同毫秒选中任务或跨机状态尚未同步时都可能绕过它。
     // 独占工具因此也要持有进程级租约，直到本次执行完整结束。
@@ -2744,7 +2748,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             cand.ownerRunnerID = inherited.runnerID
             cand.ownerAssignedAt = inherited.assignedAt
         }
-        if let h = RepoLease.holder(repo: cand.repo, tasks: history) {
+        if let h = RepoLease.holder(for: cand, tasks: history) {
             if !quiet, leaseNoted < 3 {
                 leaseNoted += 1
                 print(Ansi.dim("  让开 " + cand.id + "：仓库 "
@@ -2842,10 +2846,15 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 }
             }
         }
+        if StageObservationExecution.snapshot(cand) != nil {
+            guard StageObservationExecution.validatedSnapshot(cand, tasks: history) != nil else { continue }
+            // 这个租约只授权固定的看图脚本，不能自动接力给通用编码 Agent。
+            d.candidates.removeAll { $0.runner.runnerID != StageObservationExecution.runnerID }
+        }
         if !d.candidates.isEmpty {
             if !dryRun {
                 let lease = LocalExecutionLease(
-                    scope: .repo, key: RepoLease.normalize(cand.repo))
+                    scope: .repo, key: StageObservationExecution.executionKey(cand))
                 guard lease.acquire() else {
                     if !quiet, leaseNoted < 3 {
                         leaseNoted += 1
@@ -3087,7 +3096,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             ?? (findingResume ? task.branch : nil) ?? "main"
         if let expectedBranch = task.branch,
            let existing = GitWorkspace.existingWorkspace(
-                repo: task.repo, platform: pick.platform, graphID: task.graphID),
+                repo: task.repo, platform: pick.platform, graphID: task.graphID,
+                workspaceKey: StageObservationExecution.workspaceKey(task)),
            isResuming, existing.branch == expectedBranch {
             ws = existing
             print(Ansi.cyan("  接手 ") + Ansi.dim(existing.branch + "（沿用已有工作区，不重建）"))
@@ -3095,7 +3105,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             do {
                 ws = try GitWorkspace.prepare(
                     repo: task.repo, taskID: task.id, platform: pick.platform,
-                    graphID: task.graphID, base: resumeBase)
+                    graphID: task.graphID,
+                    base: StageObservationExecution.snapshot(task)?.head ?? resumeBase,
+                    workspaceKey: StageObservationExecution.workspaceKey(task))
             } catch {
                 // **把真实原因带上。**
                 //

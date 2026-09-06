@@ -3117,11 +3117,11 @@ public enum GitWorkspace {
     }
 
     public static func prepare(repo: String, taskID: String, platform: Platform,
-                               graphID: String? = nil, base: String = "main") throws -> Workspace {
+                               graphID: String? = nil, base: String = "main", workspaceKey: String? = nil) throws -> Workspace {
         // 建 worktree 不该要两分钟。缩短到 45 秒 —— 超过这个数基本就是卡住了，
         // 早点失败早点换平台，比让一个额度槽空等两分钟强。
         let timeoutUsed: TimeInterval = 45
-        let key = graphID ?? stableKey(repo: repo, platform: platform)
+        let key = workspaceKey ?? graphID ?? stableKey(repo: repo, platform: platform)
         let branch = graphID.map { "agent/graph/\($0)" }
             ?? "agent/\(platform.rawValue)/\(taskID)"
         let root = Paths.appSupport.appendingPathComponent("worktrees", isDirectory: true)
@@ -3206,7 +3206,11 @@ public enum GitWorkspace {
         _ = git(["worktree", "remove", "--force", path], in: repo)
         try? FileManager.default.removeItem(atPath: path)
 
-        var r = git(["worktree", "add", "-b", branch, path, base], in: repo,
+        // 阶段观察只读取共享的不可变画面并写 reviews，不能为此再复制
+        // 整套游戏资产。普通开发 worktree 保持完整检出。
+        let reportOnly = workspaceKey?.hasPrefix("observation-") == true
+        let checkoutFlags = reportOnly ? ["--no-checkout"] : []
+        var r = git(["worktree", "add"] + checkoutFlags + ["-b", branch, path, base], in: repo,
                     timeout: timeoutUsed)
 
         // **分支已经存在时要接着用，不能报错退出。**
@@ -3216,7 +3220,7 @@ public enum GitWorkspace {
         // 这时候 `-b` 会因为重名失败 —— 而正确的动作恰恰是**接上那条分支**，
         // 不是新建一条，更不是把它删掉重来（那会丢掉前面几步）。
         if r.exitCode != 0, branchExists(branch, in: repo) {
-            r = git(["worktree", "add", path, branch], in: repo, timeout: timeoutUsed)
+            r = git(["worktree", "add"] + checkoutFlags + [path, branch], in: repo, timeout: timeoutUsed)
         }
 
         guard r.exitCode == 0 else {
@@ -3288,6 +3292,18 @@ public enum GitWorkspace {
             throw NSError(domain: "GitWorkspace", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "建 worktree 失败：\(detail)"
             ])
+        }
+        if reportOnly {
+            let sparse = git(["sparse-checkout", "set", "--cone", "reviews"], in: path, timeout: timeoutUsed)
+            guard sparse.exitCode == 0 else {
+                throw NSError(domain: "GitWorkspace", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "阶段观察工作区未能限定报告目录：" + sparse.stderr])
+            }
+            let checkout = git(["reset", "--hard", "HEAD"], in: path, timeout: timeoutUsed)
+            guard checkout.exitCode == 0 else {
+                throw NSError(domain: "GitWorkspace", code: 3, userInfo: [
+                    NSLocalizedDescriptionKey: "阶段观察快照检出失败：" + checkout.stderr])
+            }
         }
         return Workspace(path: path, branch: branch)
     }
@@ -3515,8 +3531,8 @@ public enum GitWorkspace {
     /// 找到「仓库 × 平台」的稳定工作区。普通任务的目录从 2026-08 起已经
     /// 不再用 taskID 命名；接力代码若仍拿 taskID 查，会永远误判为不存在。
     public static func existingWorkspace(repo: String, platform: Platform,
-                                         graphID: String? = nil) -> Workspace? {
-        existingWorkspace(taskID: graphID ?? stableKey(repo: repo, platform: platform))
+                                         graphID: String? = nil, workspaceKey: String? = nil) -> Workspace? {
+        existingWorkspace(taskID: workspaceKey ?? graphID ?? stableKey(repo: repo, platform: platform))
     }
 
     /// 终局失败时能不能删除分支。
