@@ -139,8 +139,8 @@ public enum MirrorService {
     static let bidirectionalDirs = ["config", "releases", "approvals", "push-tokens", "verdicts", "actions"]
     /// 多写者不可变事件目录：文件名全局唯一，两边只做集合并集，不按 mtime 覆盖。
     static let appendOnlyDirs = ["config-journal", "cooldown-events"]
-    /// 只推不拉的目录：证据截图是 Mac 端产的，手机只看。
-    static let pushOnlyDirs = ["evidence", "views", "action-receipts"]
+    /// 控制回执先推，避免大媒体传输挡住手机确认。多机记录只增不删。
+    static let pushOnlyDirs = ["action-receipts", "config-intents/processed", "views", "evidence"]
 
     /// 永不搬的文件：`.sb-` 半成品（原子写卡在 rename 留下的）、
     /// 心跳文件、一切点开头的文件。
