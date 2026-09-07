@@ -483,20 +483,21 @@ extension ViewFeed {
                          title: d.subject,
                          body: d.platform + " · " + "\(d.files.count) 个文件"
                              + " · +\(d.insertions)/−\(d.deletions)"
-                             + (d.landingBlockReason.map { " · " + $0 } ?? ""),
+                             + (d.landingBlockReason.map { " · " + $0 } ?? "")
+                             + (d.continuationBlockReason.map { " · " + $0 } ?? ""),
                          detail: d.prompt,
                          tone: d.mergesCleanly && d.landingBlockReason == nil ? .neutral : .warn,
                          icon: d.mergesCleanly && d.landingBlockReason == nil
                              ? "checkmark.seal" : "exclamationmark.triangle",
                          trailing: Review.evidenceSummary(d.evidenceFiles),
                          images: d.evidenceFiles,
-                         actions: d.mergesCleanly && d.landingBlockReason == nil
+                         actions: (d.mergesCleanly && d.landingBlockReason == nil
                              ? [Action(id: "review:merge:" + d.actionResource,
-                                       label: "合入", style: "primary"),
-                                Action(id: "review:discard:" + d.actionResource,
-                                       label: Review.rejectionLabel(branch: d.branch),
-                                       style: "destructive", needsNote: true)]
-                             : [Action(id: "review:discard:" + d.actionResource,
+                                       label: "合入", style: "primary")] : [])
+                             + (d.continuationActionID.map {
+                                 [Action(id: $0, label: "保留成果，继续完善", style: "primary")]
+                             } ?? [])
+                             + [Action(id: "review:discard:" + d.actionResource,
                                        label: Review.rejectionLabel(branch: d.branch),
                                        style: "destructive", needsNote: true)])
                 }))
@@ -1231,7 +1232,8 @@ extension ViewFeed {
                          body: d.platform + " · \(d.files.count) 个文件"
                              + " · +\(d.insertions)/−\(d.deletions)"
                              + (d.mergesCleanly ? "" : " · 有冲突，要去电脑上处理")
-                             + (d.landingBlockReason.map { " · " + $0 } ?? ""),
+                             + (d.landingBlockReason.map { " · " + $0 } ?? "")
+                             + (d.continuationBlockReason.map { " · " + $0 } ?? ""),
                          detail: d.prompt,
                          tone: d.mergesCleanly ? .neutral : .warn,
                          icon: d.mergesCleanly ? "checkmark.seal" : "exclamationmark.triangle",
@@ -1240,6 +1242,9 @@ extension ViewFeed {
                          actions: (d.mergesCleanly && d.landingBlockReason == nil
                              ? [Action(id: "review:merge:" + d.actionResource,
                                        label: "合入", style: "primary")] : [])
+                             + (d.continuationActionID.map {
+                                 [Action(id: $0, label: "保留成果，继续完善", style: "primary")]
+                             } ?? [])
                              + [Action(id: "review:discard:" + d.actionResource,
                                        label: Review.rejectionLabel(branch: d.branch),
                                        style: "destructive", needsNote: true)])

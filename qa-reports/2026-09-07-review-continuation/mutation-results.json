@@ -1,0 +1,22 @@
+[
+  {
+    "mutation": "missing-handler",
+    "exit": 1,
+    "detected": true
+  },
+  {
+    "mutation": "bypassed-state-gates",
+    "exit": 1,
+    "detected": true
+  },
+  {
+    "mutation": "separate-lock",
+    "exit": 1,
+    "detected": true
+  },
+  {
+    "mutation": "short-head-producer",
+    "exit": 1,
+    "detected": true
+  }
+]

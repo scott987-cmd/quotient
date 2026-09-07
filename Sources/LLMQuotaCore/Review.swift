@@ -1743,6 +1743,8 @@ extension Review {
         public var rejected: Bool? = nil
         public var sourceMachineID: String? = nil
         public var head: String? = nil
+        public var continuationActionID: String? = nil
+        public var continuationBlockReason: String? = nil
 
         var actionResource: String {
             repo + "|" + branch + (head.flatMap { $0.isEmpty ? nil : "|" + $0 } ?? "")
@@ -2140,6 +2142,9 @@ extension Review {
                     preferredFiles: Set(item.currentRevisionEvidence),
                     imageLimit: item.contractBoundEvidence ? contractImageCount : 4,
                     videoLimit: item.contractBoundEvidence ? contractVideoCount : 1)
+                let fullHead = GitWorkspace.git(["rev-parse", "--verify", item.head + "^{commit}"], in: path)
+                    .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard fullHead.count == 40, fullHead.allSatisfy({ $0.isHexDigit }) else { continue }
                 out.append(Digest(
                     repo: path, repoName: r.alias, branch: item.branch,
                     platform: item.platform, subject: item.subject,
@@ -2155,7 +2160,11 @@ extension Review {
                     evidenceFiles: extracted,
                     landingBlockReason: qualityLandingBlock(
                         repo: path, branch: item.branch),
-                    rejected: review.rejected ? true : nil, head: item.head))
+                    rejected: review.rejected ? true : nil, head: fullHead,
+                    continuationActionID: ReviewContinuation.actionID(
+                        repo: path, branch: item.branch, head: fullHead, tasks: tasks),
+                    continuationBlockReason: ReviewContinuation.task(repo: path, branch: item.branch, tasks: tasks)
+                        .flatMap { ReviewContinuation.blockReason($0) }))
             }
         }
         // **按仓库合并，绝不整份覆盖。**
@@ -2544,5 +2553,7 @@ extension Review.Digest {
         rejected = try c.decodeIfPresent(Bool.self, forKey: .rejected)
         sourceMachineID = try c.decodeIfPresent(String.self, forKey: .sourceMachineID)
         head = try c.decodeIfPresent(String.self, forKey: .head)
+        continuationActionID = try c.decodeIfPresent(String.self, forKey: .continuationActionID)
+        continuationBlockReason = try c.decodeIfPresent(String.self, forKey: .continuationBlockReason)
     }
 }

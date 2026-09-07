@@ -71,13 +71,23 @@ public enum MobileAction {
     static func versionFailure(_ id: String) -> String? {
         guard let route = route(id) else { return nil }
         let parts = route.actionID.split(separator: ":", maxSplits: 2).map(String.init)
-        guard parts.count == 3, ["review", "task", "playbook"].contains(parts[0]) else { return nil }
+        guard parts.count == 3, ["review", "task", "playbook", "review-continuation"].contains(parts[0]) else { return nil }
         let resource = parts[2].split(separator: "|", omittingEmptySubsequences: false)
-        let expected = parts[0] == "review" ? 3 : 2
+        let expected = parts[0] == "review-continuation" ? 5 : (parts[0] == "review" ? 3 : 2)
         guard resource.count == expected, resource.allSatisfy({ !$0.isEmpty }) else {
             return "旧版操作缺少资源版本，请刷新来源 Mac 后重新确认"
         }
         return nil
+    }
+
+    /// 续作有独立完成回执，但必须与同一提交的合入/丢弃共用执行锁。
+    static func reviewResourceKey(_ id: String) -> String? {
+        guard let route = route(id) else { return nil }
+        let parts = route.actionID.split(separator: ":", maxSplits: 2).map(String.init)
+        guard parts.count == 3, ["review", "review-continuation"].contains(parts[0]) else { return nil }
+        let bits = parts[2].split(separator: "|", omittingEmptySubsequences: false)
+        guard bits.count >= 3 else { return nil }
+        return route.scope + ":review:" + bits.prefix(3).joined(separator: "|")
     }
 
     /// 本机账本不参与镜像；另一台机器的办结/失败记录不能抹掉本机事项。
@@ -110,7 +120,8 @@ public enum MobileAction {
         do { try fm.createDirectory(at: directory, withIntermediateDirectories: true) }
         catch { return nil }
         let resource = digest(resourceKey(invocation.id))
-        let lock = directory.appendingPathComponent(resource + ".lock")
+        let lock = directory.appendingPathComponent(digest(reviewResourceKey(invocation.id)
+            ?? resourceKey(invocation.id)) + ".lock")
         let fd = open(lock.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
@@ -201,11 +212,20 @@ extension MobileAction {
         guard parts.count >= 2 else { return nil }
 
         switch (parts[0], parts[1]) {
+        case ("review-continuation", "request"):
+            guard parts.count == 3 else { return false }
+            return ReviewContinuation.execute(resource: parts[2], note: inv.note)
         case ("review", "merge"), ("review", "discard"):
             guard parts.count == 3 else { return false }
             let bits = parts[2].split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
             guard (2...3).contains(bits.count), !bits[0].isEmpty, !bits[1].isEmpty,
                   GitWorkspace.isRepo(bits[0]) else { return false }
+            // 续作后 HEAD 尚未变化也不能用旧成果页处置正在执行的分支。
+            guard !TaskStore.all().contains(where: {
+                $0.branch == bits[1]
+                    && CollaborationStore.normalizeProject($0.repo) == CollaborationStore.normalizeProject(bits[0])
+                    && ($0.state == .queued || $0.state == .running || $0.state == .blocked)
+            }) else { return false }
             // merge 已经推进 main、也删掉来源分支之后，进程仍可能在落本机
             // 成功回执前退出。重启后必须按这次页面绑定的 head 对账；只看
             // “分支没了”会把未执行/误删也当成功，只要求分支存在又会把真实
