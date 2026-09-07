@@ -1,0 +1,12 @@
+  协作 MCP：Claude 已配置，OpenCode 已配置
+  菜单栏 App 已重新拉起
+编译通用二进制（Intel + Apple Silicon）…
+  ✓ 已签名：Apple Development: 940662497@qq.com (8D6DUN3344)
+    身份 llmq / team 7U9AKQ6CJX  ← 跨重建稳定，授权不会再被发布踩掉
+打包…
+已发布 4fbec591512b  llmq-4fbec591512b.tar.gz
+  05a0d5f 修复 Agent 交接遗漏最新已提交成果，保护目标工作区，独立手机验收通过
+本机已装上 4fbec591512b
+  重启：com.llmquotabar.cluster
+等待在线机器确认（最多 180 秒）：MacBook Pro、dushibing的MacBook Pro
+  ✓ 所有在线机器已确认 4fbec591512b

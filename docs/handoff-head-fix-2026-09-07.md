@@ -17,3 +17,11 @@ Flint 的 Kimi 已提交 `797f007`、`00a42fc`、`51e799a`，但下一次 Claude
 原失败保存用例使用 pre-commit 钩子，但 GitWorkspace 的硬化配置明确禁用钩子，导致夹具无效。保留原失败日志，改用隔离仓库的 `index.lock` 触发真实保存失败，并通过受控变异证明断言有效；没有关闭硬化或弱化断言。批次证据及最终内容指纹在 `qa-reports/2026-09-07-handoff-head/`，独立手机报告在 LLMQuotaApp 的同名目录。
 
 Claude 日志中的 `generate_session_title / glm-5.3` 错误不足以单独证明主请求超时原因；本批未更改账号、模型路由或额度配置。游戏美术验收与交接机制修复是不同结果：现有 BREAKWATER 外观被保留，持枪接触与关卡整合仍需实际整改及画面验收。
+
+## 发布及原任务恢复
+
+代码提交 `05a0d5f` 已推送 GitHub；签名包 `4fbec591512b52311c8162b39d7176cd168370c437a8c7d6508f3f6f48f3966a` 已由三台在线 Mac 确认。恢复操作校验了原任务 rev961、blocked 状态、Claude Owner、Kimi clean HEAD 和原会话存在，再通过新版本正式 `work handoff --base` 交回 Kimi，保留 446 个差异文件，任务进入 queued。没有写假问答或改写旧失败执行记录。
+
+执行机升级后 worker/projector 曾处于 launchd 的 spawn scheduled 状态，已启动现有服务，未修改其配置。启动后任务执行器仍先做历史基线检查；采样确认处于 BaselineFreshness/Review 的 Git 读取，不能把“进程已启动”冒充模型已开工。最终实际调用证据另记于本批 QA。
+
+19:36 原任务真实恢复：新 attempt `5441fa0e-a9f2-49bb-8720-23273d155640` 为 running / projectResume，HEAD before `51e799a650ecc0eab0b84709685fef7d64ee6b56`，Owner 为 `kimi.code`，原会话 `session_26be86f3-c6d1-4a51-845b-5d077ccbb1e8` 出现新请求和 Bash 工具调用。收到的提示确实包含最新基线、冻结已认可外观和持枪接触整改裁决，没有被上下文折叠丢掉。首次实际调用读取协作上下文及现有回归日志，随后继续请求下一步。这证明原会话已开工，不代表美术问题已修好或游戏已交付。

@@ -28,3 +28,9 @@ Kimi 的实际 HEAD 已到 `51e799a650ecc0eab0b84709685fef7d64ee6b56`，下一�
 ## 独立结论
 
 非实现者最终报告 `mobile-independent-acceptance.md`：本批无剩余阻断。iPhone 133通过、2个iPad专属用例跳过已由iPad本批5/5覆盖；最终真实交接、手机读写2/2及回执回读1/1通过。保留真实隔离交接图，fixture状态不是生产任务开工证明。iPad实横屏未验证。
+
+## 发布及实际恢复结果
+
+代码 `05a0d5f` 已推送，三台 Mac 确认签名发布 `4fbec591512b52311c8162b39d7176cd168370c437a8c7d6508f3f6f48f3966a`（release-verify-final.log）。执行机 worker/projector 已加载新程序。守卫恢复脚本先核对 rev961、blocked、旧Owner、新版本、Kimi clean HEAD 及原会话，再调用正式 handoff，未直接改 JSON。任务转回 Kimi 后自动清除旧等待原因。
+
+19:36 新 attempt `5441fa0e-a9f2-49bb-8720-23273d155640` 为 running/projectResume，新基线完整 `51e799a650ecc0eab0b84709685fef7d64ee6b56`；原 session 已发出实际 Bash 调用及下一次模型请求。`kimi-resumed-tools.json` 记录真实调用和仅对输入做布尔校验的整改指令到达证明；不包括模型内部推理。`production-running.json` 是实际任务，独立验收截图则始终为隔离夹具，二者不混淆。
