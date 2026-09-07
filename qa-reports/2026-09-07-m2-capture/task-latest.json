@@ -1,0 +1,48 @@
+{
+  "capturedAt": "2026-09-07T13:42:16.263068+00:00",
+  "release": "4fbec591512b52311c8162b39d7176cd168370c437a8c7d6508f3f6f48f3966a",
+  "task": {
+    "id": "i31c8eb29e2a173f",
+    "state": "running",
+    "rev": 974,
+    "ownerRunnerID": "kimi.code",
+    "branch": "agent/kimi/i31c8eb29e2a173f",
+    "runnerPID": 44544,
+    "startedAt": "2026-09-07T13:41:53Z",
+    "endedAt": null,
+    "note": "本轮阶段成果已保存；仍有明确下一步，沿用原任务继续：等Codex对本批画面验收；iPhone11实机等Mac mini；接触级IK与顿挫时序对齐为披露的后续项",
+    "pendingAsk": null,
+    "waitReason": null
+  },
+  "attempt": {
+    "attemptID": "3db8baa1-8ae6-4541-a342-a4d8a8b06d09",
+    "startedAt": "2026-09-07T13:42:01Z",
+    "endedAt": null,
+    "outcome": "running",
+    "sessionAction": "projectResume",
+    "workspacePrepared": true,
+    "headBefore": "2ea3ba97c938924c1bdd4d2affd8062b1b3a7998",
+    "headAfter": "2ea3ba97c938924c1bdd4d2affd8062b1b3a7998",
+    "newCommits": 0
+  },
+  "progress": {
+    "automatic": false,
+    "checkpointAt": "2026-09-07T13:33:13Z",
+    "evidence": [
+      "STATUS.md"
+    ],
+    "evidenceFingerprint": "1eb64842cf69f20323c859fc8c45c0da7f1d58bc1f9002b56fed4ca0f45bf934",
+    "explicitNextStep": "等Codex对本批画面验收；iPhone11实机等Mac mini；接触级IK与顿挫时序对齐为披露的后续项",
+    "explicitNextStepAt": "2026-09-07T13:33:13Z",
+    "explicitNextStepSequence": 2325,
+    "nextStep": "等Codex对本批画面验收；iPhone11实机等Mac mini；接触级IK与顿挫时序对齐为披露的后续项",
+    "phase": "Codex 2026-09-07裁决全部落地",
+    "requestedMinutes": 20,
+    "sequence": 2325,
+    "summary": "六项全部完成并提交（2ea3ba9）：接入冻结/fire挂接/双手拟合接触/CombatSlice整合/镜头遮挡实测修正/消费路径核对（新资产全DEBUG路径，正式模式仍旧链，如实写明）；全量回归302过+专项测试绿；证据fire-contact-fix/combat-slice-fire/level-camera-check三目录",
+    "taskID": "i31c8eb29e2a173f",
+    "updatedAt": "2026-09-07T13:33:13Z"
+  },
+  "session": "session_26be86f3-c6d1-4a51-845b-5d077ccbb1e8",
+  "wireModified": "2026-09-07T13:42:10.870397+00:00"
+}

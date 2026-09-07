@@ -1,0 +1,91 @@
+{
+  "capturedAt": "2026-09-07T21:39:40.886766+08:00",
+  "crashes": [
+    {
+      "file": "SimRenderServer-2026-09-07-205534.ips",
+      "time": "2026-09-07 20:55:16.0218 +0800",
+      "process": "SimRenderServer",
+      "exception": {
+        "codes": "0x0000000000000001, 0x0000000100c38ba0",
+        "rawCodes": [
+          1,
+          4307782560
+        ],
+        "type": "EXC_BREAKPOINT",
+        "signal": "SIGTRAP"
+      },
+      "thread": "com.apple.display.captureservice",
+      "frames": [
+        {
+          "imageOffset": 199584,
+          "imageIndex": 0
+        },
+        {
+          "imageOffset": 88660,
+          "imageIndex": 0
+        },
+        {
+          "imageOffset": 88756,
+          "imageIndex": 0
+        }
+      ]
+    },
+    {
+      "file": "SimRenderServer-2026-09-07-210238.ips",
+      "time": "2026-09-07 21:02:21.3584 +0800",
+      "process": "SimRenderServer",
+      "exception": {
+        "codes": "0x0000000000000001, 0x00000001047b8ba0",
+        "rawCodes": [
+          1,
+          4370172832
+        ],
+        "type": "EXC_BREAKPOINT",
+        "signal": "SIGTRAP"
+      },
+      "thread": "com.apple.display.captureservice",
+      "frames": [
+        {
+          "imageOffset": 199584,
+          "imageIndex": 0
+        },
+        {
+          "imageOffset": 88660,
+          "imageIndex": 0
+        },
+        {
+          "imageOffset": 88756,
+          "imageIndex": 0
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "time": "2026-09-07T20:55:15.406000+08:00",
+      "tool": "Bash",
+      "command": "xcrun simctl shutdown 19908910-DAD9-4A31-B804-644BF9845447; sleep 2; xcrun simctl boot 19908910-DAD9-4A31-B804-644BF9845447; sleep 8; xcrun simctl list devices | grep 19908910"
+    },
+    {
+      "time": "2026-09-07T21:02:20.779000+08:00",
+      "tool": "Bash",
+      "command": "xcrun simctl shutdown 19908910-DAD9-4A31-B804-644BF9845447; sleep 3; xcrun simctl boot 19908910-DAD9-4A31-B804-644BF9845447; sleep 8; cd \"/Users/dushibing/Library/Application Support/LLMQuotaBar/worktrees/flint-kimi/docs/evidence/level-camera-check\" && rm -f probe-combat.mov* record.log record.pid && nohup xcrun simctl io 19908910-DAD9-4A31-B804-644BF9845447 recordVideo probe-combat.mov > record.log 2>&1 & echo RECPID=$!; sleep 4; cat \"/Users/dushibing/Library/Application Support/LLMQuotaBar/worktrees/flint-kimi/docs/evidence/level-camera-check/record.log\""
+    }
+  ],
+  "task": {
+    "id": "i31c8eb29e2a173f",
+    "state": "queued",
+    "rev": 969,
+    "ownerRunnerID": "kimi.code",
+    "branch": "agent/kimi/i31c8eb29e2a173f",
+    "runnerPID": null,
+    "newPlayabilityDirective": true
+  },
+  "recorders": [],
+  "services": [
+    "81500 Mon Sep  7 19:32:12 2026     /Applications/LLMQuotaBar.app/Contents/MacOS/LLMQuotaBar",
+    "81882 Mon Sep  7 19:32:55 2026     /Users/dushibing/.local/bin/llmq cluster serve",
+    "82034 Mon Sep  7 19:34:22 2026     /Users/dushibing/.local/bin/llmq work loop",
+    "82136 Mon Sep  7 19:34:40 2026     /Users/dushibing/.local/bin/llmq work projector"
+  ]
+}

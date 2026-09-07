@@ -1,0 +1,14 @@
+[
+  {
+    "time": 1788788530836,
+    "receivedPlayabilityDecision": true,
+    "receivedNormalEntryGoal": true,
+    "receivedCaptureDecision": true
+  },
+  {
+    "type": "llm.request",
+    "time": 1788788530854,
+    "model": "k3",
+    "turnStep": "39.1"
+  }
+]
