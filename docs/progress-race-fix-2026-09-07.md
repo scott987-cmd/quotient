@@ -23,3 +23,11 @@ WorkProgressStore.record 原来先读取旧值，执行多次 Git 指纹检查�
 ## 实际交接
 
 Codex 读取了本轮两提交的 diff，并检查当前资产对应的 fire-raise-48s.jpg 与 walk-with-rifle-38s.jpg：干员仍为 T恤短裤赤脚，举枪帧左手明显不接触护木。BREAKWATER 样板的认可不等于这些不同缺陷也获认可。恢复前准备了带任务版本、Owner、原执行轮次和 Git HEAD 校验的维护操作，保留原分支、工作区、会话、质量历史与平台配置，仅纠正本次错误终态，并把真实画面复核与可在模拟器推进的具体接入工作交回原任务。没有伪造用户回答或生产进度，也没有把旧 Kimi 执行记录改成仍在运行。
+
+## 独立移动端与发布
+
+独立非实现者绑定代码提交 a693cd9 检查源码、实际运行和截图，确认本批无剩余阻断：iPhone 完整 133 项通过、2 项 iPad 专属跳过已由 iPad 5/5 覆盖；最终 Core 重新链接后生产者→手机与正确机器操作回执闭环 3/3。实际 iPad 横屏未验：既有测试宽度断言在 13 英寸竖屏也能成立，手动模拟器旋转的系统主屏同样异常，不能将绿色结果当横屏证据。无真机安装、APNs、手机真实 iCloud 传播声明。
+
+代码提交已推送 GitHub；签名发布 516576b704a2e760e4cf03e90e522d635a1a57925eff127019877e616e25d777 已由三台在线 Mac 确认。原执行机服务换为新进程后，带前置身份/版本保护的恢复操作将原任务从 rev924 done 转为 rev925 queued，保持原 Owner、分支、handoff 和 Kimi 会话，未篡改上一轮执行记录。
+
+14:00 已确认真实开工：原 session_26be86f3-c6d1-4a51-845b-5d077ccbb1e8 发出 Bash 解包调用并成功返回，解出已认可的 BREAKWATER 291 MB 内容，列出 breakwater-idle.usdz、breakwater-walk.usdz、ModelLab.swift 和配套制作工具。新 attempt cf835634-3715-43b6-9163-29aa3c4d8043 为 running / projectResume，仍为原任务与 Owner。实际请求包含 Codex 现场复核及接入指令，未被上下文裁剪。这里证明原会话恢复并开始实作，不代表角色已接入、游戏完成或今后不会因其他原因停止。

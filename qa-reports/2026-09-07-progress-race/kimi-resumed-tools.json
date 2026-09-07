@@ -1,0 +1,10 @@
+[
+  {
+    "time": 1788760804989,
+    "name": "Bash",
+    "args": {
+      "command": "df -h / | tail -1; mkdir -p /tmp/bw && cd /tmp/bw && unzip -o -q \"/Users/dushibing/Library/Application Support/LLMQuotaBar/worktrees/flint-kimi/Production/references/breakwater-approved-20260907/Flint-Breakwater-accepted-20260907.zip\" && find /tmp/bw -type f | head -40 && echo --- && du -sh /tmp/bw",
+      "timeout": 120
+    }
+  }
+]

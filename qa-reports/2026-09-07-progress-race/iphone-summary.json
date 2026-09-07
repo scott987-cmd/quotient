@@ -1,0 +1,51 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "B21093BB-36F9-4E3B-8DBD-2B8BF8051AAB",
+        "deviceName" : "iPhone 15 Pro Max",
+        "modelName" : "iPhone 15 Pro Max",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 133,
+      "skippedTests" : 2,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "LLMQuotaApp · Built with macOS 26.5.2",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1788759881.931,
+  "passedTests" : 133,
+  "result" : "Passed",
+  "skippedTests" : 2,
+  "startTime" : 1788759315.382,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - LLMQuotaApp",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "21% of duration",
+      "text" : "1 longest test run with outlier durations exceeding 72.11s (three standard deviations)"
+    },
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "77% of duration",
+      "text" : "1 longest test run with outlier durations exceeding 2.45s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 135
+}

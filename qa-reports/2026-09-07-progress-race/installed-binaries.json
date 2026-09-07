@@ -1,0 +1,18 @@
+{
+  "capturedAt": "2026-09-07T05:57:57.576028+00:00",
+  "release": "516576b704a2e760e4cf03e90e522d635a1a57925eff127019877e616e25d777",
+  "machines": [
+    {
+      "name": "mac-mini",
+      "evidence": "516576b704a2e760e4cf03e90e522d635a1a57925eff127019877e616e25d777ed0c0708e4f4d10812fea55ac954ee213036cef376e974c6f5844940df23d046  /Users/dushibing/.local/bin/llmq\n4c5a8226be8da17a19c6a23de12490da79ef844f8e27cb87e1419a0182bcea65  /Applications/LLMQuotaBar.app/Contents/MacOS/LLMQuotaBar\n51886 Mon Sep  7 13:16:06 2026     /Users/dushibing/.local/bin/llmq\n79016 Mon Sep  7 13:52:50 2026     /Users/dushibing/.local/bin/llmq\n79107 Mon Sep  7 13:52:55 2026     /Users/dushibing/.local/bin/llmq\n79423 Mon Sep  7 13:53:27 2026     /Users/dushibing/.local/bin/llmq\n93611 Mon Sep  7 03:00:05 2026     /Users/dushibing/.local/bin/llmq\n96359 Wed Sep  2 14:45:07 2026     /Users/dushibing/.local/bin/llmq\n"
+    },
+    {
+      "name": "macbook-pro-arm64",
+      "evidence": "516576b704a2e760e4cf03e90e522d635a1a57925eff127019877e616e25d777ed0c0708e4f4d10812fea55ac954ee213036cef376e974c6f5844940df23d046  /Users/dushibing/.local/bin/llmq\n4c5a8226be8da17a19c6a23de12490da79ef844f8e27cb87e1419a0182bcea65  /Applications/LLMQuotaBar.app/Contents/MacOS/LLMQuotaBar\n31700 Mon Sep  7 13:53:33 2026     /Users/dushibing/.local/bin/llmq\n31750 Mon Sep  7 13:53:39 2026     /Users/dushibing/.local/bin/llmq\n31803 Mon Sep  7 13:53:44 2026     /Users/dushibing/.local/bin/llmq\n32471 Mon Sep  7 13:55:23 2026     /Users/dushibing/.local/bin/llmq\n"
+    },
+    {
+      "name": "macbook-pro-intel",
+      "evidence": "516576b704a2e760e4cf03e90e522d635a1a57925eff127019877e616e25d777ed0c0708e4f4d10812fea55ac954ee213036cef376e974c6f5844940df23d046  /Users/dushibing/.local/bin/llmq\n4c5a8226be8da17a19c6a23de12490da79ef844f8e27cb87e1419a0182bcea65  /Applications/LLMQuotaBar.app/Contents/MacOS/LLMQuotaBar\n96053 Mon Sep  7 13:54:11 2026     /Users/dushibing/.local/bin/llmq\n96291 Mon Sep  7 13:54:46 2026     /Users/dushibing/.local/bin/llmq\n96329 Mon Sep  7 13:54:52 2026     /Users/dushibing/.local/bin/llmq\n"
+    }
+  ]
+}

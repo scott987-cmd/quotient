@@ -1,0 +1,31 @@
+{
+  "capturedAt": "2026-09-07T06:01:42.621286+00:00",
+  "release": "516576b704a2e760e4cf03e90e522d635a1a57925eff127019877e616e25d777",
+  "task": {
+    "id": "i31c8eb29e2a173f",
+    "state": "running",
+    "rev": 930,
+    "ownerRunnerID": "kimi.code",
+    "branch": "agent/kimi/i31c8eb29e2a173f",
+    "runnerPID": 32471,
+    "startedAt": "2026-09-07T05:56:42Z",
+    "endedAt": null,
+    "note": "修复进度覆盖导致的错误完成；Codex已核看实际画面，原Kimi会话继续接入已认可战术角色",
+    "pendingAsk": null,
+    "waitReason": null
+  },
+  "attempt": {
+    "attemptID": "cf835634-3715-43b6-9163-29aa3c4d8043",
+    "startedAt": "2026-09-07T05:56:50Z",
+    "endedAt": null,
+    "outcome": "running",
+    "sessionAction": "projectResume",
+    "workspacePrepared": true,
+    "headBefore": "882ba5a22108cbc2cc84e0c43bc834db9e557040",
+    "headAfter": "882ba5a22108cbc2cc84e0c43bc834db9e557040",
+    "newCommits": 0
+  },
+  "session": "session_26be86f3-c6d1-4a51-845b-5d077ccbb1e8",
+  "wireModified": "2026-09-07T06:00:06.644053+00:00",
+  "actualToolEvidence": "kimi-resumed-tools.json and kimi-resumed-results.jsonl: original session unpacked approved BREAKWATER package and listed runtime idle/walk assets at 2026-09-07 14:00:04 CST"
+}
