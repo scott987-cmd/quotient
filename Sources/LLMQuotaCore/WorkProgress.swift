@@ -86,6 +86,31 @@ public struct WorkProgress: Codable, Sendable, Equatable {
 }
 
 public enum WorkProgressStore {
+    // Controlled interleaving for the real multi-process regression.
+    static var beforeCommitForTesting: (() -> Void)?
+
+    private static let locksGuard = NSLock()
+    private static var recordLocks: [String: NSLock] = [:]
+
+    private static func withRecordLock<T>(taskID: String, _ body: () throws -> T) throws -> T {
+        // Lock a stable sidecar, never the JSON inode replaced by atomic write.
+        let path = file(taskID: taskID).appendingPathExtension("lock").standardizedFileURL.path
+        locksGuard.lock()
+        let local = recordLocks[path] ?? NSLock()
+        recordLocks[path] = local
+        locksGuard.unlock()
+        local.lock(); defer { local.unlock() }
+        let fd = open(path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { throw NSError(domain: "WorkProgress", code: 2) }
+        defer { close(fd) }
+        while flock(fd, LOCK_EX) != 0 {
+            if errno == EINTR { continue }
+            throw NSError(domain: "WorkProgress", code: 3)
+        }
+        defer { flock(fd, LOCK_UN) }
+        return try body()
+    }
+
     public static var dirOverride: URL?
     public static var dir: URL {
         dirOverride ?? Paths.appSupport.appendingPathComponent("work-progress", isDirectory: true)
@@ -128,41 +153,49 @@ public enum WorkProgressStore {
                               now: Date = Date(), automatic: Bool = false,
                               attemptID: String? = nil) throws -> WorkProgress {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let old = load(taskID: taskID)
         let incomingEvidence = evidence.prefix(12).map { String($0.prefix(240)) }
-        // worker 的客观 diff/commit 续期没有新的证据参数。它只能补一条进度，
-        // 不能把 Agent 已明确上报、正等着同步到手机的截图/录屏清空。
-        // 新的非空列表仍可替换旧列表，让 Agent 主动提交下一版证据。
-        let cleanEvidence = incomingEvidence.isEmpty
-            ? (old?.evidence ?? [])
-            : incomingEvidence
-        var item = WorkProgress(
-            taskID: taskID,
-            sequence: (old?.sequence ?? 0) + 1,
-            phase: String(phase.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)),
-            summary: String(summary.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240)),
-            nextStep: nextStep.map {
-                String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-            },
-            evidence: cleanEvidence,
-            evidenceFingerprint: fingerprint(repo: repo, evidence: cleanEvidence),
-            requestedMinutes: min(60, max(10, requestedMinutes)),
-            updatedAt: now,
-            checkpointAt: automatic
-                ? (incomingEvidence.isEmpty ? old?.checkpointAt : now)
-                : now,
-            automatic: automatic, attemptID: attemptID)
-        if automatic {
-            item.explicitNextStep = old?.explicitNextStep
-            item.explicitNextStepSequence = old?.explicitNextStepSequence
-            item.explicitNextStepAt = old?.explicitNextStepAt
+        // Slow Git inspection does not hold a lock or retain a writable snapshot.
+        let inspectedEvidence = incomingEvidence.isEmpty
+            ? (load(taskID: taskID)?.evidence ?? []) : incomingEvidence
+        let inspectedFingerprint = fingerprint(repo: repo, evidence: inspectedEvidence)
+        beforeCommitForTesting?()
+        return try withRecordLock(taskID: taskID) {
+            let old = load(taskID: taskID)
+            // worker 的客观 diff/commit 续期没有新的证据参数。它只能补一条进度，
+            // 不能把 Agent 已明确上报、正等着同步到手机的截图/录屏清空。
+            // 新的非空列表仍可替换旧列表，让 Agent 主动提交下一版证据。
+            let cleanEvidence = incomingEvidence.isEmpty
+                ? (old?.evidence ?? [])
+                : incomingEvidence
+            var item = WorkProgress(
+                taskID: taskID,
+                sequence: (old?.sequence ?? 0) + 1,
+                phase: String(phase.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)),
+                summary: String(summary.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240)),
+                nextStep: nextStep.map {
+                    String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
+                },
+                evidence: cleanEvidence,
+                evidenceFingerprint: cleanEvidence == inspectedEvidence ? inspectedFingerprint
+                    : fingerprint(repo: repo, evidence: cleanEvidence),
+                requestedMinutes: min(60, max(10, requestedMinutes)),
+                updatedAt: max(now, old?.updatedAt ?? now),
+                checkpointAt: automatic
+                    ? (incomingEvidence.isEmpty ? old?.checkpointAt : now)
+                    : now,
+                automatic: automatic, attemptID: attemptID)
+            if automatic {
+                item.explicitNextStep = old?.explicitNextStep
+                item.explicitNextStepSequence = old?.explicitNextStepSequence
+                item.explicitNextStepAt = old?.explicitNextStepAt
+            }
+            let data = try SnapshotCoding.prettyEncoder().encode(item)
+            guard ICloudSafe.write(data, to: file(taskID: taskID)) else {
+                throw NSError(domain: "WorkProgress", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "进度记录写入失败"])
+            }
+            return item
         }
-        let data = try SnapshotCoding.prettyEncoder().encode(item)
-        guard ICloudSafe.write(data, to: file(taskID: taskID)) else {
-            throw NSError(domain: "WorkProgress", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "进度记录写入失败"])
-        }
-        return item
     }
 
     /// 工作区内容 + 显式证据文件元数据的摘要。只改汇报文案不会改变它，

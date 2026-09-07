@@ -1,0 +1,47 @@
+{
+  "noninteractivePassed": true,
+  "allPassed": false,
+  "total": 1556,
+  "passed": 1554,
+  "shards": [
+    {
+      "shard": 0,
+      "exitCode": 0,
+      "expected": 23,
+      "passed": 23,
+      "missing": [],
+      "skipped": [],
+      "failures": []
+    },
+    {
+      "shard": 1,
+      "exitCode": 0,
+      "expected": 511,
+      "passed": 511,
+      "missing": [],
+      "skipped": [],
+      "failures": []
+    },
+    {
+      "shard": 2,
+      "exitCode": 0,
+      "expected": 511,
+      "passed": 509,
+      "missing": [],
+      "skipped": [
+        "LLMQuotaCoreTests.ClusterNetTests/testPassphraseSurvivesRelaxedAccess",
+        "LLMQuotaCoreTests.ClusterNetTests/testScratchKeychainCreatesAndCleansUp"
+      ],
+      "failures": []
+    },
+    {
+      "shard": 3,
+      "exitCode": 0,
+      "expected": 511,
+      "passed": 511,
+      "missing": [],
+      "skipped": [],
+      "failures": []
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "baseHEAD": "19221e0136005e87132fdb515dbb1fdca8fa2a50",
+  "files": {
+    "Sources/LLMQuotaCore/WorkProgress.swift": "bfeebe5e115c569d7205e01a008663bc62af83e32f831f72f9c95589fd434d25",
+    "Sources/LLMQuotaCore/StageFindingLoop.swift": "389207578429dd123b8fdd77fc93d172798b61eda1c648431e78c59433024dcd",
+    "Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift": "bded06c8b102438ec4f684bdaac52669f17b78eb9cd3e1d50db7a9935a9a9ca4",
+    "Tests/LLMQuotaCoreTests/StageFindingLoopTests.swift": "d4af06af55a10b4e3804749fb224a11ec1c86f10de387b271c19db78e6d7ff6f"
+  }
+}

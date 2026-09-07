@@ -1,0 +1,60 @@
+[0/1] Planning build
+Test Suite 'Selected tests' started at 2026-09-07 13:33:55.284.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 13:33:55.284.
+Test Suite 'AutoLandTests' started at 2026-09-07 13:33:55.284.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testConcurrentLandingRoundIsSkippedBeforeVerification]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testConcurrentLandingRoundIsSkippedBeforeVerification]' passed (6.105 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testDirectDiscardClearsDeadExecutionState]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testDirectDiscardClearsDeadExecutionState]' passed (4.168 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testDirtyRepoSkipsRoundWithoutVeto]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testDirtyRepoSkipsRoundWithoutVeto]' passed (12.620 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testDiscardBranchCleanupCanDeferDispositionToCaller]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testDiscardBranchCleanupCanDeferDispositionToCaller]' passed (4.444 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testLandingEnqueuesReviewTask]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testLandingEnqueuesReviewTask]' passed (13.037 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testLegacyVetoWithoutHeadStaysSticky]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testLegacyVetoWithoutHeadStaysSticky]' passed (6.357 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testLegacyWrongCheckoutVetoDoesNotBlockLanding]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testLegacyWrongCheckoutVetoDoesNotBlockLanding]' passed (9.960 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testManualReviewRepoNeverAutoLands]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testManualReviewRepoNeverAutoLands]' passed (6.387 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testOnePerRound]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testOnePerRound]' passed (18.179 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testOrdinaryMergeCannotBypassRejectedVisualVerdict]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testOrdinaryMergeCannotBypassRejectedVisualVerdict]' passed (10.386 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testOverlappingBranchesLandOneAtATime]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testOverlappingBranchesLandOneAtATime]' passed (12.450 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testQualityContractDispatchesVisualGateBeforeLanding]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testQualityContractDispatchesVisualGateBeforeLanding]' passed (7.247 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testReviewLandingDoesNotRecurse]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testReviewLandingDoesNotRecurse]' passed (9.416 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testRiskyPathStaysManual]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testRiskyPathStaysManual]' passed (5.260 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSafeDoneBranchLands]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSafeDoneBranchLands]' passed (10.243 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSafeDoneBranchLandsWhilePrimaryWorktreeIsOnAnotherDirtyBranch]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSafeDoneBranchLandsWhilePrimaryWorktreeIsOnAnotherDirtyBranch]' passed (12.674 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSensitiveTaskIsLeftForHumans]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSensitiveTaskIsLeftForHumans]' passed (5.553 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSupportingReviewBranchDoesNotBlockPrimaryDelivery]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSupportingReviewBranchDoesNotBlockPrimaryDelivery]' passed (13.590 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSwitchDefaultsToOff]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testSwitchDefaultsToOff]' passed (1.385 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testUnfinishedTaskDoesNotLand]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testUnfinishedTaskDoesNotLand]' passed (5.243 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testVetoedBranchIsSkipped]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testVetoedBranchIsSkipped]' passed (5.536 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testVetoExpiresAfterNewCommitAndBranchLands]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testVetoExpiresAfterNewCommitAndBranchLands]' passed (11.090 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testVisualReviewWaitsUntilMergeReviewPasses]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandTests testVisualReviewWaitsUntilMergeReviewPasses]' passed (6.100 seconds).
+Test Suite 'AutoLandTests' passed at 2026-09-07 13:37:12.719.
+	 Executed 23 tests, with 0 failures (0 unexpected) in 197.431 (197.434) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' passed at 2026-09-07 13:37:12.719.
+	 Executed 23 tests, with 0 failures (0 unexpected) in 197.431 (197.434) seconds
+Test Suite 'Selected tests' passed at 2026-09-07 13:37:12.719.
+	 Executed 23 tests, with 0 failures (0 unexpected) in 197.431 (197.435) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

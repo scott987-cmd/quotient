@@ -1,0 +1,1256 @@
+[0/1] Planning build
+Test Suite 'Selected tests' started at 2026-09-07 13:33:57.394.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 13:33:57.426.
+Test Suite 'AttributionTests' started at 2026-09-07 13:33:57.426.
+Test Case '-[LLMQuotaCoreTests.AttributionTests testHeadSHAIsStableAndRealistic]' started.
+Test Case '-[LLMQuotaCoreTests.AttributionTests testHeadSHAIsStableAndRealistic]' passed (3.424 seconds).
+Test Case '-[LLMQuotaCoreTests.AttributionTests testSecondAgentContributionIsCountedSeparately]' started.
+Test Case '-[LLMQuotaCoreTests.AttributionTests testSecondAgentContributionIsCountedSeparately]' passed (4.466 seconds).
+Test Case '-[LLMQuotaCoreTests.AttributionTests testSecondAgentThatDidNothingCountsZero]' started.
+Test Case '-[LLMQuotaCoreTests.AttributionTests testSecondAgentThatDidNothingCountsZero]' passed (3.875 seconds).
+Test Case '-[LLMQuotaCoreTests.AttributionTests testUncommittedWorkCountsForThisAgent]' started.
+Test Case '-[LLMQuotaCoreTests.AttributionTests testUncommittedWorkCountsForThisAgent]' passed (5.419 seconds).
+Test Suite 'AttributionTests' passed at 2026-09-07 13:34:14.610.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 17.184 (17.185) seconds
+Test Suite 'AutoLandVetoScopeTests' started at 2026-09-07 13:34:14.610.
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testLegacyEntryStaysSticky]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testLegacyEntryStaysSticky]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testNewFormatRoundTrips]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testNewFormatRoundTrips]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testOldFormatFileDecodesToStickyEntries]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testOldFormatFileDecodesToStickyEntries]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testVetoBlocksTheCommitThatFailed]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testVetoBlocksTheCommitThatFailed]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testVetoExpiresWhenBranchMovesOn]' started.
+Test Case '-[LLMQuotaCoreTests.AutoLandVetoScopeTests testVetoExpiresWhenBranchMovesOn]' passed (0.000 seconds).
+Test Suite 'AutoLandVetoScopeTests' passed at 2026-09-07 13:34:14.612.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'AutoRefillFocusTests' started at 2026-09-07 13:34:14.612.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testAutomaticAllMustBeExplicit]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testAutomaticAllMustBeExplicit]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testAutoRefillDefaultsOff]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testAutoRefillDefaultsOff]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testEveryTaskStartPathUsesTheSameHardScope]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testEveryTaskStartPathUsesTheSameHardScope]' passed (0.077 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testExplicitFocusOffDoesNotFallBackToLegacySharedFlag]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testExplicitFocusOffDoesNotFallBackToLegacySharedFlag]' passed (0.004 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testFlagSurvivesRoundTrip]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testFlagSurvivesRoundTrip]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testFocusedProjectIsAHardExecutionBoundary]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testFocusedProjectIsAHardExecutionBoundary]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testImplementationOwnerOnlyConstrainsCoding]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testImplementationOwnerOnlyConstrainsCoding]' passed (0.286 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testLegacySharedFocusMigratesAsReadOnlyFallback]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testLegacySharedFocusMigratesAsReadOnlyFallback]' passed (0.284 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testMachineLocalFocusSurvivesRoundTrip]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testMachineLocalFocusSurvivesRoundTrip]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testManualOnlyRejectsAutomaticQueueButAllowsExplicitStart]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testManualOnlyRejectsAutomaticQueueButAllowsExplicitStart]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testOldConfigDecodesToOff]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testOldConfigDecodesToOff]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testOwnerAndQualityContractSurviveRoundTrip]' started.
+Test Case '-[LLMQuotaCoreTests.AutoRefillFocusTests testOwnerAndQualityContractSurviveRoundTrip]' passed (0.001 seconds).
+Test Suite 'AutoRefillFocusTests' passed at 2026-09-07 13:34:15.277.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.664 (0.665) seconds
+Test Suite 'BaselineFreshnessTests' started at 2026-09-07 13:34:15.277.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAliasBranchAtSameCommitDoesNotBlockContinuation]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAliasBranchAtSameCommitDoesNotBlockContinuation]' passed (7.224 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks]' passed (7.472 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testCleanRepoIsFresh]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testCleanRepoIsFresh]' passed (1.947 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testConflictingBranchDoesNotFreezeTheRepoForever]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testConflictingBranchDoesNotFreezeTheRepoForever]' passed (5.540 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testDescriptionExplainsTheRealCost]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testDescriptionExplainsTheRealCost]' passed (1.387 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testSubstantialUnmergedWorkMakesBaselineStale]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testSubstantialUnmergedWorkMakesBaselineStale]' passed (4.997 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testTinyBranchDoesNotBlockDispatch]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testTinyBranchDoesNotBlockDispatch]' passed (4.996 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testUnresolvableBranchesAndWrongRepositoryDoNotGainExemption]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testUnresolvableBranchesAndWrongRepositoryDoNotGainExemption]' passed (2.215 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testVisualQualityRejectedBranchDoesNotBlockRemediation]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testVisualQualityRejectedBranchDoesNotBlockRemediation]' passed (5.265 seconds).
+Test Suite 'BaselineFreshnessTests' passed at 2026-09-07 13:34:56.322.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 41.044 (41.045) seconds
+Test Suite 'BlockedPageTests' started at 2026-09-07 13:34:56.322.
+Test Case '-[LLMQuotaCoreTests.BlockedPageTests testEmptyStateIsReassuring]' started.
+Test Case '-[LLMQuotaCoreTests.BlockedPageTests testEmptyStateIsReassuring]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BlockedPageTests testFrozenByUpstreamIsNotListed]' started.
+Test Case '-[LLMQuotaCoreTests.BlockedPageTests testFrozenByUpstreamIsNotListed]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BlockedPageTests testWaitingForHumanGetsAnApproveButton]' started.
+Test Case '-[LLMQuotaCoreTests.BlockedPageTests testWaitingForHumanGetsAnApproveButton]' passed (0.001 seconds).
+Test Suite 'BlockedPageTests' passed at 2026-09-07 13:34:56.323.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'BossGateTests' started at 2026-09-07 13:34:56.323.
+Test Case '-[LLMQuotaCoreTests.BossGateTests testDesignDocIsNotMistakenForSigning]' started.
+Test Case '-[LLMQuotaCoreTests.BossGateTests testDesignDocIsNotMistakenForSigning]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BossGateTests testNoteExplainsWhichWayAndWhy]' started.
+Test Case '-[LLMQuotaCoreTests.BossGateTests testNoteExplainsWhichWayAndWhy]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BossGateTests testSigningAndPublishingAreHisCall]' started.
+Test Case '-[LLMQuotaCoreTests.BossGateTests testSigningAndPublishingAreHisCall]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BossGateTests testToolingIsMine]' started.
+Test Case '-[LLMQuotaCoreTests.BossGateTests testToolingIsMine]' passed (0.000 seconds).
+Test Suite 'BossGateTests' passed at 2026-09-07 13:34:56.325.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'BranchReuseTests' started at 2026-09-07 13:34:56.325.
+Test Case '-[LLMQuotaCoreTests.BranchReuseTests testRetryReusesExistingBranchWithItsCommits]' started.
+Test Case '-[LLMQuotaCoreTests.BranchReuseTests testRetryReusesExistingBranchWithItsCommits]' passed (4.220 seconds).
+Test Suite 'BranchReuseTests' passed at 2026-09-07 13:35:00.544.
+	 Executed 1 test, with 0 failures (0 unexpected) in 4.220 (4.220) seconds
+Test Suite 'BucketTests' started at 2026-09-07 13:35:00.545.
+Test Case '-[LLMQuotaCoreTests.BucketTests testAlignmentSnapsToFiveMinutes]' started.
+Test Case '-[LLMQuotaCoreTests.BucketTests testAlignmentSnapsToFiveMinutes]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BucketTests testBillableExcludesCacheReads]' started.
+Test Case '-[LLMQuotaCoreTests.BucketTests testBillableExcludesCacheReads]' passed (0.000 seconds).
+Test Suite 'BucketTests' passed at 2026-09-07 13:35:00.545.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'CollectCollapseTests' started at 2026-09-07 13:35:00.545.
+Test Case '-[LLMQuotaCoreTests.CollectCollapseTests testCollapseIsDetected]' started.
+Test Case '-[LLMQuotaCoreTests.CollectCollapseTests testCollapseIsDetected]' passed (0.016 seconds).
+Test Case '-[LLMQuotaCoreTests.CollectCollapseTests testNeverHadDataIsNotACollapse]' started.
+Test Case '-[LLMQuotaCoreTests.CollectCollapseTests testNeverHadDataIsNotACollapse]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.CollectCollapseTests testNoPreviousSnapshotIsNotACollapse]' started.
+Test Case '-[LLMQuotaCoreTests.CollectCollapseTests testNoPreviousSnapshotIsNotACollapse]' passed (0.104 seconds).
+Test Suite 'CollectCollapseTests' passed at 2026-09-07 13:35:00.672.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.126 (0.126) seconds
+Test Suite 'ConfigIntentTests' started at 2026-09-07 13:35:00.672.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testBoundaryValuesAreAccepted]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testBoundaryValuesAreAccepted]' passed (0.622 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testDifferentPlatformsBothApply]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testDifferentPlatformsBothApply]' passed (0.589 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testInvalidRoleIntentIsRejectedWithoutPartialWrite]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testInvalidRoleIntentIsRejectedWithoutPartialWrite]' passed (0.023 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testLatestIntentWinsRegardlessOfFilename]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testLatestIntentWinsRegardlessOfFilename]' passed (0.289 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testMalformedIntentsAreRejectedWithDistinctReasons]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testMalformedIntentsAreRejectedWithDistinctReasons]' passed (0.019 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testOtherFieldsSurviveTheWrite]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testOtherFieldsSurviveTheWrite]' passed (0.557 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testOutOfRangeIsRejectedNotClamped]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testOutOfRangeIsRejectedNotClamped]' passed (0.009 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testProcessedFilesAreMovedNotDeleted]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testProcessedFilesAreMovedNotDeleted]' passed (0.288 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testProcessedSubdirectoryIsNotIngested]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testProcessedSubdirectoryIsNotIngested]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testReceiptSaysWhatChanged]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testReceiptSaysWhatChanged]' passed (0.289 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testRoleIntentUpdatesOnlyEditableJobFields]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testRoleIntentUpdatesOnlyEditableJobFields]' passed (0.561 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testSupersededIntentIsNotReportedAsApplied]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testSupersededIntentIsNotReportedAsApplied]' passed (0.281 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testValidIntentActuallyChangesRoles]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testValidIntentActuallyChangesRoles]' passed (2.568 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testWeirdDateIsExplicitlyRejectedWithoutChangingReserve]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testWeirdDateIsExplicitlyRejectedWithoutChangingReserve]' passed (0.009 seconds).
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testWriteFailureKeepsTheIntentForNextRound]' started.
+Test Case '-[LLMQuotaCoreTests.ConfigIntentTests testWriteFailureKeepsTheIntentForNextRound]' passed (0.978 seconds).
+Test Suite 'ConfigIntentTests' passed at 2026-09-07 13:35:07.757.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 7.083 (7.085) seconds
+Test Suite 'ContextAffinityTests' started at 2026-09-07 13:35:07.757.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testAttemptsPreserveIntermediateTimeout]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testAttemptsPreserveIntermediateTimeout]' passed (0.005 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testAutomaticFallbackRemembersOwnerAndRecoveryRestoresIt]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testAutomaticFallbackRemembersOwnerAndRecoveryRestoresIt]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testCodexUsesProjectResumeOnlyWhenRequested]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testCodexUsesProjectResumeOnlyWhenRequested]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testDifferentOwnerRetryClearsEveryAffinityField]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testDifferentOwnerRetryClearsEveryAffinityField]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testGraphCapabilityLaneInheritsItsOwnOwner]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testGraphCapabilityLaneInheritsItsOwnOwner]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testGraphCapabilityLanesHaveIsolatedSessions]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testGraphCapabilityLanesHaveIsolatedSessions]' passed (0.005 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testGraphStepsShareOnlyTheirGraphSession]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testGraphStepsShareOnlyTheirGraphSession]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testKimiUsesProjectResumeOnlyWhenRequested]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testKimiUsesProjectResumeOnlyWhenRequested]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testLegacyAutomaticFallbackInfersRecoveryOwnerFromAttempts]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testLegacyAutomaticFallbackInfersRecoveryOwnerFromAttempts]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testLegacyRecoveryUsesOwnerBeforeCurrentFinalAttemptSegment]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testLegacyRecoveryUsesOwnerBeforeCurrentFinalAttemptSegment]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testLegacyRepoAffinityDoesNotLeakIntoANewTask]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testLegacyRepoAffinityDoesNotLeakIntoANewTask]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testManualAndAutomaticHandoffsHaveSeparateLimitsAndRollback]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testManualAndAutomaticHandoffsHaveSeparateLimitsAndRollback]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testManualOwnerChangeClearsAutomaticRecoveryTarget]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testManualOwnerChangeClearsAutomaticRecoveryTarget]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testManualRetryOnCurrentFallbackAlsoClearsRecoveryTarget]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testManualRetryOnCurrentFallbackAlsoClearsRecoveryTarget]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testMiniMaxCodeUsesTokenPlanEndpointAndClaudeToolShell]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testMiniMaxCodeUsesTokenPlanEndpointAndClaudeToolShell]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOpenCodeCredentialCheckOnlyNeedsProviderEntry]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOpenCodeCredentialCheckOnlyNeedsProviderEntry]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOpenCodeUsesProjectResumeOnlyWhenRequested]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOpenCodeUsesProjectResumeOnlyWhenRequested]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOtherOpenCodeProvidersDoNotReceiveOxVisionGuard]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOtherOpenCodeProvidersDoNotReceiveOxVisionGuard]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOwnedTaskRecoverySaysContinueInsteadOfChangeAgent]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOwnedTaskRecoverySaysContinueInsteadOfChangeAgent]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOwnerCanRetryEvenWhenItsPlatformIsInTriedPlatforms]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOwnerCanRetryEvenWhenItsPlatformIsInTriedPlatforms]' passed (3.410 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOwnerFieldsDecodeFromOldJSON]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOwnerFieldsDecodeFromOldJSON]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOwnerRetryOnlyUsesRemainingOverallBudget]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testOwnerRetryOnlyUsesRemainingOverallBudget]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testProcessTreeFindsAllDescendantsWithoutTouchingSiblings]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testProcessTreeFindsAllDescendantsWithoutTouchingSiblings]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testProjectLatestResumesOnlyTheSameTask]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testProjectLatestResumesOnlyTheSameTask]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testQwenUsesProjectResumeOnlyWhenRequested]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testQwenUsesProjectResumeOnlyWhenRequested]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testReportedSessionIDIsNeverInvented]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testReportedSessionIDIsNeverInvented]' passed (0.007 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testResetSessionAlsoRemovesLegacySourceSoItCannotResurrect]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testResetSessionAlsoRemovesLegacySourceSoItCannotResurrect]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testRetiredOxAlphaRunnerCannotBeCalledOrRegistered]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testRetiredOxAlphaRunnerCannotBeCalledOrRegistered]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testRunnerIdentityAndSessionSupportAreExplicit]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testRunnerIdentityAndSessionSupportAreExplicit]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testRunningAndTerminalEventsCountAsOneAttempt]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testRunningAndTerminalEventsCountAsOneAttempt]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testSamePlatformRetryPinsLegacyTaskToItsOriginalRunner]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testSamePlatformRetryPinsLegacyTaskToItsOriginalRunner]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testSessionFailureDetectionDoesNotEraseOnOrdinaryFailure]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testSessionFailureDetectionDoesNotEraseOnOrdinaryFailure]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testStableSessionsAreTaskScopedWithinTheAgentWorkspace]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testStableSessionsAreTaskScopedWithinTheAgentWorkspace]' passed (0.007 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testTimeoutExperimentNeverConsumesTheFallbackSlot]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testTimeoutExperimentNeverConsumesTheFallbackSlot]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testUnknownRunnerMigrationRefusesAmbiguousGuess]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testUnknownRunnerMigrationRefusesAmbiguousGuess]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testUnsupportedRunnerNeverCreatesSessionState]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testUnsupportedRunnerNeverCreatesSessionState]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testVolcarkRunnerPinsGatewayCodingModel]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests testVolcarkRunnerPinsGatewayCodingModel]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests test恢复中的上下文超限会作废旧会话]' started.
+Test Case '-[LLMQuotaCoreTests.ContextAffinityTests test恢复中的上下文超限会作废旧会话]' passed (0.000 seconds).
+Test Suite 'ContextAffinityTests' passed at 2026-09-07 13:35:11.232.
+	 Executed 38 tests, with 0 failures (0 unexpected) in 3.472 (3.475) seconds
+Test Suite 'ContextPackRolloutTests' started at 2026-09-07 13:35:11.232.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testActiveModeSwitchesToNewPackAndRefusalBlocks]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testActiveModeSwitchesToNewPackAndRefusalBlocks]' passed (6.923 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testActiveRecordsNewPackSizeAndRefusalRecordsNothing]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testActiveRecordsNewPackSizeAndRefusalRecordsNothing]' passed (12.858 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testCorruptConfigAndUnknownAliasesFailClosed]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testCorruptConfigAndUnknownAliasesFailClosed]' passed (2.786 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testEnablingOneAliasLeavesOtherReposInShadow]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testEnablingOneAliasLeavesOtherReposInShadow]' passed (3.876 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testEverythingDefaultsToShadowWithoutAnyConfiguration]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testEverythingDefaultsToShadowWithoutAnyConfiguration]' passed (2.233 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testLegacyBuilderKeepsCollaborationContractAheadOfLargeTaskBody]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testLegacyBuilderKeepsCollaborationContractAheadOfLargeTaskBody]' passed (7.053 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testLegacyBuilderKeepsEverySectionTheOldAssemblyHad]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testLegacyBuilderKeepsEverySectionTheOldAssemblyHad]' passed (11.702 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testOldManifestWithoutRolloutModeStillDecodes]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testOldManifestWithoutRolloutModeStillDecodes]' passed (2.240 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testPartitionEnabledSplitsRegisteredFromGhost]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testPartitionEnabledSplitsRegisteredFromGhost]' passed (2.225 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testQualityContractTailSurvivesBeyond8000Characters]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testQualityContractTailSurvivesBeyond8000Characters]' passed (8.039 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testShadowManifestRecordsLegacySystemInjectionExactly]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testShadowManifestRecordsLegacySystemInjectionExactly]' passed (6.956 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testShadowModeNeverBlocksDispatchAndKeepsRecordingTheNewPack]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testShadowModeNeverBlocksDispatchAndKeepsRecordingTheNewPack]' passed (6.367 seconds).
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testShadowSubtractsResumedAnswerFromSystemInjection]' started.
+Test Case '-[LLMQuotaCoreTests.ContextPackRolloutTests testShadowSubtractsResumedAnswerFromSystemInjection]' passed (2.219 seconds).
+Test Suite 'ContextPackRolloutTests' passed at 2026-09-07 13:36:26.711.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 75.478 (75.479) seconds
+Test Suite 'ControlPlaneRecoveryTests' started at 2026-09-07 13:36:26.711.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testFullReleaseHashesCannotMatchOnlyByDisplayPrefix]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testFullReleaseHashesCannotMatchOnlyByDisplayPrefix]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testInvalidWindowCannotProduceInventedPeak]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testInvalidWindowCannotProduceInventedPeak]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testLaunchdPathFindsExistingNpmGlobalTools]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testLaunchdPathFindsExistingNpmGlobalTools]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testLegacyInferredSigningClaimIsRecomputedButExplicitExtraClaimsRemain]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testLegacyInferredSigningClaimIsRecomputedButExplicitExtraClaimsRemain]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testPeakPreservesWindowBoundariesAndUnsortedUsage]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testPeakPreservesWindowBoundariesAndUnsortedUsage]' passed (0.056 seconds).
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testProhibitedPublishingDoesNotReserveSigningWhileSimulatorWorkStillDoes]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testProhibitedPublishingDoesNotReserveSigningWhileSimulatorWorkStillDoes]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testReleaseChannelSyncPrecedesBulkEvidenceAndSnapshotWork]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testReleaseChannelSyncPrecedesBulkEvidenceAndSnapshotWork]' passed (0.007 seconds).
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testReleaseSyncLimitsTransferToReferencedPayloadAndPublishesManifestLast]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testReleaseSyncLimitsTransferToReferencedPayloadAndPublishesManifestLast]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testReleaseVerificationRequiresAnExplicitFullTargetWhenSupplied]' started.
+Test Case '-[LLMQuotaCoreTests.ControlPlaneRecoveryTests testReleaseVerificationRequiresAnExplicitFullTargetWhenSupplied]' passed (0.001 seconds).
+Test Suite 'ControlPlaneRecoveryTests' passed at 2026-09-07 13:36:26.785.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.072 (0.074) seconds
+Test Suite 'CorruptTaskLineTests' started at 2026-09-07 13:36:26.785.
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testCounterResetsBetweenReads]' started.
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testCounterResetsBetweenReads]' passed (0.005 seconds).
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testHalfWrittenLineIsCounted]' started.
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testHalfWrittenLineIsCounted]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testMultipleCorruptLinesAllCounted]' started.
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testMultipleCorruptLinesAllCounted]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testTrailingNewlineIsNotCorruption]' started.
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testTrailingNewlineIsNotCorruption]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testWhitespaceOnlyLineIsNotCorruption]' started.
+Test Case '-[LLMQuotaCoreTests.CorruptTaskLineTests testWhitespaceOnlyLineIsNotCorruption]' passed (0.000 seconds).
+Test Suite 'CorruptTaskLineTests' passed at 2026-09-07 13:36:26.795.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.009 (0.010) seconds
+Test Suite 'DashboardResourceTests' started at 2026-09-07 13:36:26.795.
+Test Case '-[LLMQuotaCoreTests.DashboardResourceTests testDiagnosticsReportsMissingInsteadOfCrashing]' started.
+Test Case '-[LLMQuotaCoreTests.DashboardResourceTests testDiagnosticsReportsMissingInsteadOfCrashing]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.DashboardResourceTests testUnknownFileStillYieldsSearchPaths]' started.
+Test Case '-[LLMQuotaCoreTests.DashboardResourceTests testUnknownFileStillYieldsSearchPaths]' passed (0.000 seconds).
+Test Suite 'DashboardResourceTests' passed at 2026-09-07 13:36:26.796.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'DeadIdentityNoiseTests' started at 2026-09-07 13:36:26.796.
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_一次巡检不会因为同名淘汰另一台机器]' started.
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_一次巡检不会因为同名淘汰另一台机器]' passed (0.558 seconds).
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_合并时丢掉已死身份的事件]' started.
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_合并时丢掉已死身份的事件]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_无presence的旧问题收件箱目录会清理_新目录和活机器保留]' started.
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_无presence的旧问题收件箱目录会清理_新目录和活机器保留]' passed (0.282 seconds).
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_旧办公室分片不能靠自己的文件名自证存活]' started.
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_旧办公室分片不能靠自己的文件名自证存活]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_没有presence的每机文件_超时才清_本机永不清]' started.
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_没有presence的每机文件_超时才清_本机永不清]' passed (0.004 seconds).
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_活机器的办公室分片也不能夹带旧身份事件]' started.
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_活机器的办公室分片也不能夹带旧身份事件]' passed (0.279 seconds).
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_过期presence本体和云端孪生会一起回收]' started.
+Test Case '-[LLMQuotaCoreTests.DeadIdentityNoiseTests test_过期presence本体和云端孪生会一起回收]' passed (0.273 seconds).
+Test Suite 'DeadIdentityNoiseTests' passed at 2026-09-07 13:36:28.193.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 1.397 (1.397) seconds
+Test Suite 'DedupTests' started at 2026-09-07 13:36:28.193.
+Test Case '-[LLMQuotaCoreTests.DedupTests testDuplicateMergeKeepsRealValuesOverZeros]' started.
+Test Case '-[LLMQuotaCoreTests.DedupTests testDuplicateMergeKeepsRealValuesOverZeros]' passed (0.000 seconds).
+Test Suite 'DedupTests' passed at 2026-09-07 13:36:28.194.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'DerivedDispatchPrecisionTests' started at 2026-09-07 13:36:28.194.
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testDifferentKindsDoNotBlockEachOther]' started.
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testDifferentKindsDoNotBlockEachOther]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testFinishedRefreshIsNotPending]' started.
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testFinishedRefreshIsNotPending]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testOtherBranchRefreshIsNotADuplicate]' started.
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testOtherBranchRefreshIsNotADuplicate]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testRefreshSharesTheSameGiveUpRule]' started.
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testRefreshSharesTheSameGiveUpRule]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testSameBranchPendingRefreshIsDetected]' started.
+Test Case '-[LLMQuotaCoreTests.DerivedDispatchPrecisionTests testSameBranchPendingRefreshIsDetected]' passed (0.000 seconds).
+Test Suite 'DerivedDispatchPrecisionTests' passed at 2026-09-07 13:36:28.195.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'DispatcherRoleTests' started at 2026-09-07 13:36:28.195.
+Test Case '-[LLMQuotaCoreTests.DispatcherRoleTests testDispatcherIsPerMachine]' started.
+Test Case '-[LLMQuotaCoreTests.DispatcherRoleTests testDispatcherIsPerMachine]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.DispatcherRoleTests testLegacyMuteAsControlPlaneMigratesToDispatcher]' started.
+Test Case '-[LLMQuotaCoreTests.DispatcherRoleTests testLegacyMuteAsControlPlaneMigratesToDispatcher]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.DispatcherRoleTests testMachineWithoutDispatcherStillWorks]' started.
+Test Case '-[LLMQuotaCoreTests.DispatcherRoleTests testMachineWithoutDispatcherStillWorks]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.DispatcherRoleTests testOrdinaryMuteIsNotMigrated]' started.
+Test Case '-[LLMQuotaCoreTests.DispatcherRoleTests testOrdinaryMuteIsNotMigrated]' passed (0.000 seconds).
+Test Suite 'DispatcherRoleTests' passed at 2026-09-07 13:36:28.196.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ElsewhereTests' started at 2026-09-07 13:36:28.196.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testDispatcherOnThatMachineIsExcluded]' started.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testDispatcherOnThatMachineIsExcluded]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testFindsAMachineWhoseRoleCanTakeIt]' started.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testFindsAMachineWhoseRoleCanTakeIt]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testHintIsCopyPastable]' started.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testHintIsCopyPastable]' passed (0.281 seconds).
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testInsufficientRiskCeilingIsExcluded]' started.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testInsufficientRiskCeilingIsExcluded]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testMutedOnThatMachineIsExcluded]' started.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testMutedOnThatMachineIsExcluded]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testNoHintWhenNowhereCanTakeIt]' started.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testNoHintWhenNowhereCanTakeIt]' passed (0.278 seconds).
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testPlatformNotInstalledOnThatMachineIsExcluded]' started.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testPlatformNotInstalledOnThatMachineIsExcluded]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testPresenceWithoutNodeNameIsUnusable]' started.
+Test Case '-[LLMQuotaCoreTests.ElsewhereTests testPresenceWithoutNodeNameIsUnusable]' passed (0.001 seconds).
+Test Suite 'ElsewhereTests' passed at 2026-09-07 13:36:28.760.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.564 (0.565) seconds
+Test Suite 'EvidenceRetryCapTests' started at 2026-09-07 13:36:28.760.
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testCountsEveryDispatchRegardlessOfOutcome]' started.
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testCountsEveryDispatchRegardlessOfOutcome]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testMentioningAnotherBranchDoesNotCount]' started.
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testMentioningAnotherBranchDoesNotCount]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testNonEvidenceTasksDoNotCount]' started.
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testNonEvidenceTasksDoNotCount]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testOtherBranchesDoNotCount]' started.
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testOtherBranchesDoNotCount]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testStopsAfterTheSameGraceUsedByMergeReview]' started.
+Test Case '-[LLMQuotaCoreTests.EvidenceRetryCapTests testStopsAfterTheSameGraceUsedByMergeReview]' passed (0.000 seconds).
+Test Suite 'EvidenceRetryCapTests' passed at 2026-09-07 13:36:28.762.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'ExitClassifyTests' started at 2026-09-07 13:36:28.762.
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testBareSignalIsKilledNotFailed]' started.
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testBareSignalIsKilledNotFailed]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testDescriptionSaysItIsNotTheOutputsFault]' started.
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testDescriptionSaysItIsNotTheOutputsFault]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testRealFailuresStillFail]' started.
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testRealFailuresStillFail]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testShellEncodedSignalIsKilled]' started.
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testShellEncodedSignalIsKilled]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testTimeoutIsRequeuableButNotBlamed]' started.
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testTimeoutIsRequeuableButNotBlamed]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testZeroIsPassed]' started.
+Test Case '-[LLMQuotaCoreTests.ExitClassifyTests testZeroIsPassed]' passed (0.000 seconds).
+Test Suite 'ExitClassifyTests' passed at 2026-09-07 13:36:28.763.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'GameProjectBootstrapTests' started at 2026-09-07 13:36:28.763.
+Test Case '-[LLMQuotaCoreTests.GameProjectBootstrapTests testCreatesReusableGameContractsAndRegistersHardGates]' started.
+Test Case '-[LLMQuotaCoreTests.GameProjectBootstrapTests testCreatesReusableGameContractsAndRegistersHardGates]' passed (1.673 seconds).
+Test Case '-[LLMQuotaCoreTests.GameProjectBootstrapTests testSecondRunNeverOverwritesHumanContent]' started.
+Test Case '-[LLMQuotaCoreTests.GameProjectBootstrapTests testSecondRunNeverOverwritesHumanContent]' passed (3.050 seconds).
+Test Suite 'GameProjectBootstrapTests' passed at 2026-09-07 13:36:33.486.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 4.723 (4.723) seconds
+Test Suite 'GraphSessionTests' started at 2026-09-07 13:36:33.486.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testClaudeUsesTheRightFlagForEachPhase]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testClaudeUsesTheRightFlagForEachPhase]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testFirstCreateThenResume]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testFirstCreateThenResume]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testForgetFallsBackToCreate]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testForgetFallsBackToCreate]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testForgetGraphClearsAllPlatforms]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testForgetGraphClearsAllPlatforms]' passed (0.004 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testFreshCarriesNoSessionFlags]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testFreshCarriesNoSessionFlags]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testPlainTaskGetsFreshSession]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testPlainTaskGetsFreshSession]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testQwenUsesContinueOnlyWhenResuming]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testQwenUsesContinueOnlyWhenResuming]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testRunnersWithoutSupportIgnoreSession]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testRunnersWithoutSupportIgnoreSession]' passed (0.274 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testSessionsArePerGraph]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testSessionsArePerGraph]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testSessionsArePerPlatform]' started.
+Test Case '-[LLMQuotaCoreTests.GraphSessionTests testSessionsArePerPlatform]' passed (0.001 seconds).
+Test Suite 'GraphSessionTests' passed at 2026-09-07 13:36:33.771.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.284 (0.285) seconds
+Test Suite 'GraphWorktreeTests' started at 2026-09-07 13:36:33.771.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testCleanupRefusesToRemoveAnUnfinishedGraphWorktree]' started.
+保留 agent/graph/g8：图还没跑完，删了会带走前面几步的提交
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testCleanupRefusesToRemoveAnUnfinishedGraphWorktree]' passed (2.497 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testFailedTakeoverPreservesInheritedCommitsEvenWithoutNewFiles]' started.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testFailedTakeoverPreservesInheritedCommitsEvenWithoutNewFiles]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testPlainTaskKeepsPerTaskBranch]' started.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testPlainTaskKeepsPerTaskBranch]' passed (1.964 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testPlainTaskStartsFromTheExplicitHandoffBase]' started.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testPlainTaskStartsFromTheExplicitHandoffBase]' passed (3.599 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testSecondNodeReusesTheWorktreeAndSeesTheFirstCommit]' started.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testSecondNodeReusesTheWorktreeAndSeesTheFirstCommit]' passed (3.592 seconds).
+Test Suite 'GraphWorktreeTests' passed at 2026-09-07 13:36:45.424.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 11.653 (11.653) seconds
+Test Suite 'HousekeepingTests' started at 2026-09-07 13:36:45.424.
+Test Case '-[LLMQuotaCoreTests.HousekeepingTests testFreeDiskIsReadable]' started.
+Test Case '-[LLMQuotaCoreTests.HousekeepingTests testFreeDiskIsReadable]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.HousekeepingTests testQueuedVisualTaskKeepsItsEvidenceWhileTerminalOrphanIsSwept]' started.
+Test Case '-[LLMQuotaCoreTests.HousekeepingTests testQueuedVisualTaskKeepsItsEvidenceWhileTerminalOrphanIsSwept]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.HousekeepingTests testSweepsOnlyStaleVerifyDirs]' started.
+Test Case '-[LLMQuotaCoreTests.HousekeepingTests testSweepsOnlyStaleVerifyDirs]' passed (0.001 seconds).
+Test Suite 'HousekeepingTests' passed at 2026-09-07 13:36:45.428.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+Test Suite 'ICloudWriteGuardTests' started at 2026-09-07 13:36:45.428.
+Test Case '-[LLMQuotaCoreTests.ICloudWriteGuardTests testICloudPathDetection]' started.
+Test Case '-[LLMQuotaCoreTests.ICloudWriteGuardTests testICloudPathDetection]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ICloudWriteGuardTests testLocalWriteIsNotWatchdogged]' started.
+Test Case '-[LLMQuotaCoreTests.ICloudWriteGuardTests testLocalWriteIsNotWatchdogged]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ICloudWriteGuardTests testNoRawAtomicWritesInICloudTouchingFiles]' started.
+Test Case '-[LLMQuotaCoreTests.ICloudWriteGuardTests testNoRawAtomicWritesInICloudTouchingFiles]' passed (0.115 seconds).
+Test Suite 'ICloudWriteGuardTests' passed at 2026-09-07 13:36:45.544.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.116 (0.116) seconds
+Test Suite 'IdleFillerTests' started at 2026-09-07 13:36:45.544.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testBusyWindowIsNotFilled]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testBusyWindowIsNotFilled]' passed (0.569 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testCoolingPlatformIsSkipped]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testCoolingPlatformIsSkipped]' passed (0.563 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testDispatchableQueuedWorkSuppressesFilling]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testDispatchableQueuedWorkSuppressesFilling]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testDoesNotFillWhenQueueHasWork]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testDoesNotFillWhenQueueHasWork]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testEarlyInWindowIsLeftAlone]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testEarlyInWindowIsLeftAlone]' passed (0.570 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testFocusedProjectSkipsOtherProjectPlaybook]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testFocusedProjectSkipsOtherProjectPlaybook]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testNearExpiryAndIdleIsAnOpportunity]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testNearExpiryAndIdleIsAnOpportunity]' passed (0.553 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testNonQueuedStatesDoNotSuppress]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testNonQueuedStatesDoNotSuppress]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testQueuedWithMissingUpstreamDoesNotSuppress]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testQueuedWithMissingUpstreamDoesNotSuppress]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testRealDemandOutranksChores]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testRealDemandOutranksChores]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testStuckQueuedWorkDoesNotSuppressFilling]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testStuckQueuedWorkDoesNotSuppressFilling]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testWindowWithoutResetTimeIsSkipped]' started.
+Test Case '-[LLMQuotaCoreTests.IdleFillerTests testWindowWithoutResetTimeIsSkipped]' passed (0.561 seconds).
+Test Suite 'IdleFillerTests' passed at 2026-09-07 13:36:48.370.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 2.825 (2.826) seconds
+Test Suite 'InvocationIdentityTests' started at 2026-09-07 13:36:48.370.
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testLegacyInvocationKeepsOldIdentity]' started.
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testLegacyInvocationKeepsOldIdentity]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testNewInvocationIDSeparatesTwoClicksInSameSecond]' started.
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testNewInvocationIDSeparatesTwoClicksInSameSecond]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testPendingInvocationsIgnoreMetadataAndEmptyActions]' started.
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testPendingInvocationsIgnoreMetadataAndEmptyActions]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testPublishedActionsProtectLegacyConsumers]' started.
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testPublishedActionsProtectLegacyConsumers]' passed (1.109 seconds).
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testRoutedConsumerIsolatesMachineRetryBudgetAndTerminalReceipt]' started.
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testRoutedConsumerIsolatesMachineRetryBudgetAndTerminalReceipt]' passed (0.009 seconds).
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testRoutesRejectContradictionsAndReviewDecisionsArePerMachine]' started.
+Test Case '-[LLMQuotaCoreTests.InvocationIdentityTests testRoutesRejectContradictionsAndReviewDecisionsArePerMachine]' passed (0.001 seconds).
+Test Suite 'InvocationIdentityTests' passed at 2026-09-07 13:36:49.493.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 1.122 (1.122) seconds
+Test Suite 'LocalWorkerPoolTests' started at 2026-09-07 13:36:49.493.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testDifferentReposStillSerializeWhenTheyClaimSameExclusiveTool]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testDifferentReposStillSerializeWhenTheyClaimSameExclusiveTool]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testJustLaunchedChildReservesItsOwnerBeforeRunningStateIsWritten]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testJustLaunchedChildReservesItsOwnerBeforeRunningStateIsWritten]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testJustLaunchedChildReservesSlotBeforeTaskStoreCatchesUp]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testJustLaunchedChildReservesSlotBeforeTaskStoreCatchesUp]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testKernelLeaseRejectsSameKeyButAllowsDifferentKeys]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testKernelLeaseRejectsSameKeyButAllowsDifferentKeys]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testKernelResourceLeasePreventsPlannerRaceAndManualBypass]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testKernelResourceLeasePreventsPlannerRaceAndManualBypass]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testMacMiniDefaultsToTwoSlotsAndOtherMacsStayAtOne]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testMacMiniDefaultsToTwoSlotsAndOtherMacsStayAtOne]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testManualRunningTaskConsumesCapacityAndItsRepo]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testManualRunningTaskConsumesCapacityAndItsRepo]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testPlanPersistsReasonsForSelectedAndRejectedCandidates]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testPlanPersistsReasonsForSelectedAndRejectedCandidates]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testProcessPoolRunsChildrenConcurrentlyAndIsolatesFailure]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testProcessPoolRunsChildrenConcurrentlyAndIsolatesFailure]' passed (0.202 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testPublishedCapacityUsesActualLiveCoordinatorSlots]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testPublishedCapacityUsesActualLiveCoordinatorSlots]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testQueueTextDoesNotAccidentallyRequireUnreal]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testQueueTextDoesNotAccidentallyRequireUnreal]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSameRepoStillUsesOnlyOneSlot]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSameRepoStillUsesOnlyOneSlot]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSchedulerSnapshotDoesNotCountPausedTasksAsPending]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSchedulerSnapshotDoesNotCountPausedTasksAsPending]' passed (0.285 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSchedulerSnapshotExplainsIdleAndWaitingStates]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSchedulerSnapshotExplainsIdleAndWaitingStates]' passed (0.553 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSchedulerSnapshotJournalOnlyAppendsMeaningfulTransitions]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSchedulerSnapshotJournalOnlyAppendsMeaningfulTransitions]' passed (0.847 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSchedulerSnapshotRoundTripsSelectionAndConfigVersion]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testSchedulerSnapshotRoundTripsSelectionAndConfigVersion]' passed (0.004 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testStandaloneUERequiresUnrealCapabilityAndExclusiveEditor]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testStandaloneUERequiresUnrealCapabilityAndExclusiveEditor]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testTaskWaitsForItsBusyOwnerInsteadOfChangingAgent]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testTaskWaitsForItsBusyOwnerInsteadOfChangingAgent]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testTwoDifferentReposCanFillTwoSlots]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testTwoDifferentReposCanFillTwoSlots]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testTwoQueuedTasksWithSameOwnerDoNotStartTogether]' started.
+Test Case '-[LLMQuotaCoreTests.LocalWorkerPoolTests testTwoQueuedTasksWithSameOwnerDoNotStartTogether]' passed (0.000 seconds).
+Test Suite 'LocalWorkerPoolTests' passed at 2026-09-07 13:36:51.393.
+	 Executed 20 tests, with 0 failures (0 unexpected) in 1.899 (1.901) seconds
+Test Suite 'MachineIdentityTests' started at 2026-09-07 13:36:51.393.
+Test Case '-[LLMQuotaCoreTests.MachineIdentityTests testHardwareUUIDAvailableOnMac]' started.
+Test Case '-[LLMQuotaCoreTests.MachineIdentityTests testHardwareUUIDAvailableOnMac]' passed (0.277 seconds).
+Test Case '-[LLMQuotaCoreTests.MachineIdentityTests testStableAcrossCalls]' started.
+Test Case '-[LLMQuotaCoreTests.MachineIdentityTests testStableAcrossCalls]' passed (0.552 seconds).
+Test Case '-[LLMQuotaCoreTests.MachineIdentityTests testSurvivesCacheLoss]' started.
+Test Case '-[LLMQuotaCoreTests.MachineIdentityTests testSurvivesCacheLoss]' passed (0.546 seconds).
+Test Suite 'MachineIdentityTests' passed at 2026-09-07 13:36:52.769.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 1.375 (1.375) seconds
+Test Suite 'MachineStalenessTests' started at 2026-09-07 13:36:52.769.
+Test Case '-[LLMQuotaCoreTests.MachineStalenessTests testOneHourOldSnapshotIsStale]' started.
+Test Case '-[LLMQuotaCoreTests.MachineStalenessTests testOneHourOldSnapshotIsStale]' passed (0.000 seconds).
+Test Suite 'MachineStalenessTests' passed at 2026-09-07 13:36:52.769.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'MainlineInFlightTests' started at 2026-09-07 13:36:52.769.
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_done但分支没合_算在飞_合了或丢了不算]' started.
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_done但分支没合_算在飞_合了或丢了不算]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_同一任务取最新记录]' started.
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_同一任务取最新记录]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_在排在跑的也算在飞]' started.
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_在排在跑的也算在飞]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_在飞的块被跳过_挑下一块]' started.
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_在飞的块被跳过_挑下一块]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_标题解析]' started.
+Test Case '-[LLMQuotaCoreTests.MainlineInFlightTests test_标题解析]' passed (0.000 seconds).
+Test Suite 'MainlineInFlightTests' passed at 2026-09-07 13:36:52.772.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'MainlinePickTests' started at 2026-09-07 13:36:52.772.
+Test Case '-[LLMQuotaCoreTests.MainlinePickTests testAllDoneMeansNothingToDo]' started.
+Test Case '-[LLMQuotaCoreTests.MainlinePickTests testAllDoneMeansNothingToDo]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MainlinePickTests testNoMainlineSectionMeansNothing]' started.
+Test Case '-[LLMQuotaCoreTests.MainlinePickTests testNoMainlineSectionMeansNothing]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MainlinePickTests testPicksFirstUnfinishedAndMergesContinuationLines]' started.
+Test Case '-[LLMQuotaCoreTests.MainlinePickTests testPicksFirstUnfinishedAndMergesContinuationLines]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MainlinePickTests testPromptNamesTheBlock]' started.
+Test Case '-[LLMQuotaCoreTests.MainlinePickTests testPromptNamesTheBlock]' passed (0.000 seconds).
+Test Suite 'MainlinePickTests' passed at 2026-09-07 13:36:52.773.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'MediaDriverQuotaTests' started at 2026-09-07 13:36:52.773.
+Test Case '-[LLMQuotaCoreTests.MediaDriverQuotaTests test_普通失败不触发跳过]' started.
+Test Case '-[LLMQuotaCoreTests.MediaDriverQuotaTests test_普通失败不触发跳过]' passed (0.791 seconds).
+Test Case '-[LLMQuotaCoreTests.MediaDriverQuotaTests test_视频额度撞顶后_余下VIDEO不再发请求]' started.
+Test Case '-[LLMQuotaCoreTests.MediaDriverQuotaTests test_视频额度撞顶后_余下VIDEO不再发请求]' passed (0.534 seconds).
+Test Suite 'MediaDriverQuotaTests' passed at 2026-09-07 13:36:54.099.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 1.325 (1.326) seconds
+Test Suite 'MergeReviewTests' started at 2026-09-07 13:36:54.099.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testApprovalIsRead]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testApprovalIsRead]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testBoundaryIsInclusive]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testBoundaryIsInclusive]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testEmptyOutputsCountsAsNoVerdict]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testEmptyOutputsCountsAsNoVerdict]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testGraceScalesWithRequiredVotes]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testGraceScalesWithRequiredVotes]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testNormalRetryIsStillAllowed]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testNormalRetryIsStillAllowed]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testOldArchitectRejectionCannotOverwriteNewerBranchWork]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testOldArchitectRejectionCannotOverwriteNewerBranchWork]' passed (3.044 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testOneApprovalIsNotEnoughForRiskyPaths]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testOneApprovalIsNotEnoughForRiskyPaths]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testOneRejectionBlocksEvenWithApprovals]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testOneRejectionBlocksEvenWithApprovals]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRejectedArchitectEscalationReopensOriginalOwnerTask]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRejectedArchitectEscalationReopensOriginalOwnerTask]' passed (2.491 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRejectionInOutputsIsCounted]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRejectionInOutputsIsCounted]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRejectIsNeverReadAsApproval]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRejectIsNeverReadAsApproval]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRetryCapEscalatesToOneDecisiveArchitectTicket]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRetryCapEscalatesToOneDecisiveArchitectTicket]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRunawayRedispatchIsCutOff]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRunawayRedispatchIsCutOff]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRunningReviewDoesNotCount]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testRunningReviewDoesNotCount]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testSelfReferentialChangesNeedTwoApprovals]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testSelfReferentialChangesNeedTwoApprovals]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testTwoVotePromptAsksAboutVerificationBypass]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testTwoVotePromptAsksAboutVerificationBypass]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testUnparseableVerdictIsNil]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testUnparseableVerdictIsNil]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testUnreviewedBranchIsNotApproved]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testUnreviewedBranchIsNotApproved]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testVerdictInOutputsIsCounted]' started.
+Test Case '-[LLMQuotaCoreTests.MergeReviewTests testVerdictInOutputsIsCounted]' passed (0.000 seconds).
+Test Suite 'MergeReviewTests' passed at 2026-09-07 13:36:59.646.
+	 Executed 19 tests, with 0 failures (0 unexpected) in 5.545 (5.547) seconds
+Test Suite 'ModelRouterTests' started at 2026-09-07 13:36:59.646.
+Test Case '-[LLMQuotaCoreTests.ModelRouterTests testRoutesThirdPartyModelsAwayFromHostCLI]' started.
+Test Case '-[LLMQuotaCoreTests.ModelRouterTests testRoutesThirdPartyModelsAwayFromHostCLI]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ModelRouterTests testSyntheticMessagesAreNotRealCalls]' started.
+Test Case '-[LLMQuotaCoreTests.ModelRouterTests testSyntheticMessagesAreNotRealCalls]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ModelRouterTests testUnknownModelFallsBackToHostPlatform]' started.
+Test Case '-[LLMQuotaCoreTests.ModelRouterTests testUnknownModelFallsBackToHostPlatform]' passed (0.000 seconds).
+Test Suite 'ModelRouterTests' passed at 2026-09-07 13:36:59.648.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'MultiMachineDigestTests' started at 2026-09-07 13:36:59.648.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testBlindMachineWithEmptyLocalFileMustNotPublish]' started.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testBlindMachineWithEmptyLocalFileMustNotPublish]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testClearingTheLastEntryStillWrites]' started.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testClearingTheLastEntryStillWrites]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testEachMachineWritesItsOwnFile]' started.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testEachMachineWritesItsOwnFile]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testEntriesForSeenReposAreReplaced]' started.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testEntriesForSeenReposAreReplaced]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testEntriesForUnseenReposSurvive]' started.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testEntriesForUnseenReposSurvive]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testMachineThatSeesNothingWipesNothing]' started.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testMachineThatSeesNothingWipesNothing]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testNormalPublishWrites]' started.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testNormalPublishWrites]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testRejectedReminderUsesPublishedDigestWithoutRepositoryScan]' started.
+Test Case '-[LLMQuotaCoreTests.MultiMachineDigestTests testRejectedReminderUsesPublishedDigestWithoutRepositoryScan]' passed (0.000 seconds).
+Test Suite 'MultiMachineDigestTests' passed at 2026-09-07 13:36:59.652.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+Test Suite 'NudgeTargetTests' started at 2026-09-07 13:36:59.652.
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testMilestoneNotificationTargetsReviewPage]' started.
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testMilestoneNotificationTargetsReviewPage]' passed (0.835 seconds).
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testMilestoneReadinessIgnoresUnrelatedOldCardWithMissingEvidence]' started.
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testMilestoneReadinessIgnoresUnrelatedOldCardWithMissingEvidence]' passed (1.670 seconds).
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testMilestoneWaitsUntilCardAndEvidenceReachMobileRoot]' started.
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testMilestoneWaitsUntilCardAndEvidenceReachMobileRoot]' passed (1.665 seconds).
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testNonPageNudgesStillGoOut]' started.
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testNonPageNudgesStillGoOut]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testSentWhenPageHasCards]' started.
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testSentWhenPageHasCards]' passed (0.838 seconds).
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testSuppressedWhenPageIsEmpty]' started.
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testSuppressedWhenPageIsEmpty]' passed (0.837 seconds).
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testUnpublishedPageIsSuppressed]' started.
+Test Case '-[LLMQuotaCoreTests.NudgeTargetTests testUnpublishedPageIsSuppressed]' passed (0.001 seconds).
+Test Suite 'NudgeTargetTests' passed at 2026-09-07 13:37:05.499.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 5.846 (5.847) seconds
+Test Suite 'OfficialQuotaOverlapTests' started at 2026-09-07 13:37:05.499.
+Test Case '-[LLMQuotaCoreTests.OfficialQuotaOverlapTests testMismatchedWindowLengthDoesNotProduceAnEmptyDuplicate]' started.
+Test Case '-[LLMQuotaCoreTests.OfficialQuotaOverlapTests testMismatchedWindowLengthDoesNotProduceAnEmptyDuplicate]' passed (0.277 seconds).
+Test Case '-[LLMQuotaCoreTests.OfficialQuotaOverlapTests testUncoveredWindowClassStillShows]' started.
+Test Case '-[LLMQuotaCoreTests.OfficialQuotaOverlapTests testUncoveredWindowClassStillShows]' passed (0.281 seconds).
+Test Suite 'OfficialQuotaOverlapTests' passed at 2026-09-07 13:37:06.057.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.558 (0.558) seconds
+Test Suite 'OrphanReclaimTests' started at 2026-09-07 13:37:06.057.
+Test Case '-[LLMQuotaCoreTests.OrphanReclaimTests testDeadPIDIsDetected]' started.
+Test Case '-[LLMQuotaCoreTests.OrphanReclaimTests testDeadPIDIsDetected]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.OrphanReclaimTests testLivePIDMeansNotAnOrphan]' started.
+Test Case '-[LLMQuotaCoreTests.OrphanReclaimTests testLivePIDMeansNotAnOrphan]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.OrphanReclaimTests testMissingPIDIsTreatedAsOrphan]' started.
+Test Case '-[LLMQuotaCoreTests.OrphanReclaimTests testMissingPIDIsTreatedAsOrphan]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.OrphanReclaimTests testRunnerPIDRoundTrips]' started.
+Test Case '-[LLMQuotaCoreTests.OrphanReclaimTests testRunnerPIDRoundTrips]' passed (0.001 seconds).
+Test Suite 'OrphanReclaimTests' passed at 2026-09-07 13:37:06.061.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+Test Suite 'PaperworkNotForHumanTests' started at 2026-09-07 13:37:06.061.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testEvidenceLogIsNotVisibleChange]' started.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testEvidenceLogIsNotVisibleChange]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testGameCodeInManualReviewRepoNeedsAgentReview]' started.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testGameCodeInManualReviewRepoNeedsAgentReview]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testOrdinaryRepoDoesNotNeedAgentReview]' started.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testOrdinaryRepoDoesNotNeedAgentReview]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testOtherReasonsSurviveThePaperworkExemption]' started.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testOtherReasonsSurviveThePaperworkExemption]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testPaperworkSkipsAgentReviewEvenInManualReviewRepo]' started.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testPaperworkSkipsAgentReviewEvenInManualReviewRepo]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testRealGameCodeStillNeedsTheHighBar]' started.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testRealGameCodeStillNeedsTheHighBar]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testRecordingIsEvidenceNotProduct]' started.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testRecordingIsEvidenceNotProduct]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testReviewReportIsNotVisibleChange]' started.
+Test Case '-[LLMQuotaCoreTests.PaperworkNotForHumanTests testReviewReportIsNotVisibleChange]' passed (0.000 seconds).
+Test Suite 'PaperworkNotForHumanTests' passed at 2026-09-07 13:37:06.064.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'PlanReconcileTests' started at 2026-09-07 13:37:06.064.
+Test Case '-[LLMQuotaCoreTests.PlanReconcileTests testNewPlatformIsAddedToExistingPlans]' started.
+Test Case '-[LLMQuotaCoreTests.PlanReconcileTests testNewPlatformIsAddedToExistingPlans]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.PlanReconcileTests testTemplateWindowsReachSavedConfigWhileKeepingValues]' started.
+Test Case '-[LLMQuotaCoreTests.PlanReconcileTests testTemplateWindowsReachSavedConfigWhileKeepingValues]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.PlanReconcileTests testUnknownButFilledLimitsSurvive]' started.
+Test Case '-[LLMQuotaCoreTests.PlanReconcileTests testUnknownButFilledLimitsSurvive]' passed (0.000 seconds).
+Test Suite 'PlanReconcileTests' passed at 2026-09-07 13:37:06.069.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.004 (0.005) seconds
+Test Suite 'PlannedStoreTests' started at 2026-09-07 13:37:06.069.
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testDecodesWithMissingKeys]' started.
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testDecodesWithMissingKeys]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testEmptyPromptsAreDropped]' started.
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testEmptyPromptsAreDropped]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testMoveUpAndDown]' started.
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testMoveUpAndDown]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testOrderIsPreserved]' started.
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testOrderIsPreserved]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testRemoveByPosition]' started.
+Test Case '-[LLMQuotaCoreTests.PlannedStoreTests testRemoveByPosition]' passed (0.002 seconds).
+Test Suite 'PlannedStoreTests' passed at 2026-09-07 13:37:06.078.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.009 (0.009) seconds
+Test Suite 'PlatformHealthTests' started at 2026-09-07 13:37:06.078.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testCoolingDoesNotExcuseNotInstalled]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testCoolingDoesNotExcuseNotInstalled]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testCoolingPlatformIsNotDoubleReported]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testCoolingPlatformIsNotDoubleReported]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testDuplicateRunnersOfSamePlatformAreCollapsed]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testDuplicateRunnersOfSamePlatformAreCollapsed]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testFreshTaskEvidenceWinsOverLocalConfigurationScan]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testFreshTaskEvidenceWinsOverLocalConfigurationScan]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testHealthIdentitySeparatesRunnersAndCapabilitiesOnSamePlatform]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testHealthIdentitySeparatesRunnersAndCapabilitiesOnSamePlatform]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testInstalledButBrokenIsAlwaysAFault]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testInstalledButBrokenIsAlwaysAFault]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testMergedEntriesToleratesDuplicateLegacyKeys]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testMergedEntriesToleratesDuplicateLegacyKeys]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testNeverInstalledIsNotAFault]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testNeverInstalledIsNotAFault]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testNeverProbedMachinesAreListedSeparately]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testNeverProbedMachinesAreListedSeparately]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testPassiveCheckHasNoModelCallAndKeepsRemoteAvailabilityUnknown]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testPassiveCheckHasNoModelCallAndKeepsRemoteAvailabilityUnknown]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testReportsBrokenPlatformWithMachineName]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testReportsBrokenPlatformWithMachineName]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testRunnerCooldownDoesNotHideSiblingRunnerFailure]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testRunnerCooldownDoesNotHideSiblingRunnerFailure]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testSilentWhenEverythingIsFine]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testSilentWhenEverythingIsFine]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testStaleReportIsFlaggedAsStaleNotAsStatus]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testStaleReportIsFlaggedAsStaleNotAsStatus]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testWasWorkingThenVanishedIsAFault]' started.
+Test Case '-[LLMQuotaCoreTests.PlatformHealthTests testWasWorkingThenVanishedIsAFault]' passed (0.000 seconds).
+Test Suite 'PlatformHealthTests' passed at 2026-09-07 13:37:06.080.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'PlaybookTopicTests' started at 2026-09-07 13:37:06.080.
+Test Case '-[LLMQuotaCoreTests.PlaybookTopicTests testEmptyBacklogStopsTheProject]' started.
+Test Case '-[LLMQuotaCoreTests.PlaybookTopicTests testEmptyBacklogStopsTheProject]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlaybookTopicTests testPinnedRecipeRejectsOtherPlatforms]' started.
+Test Case '-[LLMQuotaCoreTests.PlaybookTopicTests testPinnedRecipeRejectsOtherPlatforms]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlaybookTopicTests testTopicIsFilledIntoThePrompt]' started.
+Test Case '-[LLMQuotaCoreTests.PlaybookTopicTests testTopicIsFilledIntoThePrompt]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.PlaybookTopicTests testUnpinnedRecipeAcceptsAnyPlatform]' started.
+Test Case '-[LLMQuotaCoreTests.PlaybookTopicTests testUnpinnedRecipeAcceptsAnyPlatform]' passed (0.001 seconds).
+Test Suite 'PlaybookTopicTests' passed at 2026-09-07 13:37:06.081.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ProjectContractTests' started at 2026-09-07 13:37:06.081.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testCompleteContractCanStartProduction]' started.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testCompleteContractCanStartProduction]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testExperienceCriterionMustBindReference]' started.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testExperienceCriterionMustBindReference]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testExperienceCriterionMustDeclareRejectConditions]' started.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testExperienceCriterionMustDeclareRejectConditions]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testFlintShapedRouteConflictRejectsExpansionAndAdmitsCompliantMutation]' started.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testFlintShapedRouteConflictRejectsExpansionAndAdmitsCompliantMutation]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testGenericBootstrapCreatesOnceAndNeverOverwrites]' started.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testGenericBootstrapCreatesOnceAndNeverOverwrites]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testGoldenSampleCannotReferenceUnknownCriterion]' started.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testGoldenSampleCannotReferenceUnknownCriterion]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testJSONReportIncludesProductionDecision]' started.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testJSONReportIncludesProductionDecision]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testLegacyProjectDoesNotSilentlyPassWithoutManifest]' started.
+Test Case '-[LLMQuotaCoreTests.ProjectContractTests testLegacyProjectDoesNotSilentlyPassWithoutManifest]' passed (0.002 seconds).
+Test Suite 'ProjectContractTests' passed at 2026-09-07 13:37:06.096.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.014 (0.015) seconds
+Test Suite 'QualityGuardrailGateTests' started at 2026-09-07 13:37:06.096.
+Test Case '-[LLMQuotaCoreTests.QualityGuardrailGateTests testMissingProtectedSymbolFailsClosed]' started.
+Test Case '-[LLMQuotaCoreTests.QualityGuardrailGateTests testMissingProtectedSymbolFailsClosed]' passed (2.499 seconds).
+Test Case '-[LLMQuotaCoreTests.QualityGuardrailGateTests testWeakenedMinimumIsBlockedButTightenedMinimumPasses]' started.
+Test Case '-[LLMQuotaCoreTests.QualityGuardrailGateTests testWeakenedMinimumIsBlockedButTightenedMinimumPasses]' passed (3.597 seconds).
+Test Suite 'QualityGuardrailGateTests' passed at 2026-09-07 13:37:12.192.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 6.096 (6.096) seconds
+Test Suite 'QuotaAccuracyTests' started at 2026-09-07 13:37:12.192.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testAuxiliaryQuotaDoesNotFreezeReadOnlyHelperSelection]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testAuxiliaryQuotaDoesNotFreezeReadOnlyHelperSelection]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testCodexCurrentWindowSetSuppressesUnconfiguredTemplateWindows]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testCodexCurrentWindowSetSuppressesUnconfiguredTemplateWindows]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testCodexSparkDoesNotOverwriteMainSubscription]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testCodexSparkDoesNotOverwriteMainSubscription]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testExpiredFactsDoNotBlockReserveDecision]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testExpiredFactsDoNotBlockReserveDecision]' passed (0.279 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testLegacyHelperFallbackCannotSpendPlatformReserve]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testLegacyHelperFallbackCannotSpendPlatformReserve]' passed (0.008 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testMenuAlertsIgnoreAuxiliaryAndExpiredQuota]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testMenuAlertsIgnoreAuxiliaryAndExpiredQuota]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testQuotaOnlyLogIsNotPrunedAsAnEmptyOldFile]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testQuotaOnlyLogIsNotPrunedAsAnEmptyOldFile]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testRemovedWindowAndLegacySnapshotCannotReappear]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testRemovedWindowAndLegacySnapshotCannotReappear]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testResetInFutureDoesNotMakeOldObservationFreshForAWeek]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaAccuracyTests testResetInFutureDoesNotMakeOldObservationFreshForAWeek]' passed (0.000 seconds).
+Test Suite 'QuotaAccuracyTests' passed at 2026-09-07 13:37:12.487.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.294 (0.295) seconds
+Test Suite 'QuotaCalibrationTests' started at 2026-09-07 13:37:12.487.
+Test Case '-[LLMQuotaCoreTests.QuotaCalibrationTests testDividesUsageByPercent]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaCalibrationTests testDividesUsageByPercent]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaCalibrationTests testGuards]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaCalibrationTests testGuards]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaCalibrationTests testHundredPercentMeansUsedIsTheLimit]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaCalibrationTests testHundredPercentMeansUsedIsTheLimit]' passed (0.000 seconds).
+Test Suite 'QuotaCalibrationTests' passed at 2026-09-07 13:37:12.488.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'QuotaEngineTests' started at 2026-09-07 13:37:12.488.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testCooldownRemainsSeparateFromQuotaFacts]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testCooldownRemainsSeparateFromQuotaFacts]' passed (0.273 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testDailyWindowAlignsToLocalMidnight]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testDailyWindowAlignsToLocalMidnight]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testDetectsOverageRisk]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testDetectsOverageRisk]' passed (0.279 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testDetectsWastingQuota]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testDetectsWastingQuota]' passed (0.280 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testExplicitAnchorOverridesNaturalAlignment]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testExplicitAnchorOverridesNaturalAlignment]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testLegacyQuotaStatusWithoutStageEFieldsStillDecodes]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testLegacyQuotaStatusWithoutStageEFieldsStillDecodes]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testMissingLimitIsUnconfigured]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testMissingLimitIsUnconfigured]' passed (0.278 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testMobileFeedSeparatesFactsEstimatesUnknownAndCooldown]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testMobileFeedSeparatesFactsEstimatesUnknownAndCooldown]' passed (0.280 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testMonthlyWindowUsesCalendarMonthNotFixed30Days]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testMonthlyWindowUsesCalendarMonthNotFixed30Days]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testOfficialQuotaSupersedesLocalEstimate]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testOfficialQuotaSupersedesLocalEstimate]' passed (0.281 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testPeriodicWindowAlignsAndComputesReset]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testPeriodicWindowAlignsAndComputesReset]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testRetiredPlatformNeverReturnsToDashboardFromOldPlanAndSnapshot]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testRetiredPlatformNeverReturnsToDashboardFromOldPlanAndSnapshot]' passed (0.281 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testRollingWindowNeverReportsWaste]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testRollingWindowNeverReportsWaste]' passed (0.315 seconds).
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testStaleOfficialQuotaIsIgnored]' started.
+Test Case '-[LLMQuotaCoreTests.QuotaEngineTests testStaleOfficialQuotaIsIgnored]' passed (0.000 seconds).
+Test Suite 'QuotaEngineTests' passed at 2026-09-07 13:37:14.757.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 2.268 (2.269) seconds
+Test Suite 'QwenLaneTests' started at 2026-09-07 13:37:14.757.
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testSessionProjectsIsCallableAndStable]' started.
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testSessionProjectsIsCallableAndStable]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testSessionToProjectJoin]' started.
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testSessionToProjectJoin]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testUnknownFallsBackToInteractive]' started.
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testUnknownFallsBackToInteractive]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testUserProjectIsInteractive]' started.
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testUserProjectIsInteractive]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testWorktreePathIsHeadless]' started.
+Test Case '-[LLMQuotaCoreTests.QwenLaneTests testWorktreePathIsHeadless]' passed (0.000 seconds).
+Test Suite 'QwenLaneTests' passed at 2026-09-07 13:37:14.761.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.004 (0.004) seconds
+Test Suite 'ReleaseFanoutTests' started at 2026-09-07 13:37:14.761.
+Test Case '-[LLMQuotaCoreTests.ReleaseFanoutTests testChangingTargetMakesPreviouslyCurrentPeerPending]' started.
+Test Case '-[LLMQuotaCoreTests.ReleaseFanoutTests testChangingTargetMakesPreviouslyCurrentPeerPending]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReleaseFanoutTests testEmptyInstalledMeansBehind]' started.
+Test Case '-[LLMQuotaCoreTests.ReleaseFanoutTests testEmptyInstalledMeansBehind]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReleaseFanoutTests testOnlyFreshOnlineMachinesBlockCompletion]' started.
+Test Case '-[LLMQuotaCoreTests.ReleaseFanoutTests testOnlyFreshOnlineMachinesBlockCompletion]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReleaseFanoutTests testUpToDateMatchesByPrefix]' started.
+Test Case '-[LLMQuotaCoreTests.ReleaseFanoutTests testUpToDateMatchesByPrefix]' passed (0.000 seconds).
+Test Suite 'ReleaseFanoutTests' passed at 2026-09-07 13:37:14.762.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'ReserveFractionTests' started at 2026-09-07 13:37:14.762.
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testBoundaryValuesAreValid]' started.
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testBoundaryValuesAreValid]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testOutOfRangeValuesAreIgnored]' started.
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testOutOfRangeValuesAreIgnored]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testPerPlatformValuesAreHonoured]' started.
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testPerPlatformValuesAreHonoured]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testRoundTrips]' started.
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testRoundTrips]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testUnsetFallsBackToGlobalDefault]' started.
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testUnsetFallsBackToGlobalDefault]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testVolcarkDefaultsToComplexCodingRole]' started.
+Test Case '-[LLMQuotaCoreTests.ReserveFractionTests testVolcarkDefaultsToComplexCodingRole]' passed (0.000 seconds).
+Test Suite 'ReserveFractionTests' passed at 2026-09-07 13:37:14.764.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'ReservePublishingTests' started at 2026-09-07 13:37:14.764.
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testDashboardJSONCarriesBothFields]' started.
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testDashboardJSONCarriesBothFields]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testOldRecordWithoutReserveIsDefaultStillDecodes]' started.
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testOldRecordWithoutReserveIsDefaultStillDecodes]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testOldRecordWithReserveInfersNotDefault]' started.
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testOldRecordWithReserveInfersNotDefault]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testOutOfRangeRecordReadsAsDefault]' started.
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testOutOfRangeRecordReadsAsDefault]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testPublishedRoleResolvesInheritedDefault]' started.
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testPublishedRoleResolvesInheritedDefault]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testPublishedValueMatchesWhatSchedulerEnforces]' started.
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testPublishedValueMatchesWhatSchedulerEnforces]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testSaveNormalisesTheDerivedFlag]' started.
+Test Case '-[LLMQuotaCoreTests.ReservePublishingTests testSaveNormalisesTheDerivedFlag]' passed (0.283 seconds).
+Test Suite 'ReservePublishingTests' passed at 2026-09-07 13:37:15.052.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.287 (0.288) seconds
+Test Suite 'ReviewPromptDescribesBranchTests' started at 2026-09-07 13:37:15.052.
+Test Case '-[LLMQuotaCoreTests.ReviewPromptDescribesBranchTests test_任务专属范围原样传给评审且优先于通用质量规则]' started.
+Test Case '-[LLMQuotaCoreTests.ReviewPromptDescribesBranchTests test_任务专属范围原样传给评审且优先于通用质量规则]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ReviewPromptDescribesBranchTests test_单提交分支_保持原样]' started.
+Test Case '-[LLMQuotaCoreTests.ReviewPromptDescribesBranchTests test_单提交分支_保持原样]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReviewPromptDescribesBranchTests test_多提交分支_列出任务标题和全部提交_并警告别拿末尾提交当描述]' started.
+Test Case '-[LLMQuotaCoreTests.ReviewPromptDescribesBranchTests test_多提交分支_列出任务标题和全部提交_并警告别拿末尾提交当描述]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ReviewPromptDescribesBranchTests test_过长任务历史保留开头契约并明确截断]' started.
+Test Case '-[LLMQuotaCoreTests.ReviewPromptDescribesBranchTests test_过长任务历史保留开头契约并明确截断]' passed (0.001 seconds).
+Test Suite 'ReviewPromptDescribesBranchTests' passed at 2026-09-07 13:37:15.055.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'RiskyPathGateTests' started at 2026-09-07 13:37:15.055.
+Test Case '-[LLMQuotaCoreTests.RiskyPathGateTests testGateReadsRealWorktreeChanges]' started.
+Test Case '-[LLMQuotaCoreTests.RiskyPathGateTests testGateReadsRealWorktreeChanges]' passed (1.387 seconds).
+Test Case '-[LLMQuotaCoreTests.RiskyPathGateTests testOrdinaryPathsAreNotFlagged]' started.
+Test Case '-[LLMQuotaCoreTests.RiskyPathGateTests testOrdinaryPathsAreNotFlagged]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.RiskyPathGateTests testRiskyPathsAreAllCaught]' started.
+Test Case '-[LLMQuotaCoreTests.RiskyPathGateTests testRiskyPathsAreAllCaught]' passed (0.000 seconds).
+Test Suite 'RiskyPathGateTests' passed at 2026-09-07 13:37:16.442.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 1.387 (1.388) seconds
+Test Suite 'ShowcaseTests' started at 2026-09-07 13:37:16.442.
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests test_force能立刻刷]' started.
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests test_force能立刻刷]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests test_到点才刷_不到点不刷]' started.
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests test_到点才刷_不到点不刷]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests test_并发不重入_每个发布器只跑一次]' started.
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests test_并发不重入_每个发布器只跑一次]' passed (0.398 seconds).
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests test_默认发布器覆盖手机读的每一页]' started.
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests test_默认发布器覆盖手机读的每一页]' passed (0.028 seconds).
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests testSlowPageDoesNotBlockOtherPagesOrAccumulateThreads]' started.
+Test Case '-[LLMQuotaCoreTests.ShowcaseTests testSlowPageDoesNotBlockOtherPagesOrAccumulateThreads]' passed (0.033 seconds).
+Test Suite 'ShowcaseTests' passed at 2026-09-07 13:37:16.901.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.458 (0.459) seconds
+Test Suite 'SmartConsultationPolicyTests' started at 2026-09-07 13:37:16.901.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testActiveContextPackCarriesSmartConsultationAsAuditableContract]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testActiveContextPackCarriesSmartConsultationAsAuditableContract]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testAnswerRequiresOwnerAcknowledgementThenClosesDecisionPoint]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testAnswerRequiresOwnerAcknowledgementThenClosesDecisionPoint]' passed (0.829 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testArchitectAndDerivedReviewDoNotConsultThemselves]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testArchitectAndDerivedReviewDoNotConsultThemselves]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testArchitectureBoundaryRequiresOneCodexConsultation]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testArchitectureBoundaryRequiresOneCodexConsultation]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testBoundedImplementationDoesNotCreatePerformativeConsultation]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testBoundedImplementationDoesNotCreatePerformativeConsultation]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testExistingQuestionWaitsAndDoesNotAskAgain]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testExistingQuestionWaitsAndDoesNotAskAgain]' passed (0.275 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testFailedConsultationDoesNotKeepWaitingOrFakeAnAnswer]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testFailedConsultationDoesNotKeepWaitingOrFakeAnAnswer]' passed (1.110 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testFailureConsultationIgnoresQuotaOtherTasksAndFailuresAlreadyAddressed]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testFailureConsultationIgnoresQuotaOtherTasksAndFailuresAlreadyAddressed]' passed (0.838 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testNewFailureAfterAcknowledgementOpensStableNewDecisionPoint]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testNewFailureAfterAcknowledgementOpensStableNewDecisionPoint]' passed (1.665 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testQualityContractReferenceAloneDoesNotTriggerArchitectureMeeting]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testQualityContractReferenceAloneDoesNotTriggerArchitectureMeeting]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testRepeatedFailureRequiresConsultationWithoutArchitectureKeywords]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testRepeatedFailureRequiresConsultationWithoutArchitectureKeywords]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testRunningOwnerReceivesAcknowledgementActionWithoutForgedEvents]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testRunningOwnerReceivesAcknowledgementActionWithoutForgedEvents]' passed (0.853 seconds).
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testTwoRealFailuresTriggerConsultationWithoutArchitectureKeyword]' started.
+Test Case '-[LLMQuotaCoreTests.SmartConsultationPolicyTests testTwoRealFailuresTriggerConsultationWithoutArchitectureKeyword]' passed (0.007 seconds).
+Test Suite 'SmartConsultationPolicyTests' passed at 2026-09-07 13:37:22.487.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 5.585 (5.586) seconds
+Test Suite 'SnapshotCompatTests' started at 2026-09-07 13:37:22.487.
+Test Case '-[LLMQuotaCoreTests.SnapshotCompatTests testNewFieldsRoundTrip]' started.
+Test Case '-[LLMQuotaCoreTests.SnapshotCompatTests testNewFieldsRoundTrip]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.SnapshotCompatTests testOldQuotaWithoutNewFieldsStillDecodes]' started.
+Test Case '-[LLMQuotaCoreTests.SnapshotCompatTests testOldQuotaWithoutNewFieldsStillDecodes]' passed (0.004 seconds).
+Test Suite 'SnapshotCompatTests' passed at 2026-09-07 13:37:22.492.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.005 (0.005) seconds
+Test Suite 'StaleIdentityRootTests' started at 2026-09-07 13:37:22.492.
+Test Case '-[LLMQuotaCoreTests.StaleIdentityRootTests test_run也清理真正参与看板汇总的本地镜像快照]' started.
+Test Case '-[LLMQuotaCoreTests.StaleIdentityRootTests test_run也清理真正参与看板汇总的本地镜像快照]' passed (0.285 seconds).
+Test Case '-[LLMQuotaCoreTests.StaleIdentityRootTests test_run会把本地和云端的旧身份一起删_保留最新与本机]' started.
+Test Case '-[LLMQuotaCoreTests.StaleIdentityRootTests test_run会把本地和云端的旧身份一起删_保留最新与本机]' passed (0.277 seconds).
+Test Case '-[LLMQuotaCoreTests.StaleIdentityRootTests test_云端独有的旧身份被镜像拉回后仍能一次收敛]' started.
+Test Case '-[LLMQuotaCoreTests.StaleIdentityRootTests test_云端独有的旧身份被镜像拉回后仍能一次收敛]' passed (0.009 seconds).
+Test Case '-[LLMQuotaCoreTests.StaleIdentityRootTests test_默认云端根是真的iCloud目录_不在本地暂存里]' started.
+Test Case '-[LLMQuotaCoreTests.StaleIdentityRootTests test_默认云端根是真的iCloud目录_不在本地暂存里]' passed (0.000 seconds).
+Test Suite 'StaleIdentityRootTests' passed at 2026-09-07 13:37:23.064.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.572 (0.572) seconds
+Test Suite 'TaskBoardStoreTests' started at 2026-09-07 13:37:23.064.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testCollectPublishesBothTheDashboardAndTheTaskboard]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testCollectPublishesBothTheDashboardAndTheTaskboard]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testDashboardStillCarriesTasksForOldPhones]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testDashboardStillCarriesTasksForOldPhones]' passed (0.280 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testDecodesWithEveryOptionalKeyMissing]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testDecodesWithEveryOptionalKeyMissing]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testDefaultMachineIDComesFromPaths]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testDefaultMachineIDComesFromPaths]' passed (0.567 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testFileNameOwnsTaskBoardMachineIdentity]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testFileNameOwnsTaskBoardMachineIdentity]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLastActivityTakesTheNewerSignal]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLastActivityTakesTheNewerSignal]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLegacyDashboardMergesFreshTasksFromEveryMachine]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLegacyDashboardMergesFreshTasksFromEveryMachine]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLegacyDashboardRejectsFarFutureRemoteBoard]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLegacyDashboardRejectsFarFutureRemoteBoard]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLegacyDashboardRejectsStaleRemoteRunningTask]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLegacyDashboardRejectsStaleRemoteRunningTask]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLegacyDashboardUsesNewestObservationForTransferredTask]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLegacyDashboardUsesNewestObservationForTransferredTask]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLoadAllSeparatesUnreadableFromAbsent]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testLoadAllSeparatesUnreadableFromAbsent]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testMachineIDFallsBackToTheFileName]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testMachineIDFallsBackToTheFileName]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testMissingDirectoryIsNotTheSameAsEmptyDirectory]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testMissingDirectoryIsNotTheSameAsEmptyDirectory]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPruneDoesNothingWhenTheDirectoryIsGone]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPruneDoesNothingWhenTheDirectoryIsGone]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPruneFallsBackToFileTimeWhenGeneratedAtIsMissing]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPruneFallsBackToFileTimeWhenGeneratedAtIsMissing]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPruneKeepsBoardsItCannotRead]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPruneKeepsBoardsItCannotRead]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPruneRemovesBoardsNobodyHasTouchedForAWeek]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPruneRemovesBoardsNobodyHasTouchedForAWeek]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPublishedBoardMirrorsTheDashboardExactly]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPublishedBoardMirrorsTheDashboardExactly]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPublishNeverTouchesAnotherMachinesFile]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPublishNeverTouchesAnotherMachinesFile]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPublishWritesOneFilePerMachine]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testPublishWritesOneFilePerMachine]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testStaleThresholdIsTwoCollectionRounds]' started.
+Test Case '-[LLMQuotaCoreTests.TaskBoardStoreTests testStaleThresholdIsTwoCollectionRounds]' passed (0.000 seconds).
+Test Suite 'TaskBoardStoreTests' passed at 2026-09-07 13:37:23.931.
+	 Executed 21 tests, with 0 failures (0 unexpected) in 0.865 (0.866) seconds
+Test Suite 'TaskIntakeTests' started at 2026-09-07 13:37:23.931.
+Test Case '-[LLMQuotaCoreTests.TaskIntakeTests testConcurrentPreparedRetriesCreateOneLogicalTask]' started.
+Test Case '-[LLMQuotaCoreTests.TaskIntakeTests testConcurrentPreparedRetriesCreateOneLogicalTask]' passed (0.008 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskIntakeTests testPreparedIntakePreservesPayerClassificationAndOwner]' started.
+Test Case '-[LLMQuotaCoreTests.TaskIntakeTests testPreparedIntakePreservesPayerClassificationAndOwner]' passed (0.004 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskIntakeTests testStableRequestRetryReturnsSameTaskWithoutAnotherRow]' started.
+Test Case '-[LLMQuotaCoreTests.TaskIntakeTests testStableRequestRetryReturnsSameTaskWithoutAnotherRow]' passed (0.004 seconds).
+Test Suite 'TaskIntakeTests' passed at 2026-09-07 13:37:23.947.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.016 (0.016) seconds
+Test Suite 'TaskKindRoutingTests' started at 2026-09-07 13:37:23.947.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testBothReviewSpellingsAreRecognised]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testBothReviewSpellingsAreRecognised]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testCodingWorkStillWaitsForBaseline]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testCodingWorkStillWaitsForBaseline]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testMediaIsPrefixOnly]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testMediaIsPrefixOnly]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testMiniMaxTestingFindsVerifyCommandFromWorktree]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testMiniMaxTestingFindsVerifyCommandFromWorktree]' passed (1.949 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewAndTestingRejectDevelopmentRunners]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewAndTestingRejectDevelopmentRunners]' passed (1.685 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewIntakePrefersMiniMaxByDefault]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewIntakePrefersMiniMaxByDefault]' passed (0.005 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewOnlyRunnerRejectsCodingTask]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewOnlyRunnerRejectsCodingTask]' passed (3.078 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testTestingIntakePrefersMiniMaxAndStaysOneTask]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testTestingIntakePrefersMiniMaxAndStaysOneTask]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testTodaysNewPrefixesAreClassified]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testTodaysNewPrefixesAreClassified]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testUnblockingKindsDoNotWaitForBaseline]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testUnblockingKindsDoNotWaitForBaseline]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testUnprefixedPromptIsCoding]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testUnprefixedPromptIsCoding]' passed (0.000 seconds).
+Test Suite 'TaskKindRoutingTests' passed at 2026-09-07 13:37:30.671.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 6.724 (6.724) seconds
+Test Suite 'TaskRevisionTests' started at 2026-09-07 13:37:30.671.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_create拒绝覆盖同ID任务]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_create拒绝覆盖同ID任务]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_mutate并发修改同一任务不丢更新]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_mutate并发修改同一任务不丢更新]' passed (0.069 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_mutate找不到任务会明确失败]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_mutate找不到任务会明确失败]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_transition完整快照冲突必须可见且不覆盖]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_transition完整快照冲突必须可见且不覆盖]' passed (0.004 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_transition记录审计信息并规范等待原因]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_transition记录审计信息并规范等待原因]' passed (0.005 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_两个协调器同时领取同一任务只有一个获得派发租约]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_两个协调器同时领取同一任务只有一个获得派发租约]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_任务图对账通过控制内核持久化]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_任务图对账通过控制内核持久化]' passed (0.296 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_写入零进展必须明确失败]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_写入零进展必须明确失败]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_写盘后_rev单调递增]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_写盘后_rev单调递增]' passed (0.005 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_只有持租约子进程能把任务转为运行]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_只有持租约子进程能把任务转为运行]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_同一进程连写_不被误判]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_同一进程连写_不被误判]' passed (0.006 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_同进程的两个独立快照_旧的也必须被拒]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_同进程的两个独立快照_旧的也必须被拒]' passed (0.008 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_启动失败释放租约后任务重新可见]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_启动失败释放租约后任务重新可见]' passed (0.009 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_并发领取同一任务只有一个赢家]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_并发领取同一任务只有一个赢家]' passed (0.012 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_旧blocked记录会补出结构化等待原因]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_旧blocked记录会补出结构化等待原因]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_旧blocked记录缺少线索时仍显示需要人工处置]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_旧blocked记录缺少线索时仍显示需要人工处置]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_旧JSON没有rev_仍可正常更新]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_旧JSON没有rev_仍可正常更新]' passed (0.007 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_旧快照后写_被拒且状态不倒流]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_旧快照后写_被拒且状态不倒流]' passed (0.008 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_派发租约把任务限速凭据和快照原子绑定]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_派发租约把任务限速凭据和快照原子绑定]' passed (0.007 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_生产代码不能绕过控制内核直接写TaskStore]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_生产代码不能绕过控制内核直接写TaskStore]' passed (0.142 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_短写会继续直到整条记录写完]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_短写会继续直到整条记录写完]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_结构化失败原因和重试期限会持久化]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_结构化失败原因和重试期限会持久化]' passed (0.005 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_读取按最高rev折叠_不让后写的低版本获胜]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_读取按最高rev折叠_不让后写的低版本获胜]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_追加写到一半失败会回滚坏尾巴]' started.
+Test Case '-[LLMQuotaCoreTests.TaskRevisionTests test_追加写到一半失败会回滚坏尾巴]' passed (0.001 seconds).
+Test Suite 'TaskRevisionTests' passed at 2026-09-07 13:37:31.286.
+	 Executed 24 tests, with 0 failures (0 unexpected) in 0.612 (0.615) seconds
+Test Suite 'TimeoutKillTests' started at 2026-09-07 13:37:31.286.
+Test Case '-[LLMQuotaCoreTests.TimeoutKillTests testFastProcessIsNotMarkedTimedOut]' started.
+Test Case '-[LLMQuotaCoreTests.TimeoutKillTests testFastProcessIsNotMarkedTimedOut]' passed (0.282 seconds).
+Test Case '-[LLMQuotaCoreTests.TimeoutKillTests testNegativeZeroMeansOwnProcessGroup]' started.
+Test Case '-[LLMQuotaCoreTests.TimeoutKillTests testNegativeZeroMeansOwnProcessGroup]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TimeoutKillTests testOnlyPositivePidIsKillable]' started.
+Test Case '-[LLMQuotaCoreTests.TimeoutKillTests testOnlyPositivePidIsKillable]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TimeoutKillTests testTimeoutKillsChildAndReports]' started.
+Test Case '-[LLMQuotaCoreTests.TimeoutKillTests testTimeoutKillsChildAndReports]' passed (1.994 seconds).
+Test Suite 'TimeoutKillTests' passed at 2026-09-07 13:37:33.564.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 2.277 (2.278) seconds
+Test Suite 'ToolPathTests' started at 2026-09-07 13:37:33.564.
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testAugmentedPATHIncludesToolDirsUnderLaunchd]' started.
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testAugmentedPATHIncludesToolDirsUnderLaunchd]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testExistingPATHIsPreservedAndKeepsPriority]' started.
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testExistingPATHIsPreservedAndKeepsPriority]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testNoDuplicateEntries]' started.
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testNoDuplicateEntries]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testWhichAndPATHShareTheSameDirs]' started.
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testWhichAndPATHShareTheSameDirs]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testWorksWithNoInheritedPATH]' started.
+Test Case '-[LLMQuotaCoreTests.ToolPathTests testWorksWithNoInheritedPATH]' passed (0.000 seconds).
+Test Suite 'ToolPathTests' passed at 2026-09-07 13:37:33.564.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'VerdictScopeTests' started at 2026-09-07 13:37:33.564.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testApprovalDoesNotCarryOverToNewCommits]' started.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testApprovalDoesNotCarryOverToNewCommits]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testEmptyHeadWritesNoMarker]' started.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testEmptyHeadWritesNoMarker]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testHeadMarkerRoundTrips]' started.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testHeadMarkerRoundTrips]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testOldPromptHasNoRecordedHead]' started.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testOldPromptHasNoRecordedHead]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testOldVerdictGoesStaleWhenBranchGotNewerCommits]' started.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testOldVerdictGoesStaleWhenBranchGotNewerCommits]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testRejectionDoesNotStickAfterBranchMovesOn]' started.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testRejectionDoesNotStickAfterBranchMovesOn]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testRejectionStillHoldsForTheSameCommit]' started.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testRejectionStillHoldsForTheSameCommit]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testWithoutHeadInfoBehaviourIsUnchanged]' started.
+Test Case '-[LLMQuotaCoreTests.VerdictScopeTests testWithoutHeadInfoBehaviourIsUnchanged]' passed (0.000 seconds).
+Test Suite 'VerdictScopeTests' passed at 2026-09-07 13:37:33.566.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'VerifyRepairTests' started at 2026-09-07 13:37:33.566.
+Test Case '-[LLMQuotaCoreTests.VerifyRepairTests testGivesUpAfterTwoTries]' started.
+Test Case '-[LLMQuotaCoreTests.VerifyRepairTests testGivesUpAfterTwoTries]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.VerifyRepairTests testOnlyHandlesVerificationFailures]' started.
+Test Case '-[LLMQuotaCoreTests.VerifyRepairTests testOnlyHandlesVerificationFailures]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VerifyRepairTests testRecognizesItsOwnPrompts]' started.
+Test Case '-[LLMQuotaCoreTests.VerifyRepairTests testRecognizesItsOwnPrompts]' passed (0.000 seconds).
+Test Suite 'VerifyRepairTests' passed at 2026-09-07 13:37:33.567.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ViewFeedCompatTests' started at 2026-09-07 13:37:33.567.
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testActionIsOpaqueToClient]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testActionIsOpaqueToClient]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testExtraFieldsAreIgnored]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testExtraFieldsAreIgnored]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testMissingFieldsGetDefaults]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testMissingFieldsGetDefaults]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testUnknownSectionKindStillDecodes]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testUnknownSectionKindStillDecodes]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testUnknownToneFallsBack]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedCompatTests testUnknownToneFallsBack]' passed (0.000 seconds).
+Test Suite 'ViewFeedCompatTests' passed at 2026-09-07 13:37:33.568.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ViewFeedPublishTests' started at 2026-09-07 13:37:33.568.
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testClearingOwnLastCardStillPublishes]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testClearingOwnLastCardStillPublishes]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testEmptyPageFromBlindMachineIsNotPublished]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testEmptyPageFromBlindMachineIsNotPublished]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testEmptyStateMessageIsNotContent]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testEmptyStateMessageIsNotContent]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testFirstEverPublishGoesThrough]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testFirstEverPublishGoesThrough]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testFrameworkSectionsAreNotContent]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testFrameworkSectionsAreNotContent]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testOwnerMachinePublishesTheEmptyStateMessage]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testOwnerMachinePublishesTheEmptyStateMessage]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testPageWithContentAlwaysPublishes]' started.
+Test Case '-[LLMQuotaCoreTests.ViewFeedPublishTests testPageWithContentAlwaysPublishes]' passed (0.000 seconds).
+Test Suite 'ViewFeedPublishTests' passed at 2026-09-07 13:37:33.569.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'VisionRoutingTests' started at 2026-09-07 13:37:33.569.
+Test Case '-[LLMQuotaCoreTests.VisionRoutingTests testEyesTaskCountsAsReviewNotCoding]' started.
+Test Case '-[LLMQuotaCoreTests.VisionRoutingTests testEyesTaskCountsAsReviewNotCoding]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VisionRoutingTests testLooksLikeEyesTask]' started.
+Test Case '-[LLMQuotaCoreTests.VisionRoutingTests testLooksLikeEyesTask]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VisionRoutingTests testMiniMaxIsTheOneThatCanSee]' started.
+Test Case '-[LLMQuotaCoreTests.VisionRoutingTests testMiniMaxIsTheOneThatCanSee]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.VisionRoutingTests testPlatformsAreBlindByDefault]' started.
+Test Case '-[LLMQuotaCoreTests.VisionRoutingTests testPlatformsAreBlindByDefault]' passed (0.000 seconds).
+Test Suite 'VisionRoutingTests' passed at 2026-09-07 13:37:33.570.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ZcodeAdapterTests' started at 2026-09-07 13:37:33.570.
+Test Case '-[LLMQuotaCoreTests.ZcodeAdapterTests testLooksInRolloutNotProjects]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeAdapterTests testLooksInRolloutNotProjects]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeAdapterTests testOnePromptPerTurn]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeAdapterTests testOnePromptPerTurn]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeAdapterTests testParsesTokensFromResponseUsage]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeAdapterTests testParsesTokensFromResponseUsage]' passed (0.000 seconds).
+Test Suite 'ZcodeAdapterTests' passed at 2026-09-07 13:37:33.572.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'ZcodeRunnableTests' started at 2026-09-07 13:37:33.572.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_凭据走环境变量_而且不出现在参数里]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_凭据走环境变量_而且不出现在参数里]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_可用时凭据进环境变量]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_可用时凭据进环境变量]' passed (0.002 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_四样齐了才算可用]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_四样齐了才算可用]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_本机可用时叫ZCode]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_本机可用时叫ZCode]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_本机没装但对端快照里有zcode_也叫ZCode]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_本机没装但对端快照里有zcode_也叫ZCode]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_缺任何一样都不可用]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_缺任何一样都不可用]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_调度取到的执行器也用同一套判断]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_调度取到的执行器也用同一套判断]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_起进程用绝对路径的node_不靠env找]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_起进程用绝对路径的node_不靠env找]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_通过协议问可用性_不会退回PATH查找]' started.
+Test Case '-[LLMQuotaCoreTests.ZcodeRunnableTests test_通过协议问可用性_不会退回PATH查找]' passed (0.001 seconds).
+Test Suite 'ZcodeRunnableTests' passed at 2026-09-07 13:37:33.583.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.010 (0.011) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' passed at 2026-09-07 13:37:33.583.
+	 Executed 511 tests, with 0 failures (0 unexpected) in 216.113 (216.157) seconds
+Test Suite 'Selected tests' passed at 2026-09-07 13:37:33.583.
+	 Executed 511 tests, with 0 failures (0 unexpected) in 216.113 (216.189) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

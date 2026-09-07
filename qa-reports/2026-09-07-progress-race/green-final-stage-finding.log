@@ -1,0 +1,67 @@
+Building for debugging...
+[0/7] Write sources
+[1/7] Write swift-version--58304C5D6DBC2206.txt
+[3/9] Emitting module LLMQuotaCore
+[4/9] Compiling LLMQuotaCore StageFindingLoop.swift
+[4/12] Write Objects.LinkFileList
+[7/12] Linking llmq
+[8/12] Applying llmq
+[9/12] Linking LLMQuotaBarApp
+[10/12] Applying LLMQuotaBarApp
+[11/12] Linking LLMQuotaBarPackageTests
+Build complete! (2.84s)
+Test Suite 'Selected tests' started at 2026-09-07 13:44:59.216.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 13:44:59.217.
+Test Suite 'StageFindingLoopTests' started at 2026-09-07 13:44:59.217.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testAnswerPublicationRechecksHeadAfterHistoricalScan]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testAnswerPublicationRechecksHeadAfterHistoricalScan]' passed (7.739 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testCompletedObservationCreatesDirectedScopeTriageWithoutInterruptingOwner]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testCompletedObservationCreatesDirectedScopeTriageWithoutInterruptingOwner]' passed (7.177 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testDeferredObservationDoesNotBecomeOwnerRework]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testDeferredObservationDoesNotBecomeOwnerRework]' passed (7.859 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testDirectedAcknowledgementAndInboxRespectMachineIdentity]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testDirectedAcknowledgementAndInboxRespectMachineIdentity]' passed (8.623 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testFailedTriageRetriesOnceWithoutHumanAskOrPendingDuplication]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testFailedTriageRetriesOnceWithoutHumanAskOrPendingDuplication]' passed (10.860 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testHistoricalObservationsReadEachBranchOncePerRoundAndRefreshNextRound]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testHistoricalObservationsReadEachBranchOncePerRoundAndRefreshNextRound]' passed (7.482 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testIndependentNewEvidenceClosesOnlyAfterOwnerAcknowledgement]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testIndependentNewEvidenceClosesOnlyAfterOwnerAcknowledgement]' passed (15.564 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testKnownFindingWithMissingContextStillBlocksBeforeFirstRequeue]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testKnownFindingWithMissingContextStillBlocksBeforeFirstRequeue]' passed (7.229 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testLateArchitectAnswerCannotOrderRepairOfAnOldCommit]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testLateArchitectAnswerCannotOrderRepairOfAnOldCommit]' passed (7.771 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testLateObservationCannotTriageAfterSourceCommitHasAdvanced]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testLateObservationCannotTriageAfterSourceCommitHasAdvanced]' passed (4.736 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testNewImageAndCommitAloneCannotTriggerArchitectSignoffWithoutVisualObserver]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testNewImageAndCommitAloneCannotTriggerArchitectSignoffWithoutVisualObserver]' passed (10.093 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testNewObservationCannotTriageOverwrittenEvidence]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testNewObservationCannotTriageOverwrittenEvidence]' passed (4.441 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testOnlyConfirmedApplicableFindingRequiresRepairAndAckDoesNotCloseIt]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testOnlyConfirmedApplicableFindingRequiresRepairAndAckDoesNotCloseIt]' passed (8.916 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testOwnerCannotSignOffOwnFindingAndRealQuestionIsPreserved]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testOwnerCannotSignOffOwnFindingAndRealQuestionIsPreserved]' passed (10.316 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testOwnerOrBranchDriftPreservesLandingBlockWithoutAutomaticReassignment]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testOwnerOrBranchDriftPreservesLandingBlockWithoutAutomaticReassignment]' passed (7.621 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testSameCommitDifferentEvidenceSelectsMatchingMilestone]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testSameCommitDifferentEvidenceSelectsMatchingMilestone]' passed (5.972 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testSameHeadNewEvidenceCanRecheckAfterNeedsEvidenceWithoutRepeatingOldProof]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testSameHeadNewEvidenceCanRecheckAfterNeedsEvidenceWithoutRepeatingOldProof]' passed (19.286 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testSameRunnerOnAnotherMachineCannotAcknowledgeOwnerFinding]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testSameRunnerOnAnotherMachineCannotAcknowledgeOwnerFinding]' passed (7.028 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testStaleOrAmbiguousObservationCannotCreateTriage]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testStaleOrAmbiguousObservationCannotCreateTriage]' passed (3.785 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testTrackedFindingCannotDisappearWhenJournalOrContextIsMissing]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testTrackedFindingCannotDisappearWhenJournalOrContextIsMissing]' passed (7.350 seconds).
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testWrongSnapshotUnknownDecisionAndNoEvidenceAreRejected]' started.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testWrongSnapshotUnknownDecisionAndNoEvidenceAreRejected]' passed (5.995 seconds).
+Test Suite 'StageFindingLoopTests' passed at 2026-09-07 13:47:55.064.
+	 Executed 21 tests, with 0 failures (0 unexpected) in 175.844 (175.847) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' passed at 2026-09-07 13:47:55.064.
+	 Executed 21 tests, with 0 failures (0 unexpected) in 175.844 (175.847) seconds
+Test Suite 'Selected tests' passed at 2026-09-07 13:47:55.064.
+	 Executed 21 tests, with 0 failures (0 unexpected) in 175.844 (175.847) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

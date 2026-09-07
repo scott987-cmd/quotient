@@ -70,6 +70,63 @@ final class StageFindingLoopTests: XCTestCase {
         XCTAssertEqual(r.exitCode, 0, r.stderr)
         return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    func testHistoricalObservationsReadEachBranchOncePerRoundAndRefreshNextRound() throws {
+        let probe = StageFindingLoop.branchHeadProbe
+        defer { StageFindingLoop.branchHeadProbe = probe }
+        var reads = 0
+        StageFindingLoop.branchHeadProbe = { repo, branch in
+            reads += 1
+            return probe(repo, branch)
+        }
+        try git(["checkout", source.branch!])
+        try "advanced".write(to: repo.appendingPathComponent("source.txt"), atomically: true, encoding: .utf8)
+        try git(["add", "."]); try git(["commit", "-m", "new owner version"])
+        let history = (0..<22).map { index -> WorkTask in
+            var old = observation!
+            old.id = "old-observation-\(index)"
+            return old
+        }
+        StageFindingLoop.synchronize([source] + history, registrations: [])
+        XCTAssertEqual(reads, 1, "22 stale observations must not cause 22 Git launches each round")
+        XCTAssertFalse(CollaborationStore.all().contains { $0.kind == .question })
+        try git(["reset", "--hard", observedHead]) // isolated fixture only
+        reads = 0
+        StageFindingLoop.synchronize([source, observation])
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(CollaborationStore.all().filter { $0.kind == .question }.count, 1,
+                       "The next round must re-read Git, not reuse a stale cached head")
+    }
+
+    func testAnswerPublicationRechecksHeadAfterHistoricalScan() throws {
+        StageFindingLoop.synchronize(TaskStore.all())
+        let question = try XCTUnwrap(CollaborationStore.all().first { $0.kind == .question })
+        try answer(question, decision: "fixNow")
+        // Another historical observation makes this round read the same source ref.
+        var history = observation!
+        history.id = "another-observation"
+        let probe = StageFindingLoop.branchHeadProbe
+        defer { StageFindingLoop.branchHeadProbe = probe }
+        var reads = 0
+        StageFindingLoop.branchHeadProbe = { repo, branch in
+            reads += 1
+            let head = probe(repo, branch)
+            if reads == 1 {
+                // Advance the isolated owner branch after the first read completed.
+                do {
+                    try self.git(["checkout", branch])
+                    try self.git(["commit", "--allow-empty", "-m", "owner advanced during scan"])
+                } catch { XCTFail("Fixture could not advance: \(error)") }
+            }
+            return head
+        }
+        StageFindingLoop.synchronize([source, history], registrations: [])
+        XCTAssertEqual(reads, 2, "Answer publication must obtain a fresh ref")
+        let verdict = try XCTUnwrap(CollaborationStore.all().first { $0.id == "stage-finding:" + question.id })
+        XCTAssertEqual(verdict.kind, .checkpoint)
+        XCTAssertTrue(verdict.summary.contains("范围过期"))
+        XCTAssertFalse(CollaborationStore.all().contains { $0.kind == .finding })
+    }
+
     func testLateArchitectAnswerCannotOrderRepairOfAnOldCommit() throws {
         StageFindingLoop.synchronize(TaskStore.all())
         let q = try XCTUnwrap(CollaborationStore.all().first { $0.kind == .question })

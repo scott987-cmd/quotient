@@ -5,6 +5,12 @@ import CryptoKit
 /// 生命周期由既有协作事件推导，不用 unresolved（它只表示消息未回复）。
 public enum StageFindingLoop {
     public static let sender = "stage-finding-controller"
+    static var branchHeadProbe: (String, String) -> String? = { repo, branch in
+        let result = GitWorkspace.git(["rev-parse", "--verify", "refs/heads/" + branch + "^{commit}"],
+                                      in: repo, timeout: 5)
+        guard result.exitCode == 0 else { return nil }
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     public struct Context: Codable, Equatable, Sendable {
         public var observationID: String
         public var sourceTaskID: String
@@ -202,6 +208,15 @@ public enum StageFindingLoop {
     }
     /// 只发布真实任务对应的 Agent 内部咨询。无可用架构师时保持等待，不造人工问题。
     public static func synchronize(_ tasks: [WorkTask], registrations: [AgentRegistration] = AgentRegistry.all()) {
+        // Historical observations share a source branch. Read each ref once per
+        // historical scan, including failures; never retain this cache across rounds.
+        var heads: [String: [String: String]] = [:]
+        func currentHead(_ repo: String, _ branch: String) -> String? {
+            if let cached = heads[repo]?[branch] { return cached.isEmpty ? nil : cached }
+            let value = branchHeadProbe(repo, branch)
+            heads[repo, default: [:]][branch] = value ?? ""
+            return value
+        }
         var events = CollaborationStore.all()
         let milestones = Milestone.all()
         // 每个原任务仅复核最新阶段；旧证据不批量回灌，不盖掉已经进入整改的问题。
@@ -223,9 +238,7 @@ public enum StageFindingLoop {
             guard let id = nextQuestionID("stage-triage:" + observation.id, events: events) else { continue }
             if findings(for: source, events: events).contains(where: { !$0.resolved }) { continue }
             // 原 Owner 已经提交新版本后，迟到的旧画面不能再触发当前整改。
-            let currentHead = GitWorkspace.git(["rev-parse", "--verify", branch + "^{commit}"], in: source.repo, timeout: 5)
-            guard currentHead.exitCode == 0,
-                  currentHead.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == head else { continue }
+            guard currentHead(source.repo, branch) == head else { continue }
             guard let report = report(observation, source: source) else { continue }
             let items = milestones.filter { $0.taskID == source.id && $0.mergeSHA == head && $0.branch == branch }
             let boundDigest = field("证据摘要", in: observation.prompt)
@@ -249,8 +262,9 @@ public enum StageFindingLoop {
                   let a = assessment(q, events: events) else { continue }
             let id = "stage-finding:" + q.id
             guard !events.contains(where: { $0.id == id }) else { continue }
-            let current = GitWorkspace.git(["rev-parse", "--verify", c.sourceBranch + "^{commit}"], in: q.project, timeout: 5)
-            let stale = current.exitCode != 0 || current.stdout.trimmingCharacters(in: .whitespacesAndNewlines) != c.sourceHead
+            // Publishing an answer is a new decision: the owner may have advanced
+            // during historical scanning, so do not reuse its cached ref.
+            let stale = branchHeadProbe(q.project, c.sourceBranch) != c.sourceHead
             _ = try? CollaborationStore.publish(CollaborationEvent(id: id, project: q.project,
                 taskID: c.sourceTaskID, senderRunnerID: sender, recipientRunnerID: c.sourceOwner,
                 recipientMachineID: c.sourceOwnerMachineID,

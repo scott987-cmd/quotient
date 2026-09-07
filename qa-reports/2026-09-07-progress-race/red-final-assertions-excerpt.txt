@@ -1,0 +1,38 @@
+Extracted from red-final-assertions.log; terminal trailing whitespace removed. Full original log retained locally.
+
+Test Suite 'Selected tests' started at 2026-09-07 13:34:19.504.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 13:34:19.505.
+Test Suite 'WorkProgressConcurrencyTests' started at 2026-09-07 13:34:19.505.
+Test Case '-[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion]' started.
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:64: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("2") is not equal to ("3")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:65: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional("旧下一步")") is not equal to ("Optional("等待独立复验")")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:66: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional(1)") is not equal to ("Optional(2)")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:67: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional(2026-09-07 05:33:19 +0000)") is not equal to ("Optional(2026-09-07 05:34:22 +0000)")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:68: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("[]") is not equal to ("["new-evidence.txt"]")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:69: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional(2026-09-07 05:33:19 +0000)") is not equal to ("Optional(2026-09-07 05:34:22 +0000)")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:70: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertGreaterThanOrEqual failed: ("2026-09-07 05:34:21 +0000") is less than ("2026-09-07 05:34:22 +0000")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:73: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("nil") is not equal to ("Optional("等待独立复验")")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:75: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("done") is not equal to ("queued")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:64: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("3") is not equal to ("4")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:65: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional("旧下一步")") is not equal to ("nil")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:66: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional(1)") is not equal to ("nil")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:67: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional(2026-09-07 05:33:19 +0000)") is not equal to ("nil")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:68: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("[]") is not equal to ("["new-evidence.txt"]")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:69: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional(2026-09-07 05:33:19 +0000)") is not equal to ("Optional(2026-09-07 05:34:25 +0000)")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:70: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertGreaterThanOrEqual failed: ("2026-09-07 05:34:24 +0000") is less than ("2026-09-07 05:34:25 +0000")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:84: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion] : XCTAssertEqual failed: ("Optional(4)") is not equal to ("Optional(7)")
+Test Case '-[LLMQuotaCoreTests.WorkProgressConcurrencyTests testConcurrentProcessesPreserveDeclarationAndCompletion]' failed (9.112 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkProgressConcurrencyTests testThreadWritersAndFailedWriteReleaseTheTaskLock]' started.
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:109: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testThreadWritersAndFailedWriteReleaseTheTaskLock] : XCTAssertEqual failed: ("[1, 1, 1, 1, 1, 1, 1, 1]") is not equal to ("[1, 2, 3, 4, 5, 6, 7, 8]")
+/private/tmp/llmq-progress-race-red-20260907/Tests/LLMQuotaCoreTests/WorkProgressConcurrencyTests.swift:110: error: -[LLMQuotaCoreTests.WorkProgressConcurrencyTests testThreadWritersAndFailedWriteReleaseTheTaskLock] : XCTAssertEqual failed: ("Optional(1)") is not equal to ("Optional(8)")
+Test Case '-[LLMQuotaCoreTests.WorkProgressConcurrencyTests testThreadWritersAndFailedWriteReleaseTheTaskLock]' failed (3.033 seconds).
+Test Suite 'WorkProgressConcurrencyTests' failed at 2026-09-07 13:34:31.650.
+	 Executed 2 tests, with 19 failures (0 unexpected) in 12.145 (12.145) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' failed at 2026-09-07 13:34:31.650.
+	 Executed 2 tests, with 19 failures (0 unexpected) in 12.145 (12.145) seconds
+Test Suite 'Selected tests' failed at 2026-09-07 13:34:31.650.
+	 Executed 2 tests, with 19 failures (0 unexpected) in 12.145 (12.146) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

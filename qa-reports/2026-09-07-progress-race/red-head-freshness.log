@@ -1,0 +1,28 @@
+[0/1] Planning build
+Building for debugging...
+[0/7] Write sources
+[1/7] Write swift-version--58304C5D6DBC2206.txt
+[3/5] Compiling LLMQuotaCoreTests StageFindingLoopTests.swift
+[4/5] Emitting module LLMQuotaCoreTests
+[4/6] Write Objects.LinkFileList
+[5/6] Linking LLMQuotaBarPackageTests
+Build complete! (3.80s)
+Test Suite 'Selected tests' started at 2026-09-07 13:44:35.243.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 13:44:35.244.
+Test Suite 'StageFindingLoopTests' started at 2026-09-07 13:44:35.244.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testAnswerPublicationRechecksHeadAfterHistoricalScan]' started.
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/StageFindingLoopTests.swift:123: error: -[LLMQuotaCoreTests.StageFindingLoopTests testAnswerPublicationRechecksHeadAfterHistoricalScan] : XCTAssertEqual failed: ("1") is not equal to ("2") - Answer publication must obtain a fresh ref
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/StageFindingLoopTests.swift:125: error: -[LLMQuotaCoreTests.StageFindingLoopTests testAnswerPublicationRechecksHeadAfterHistoricalScan] : XCTAssertEqual failed: ("finding") is not equal to ("checkpoint")
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/StageFindingLoopTests.swift:126: error: -[LLMQuotaCoreTests.StageFindingLoopTests testAnswerPublicationRechecksHeadAfterHistoricalScan] : XCTAssertTrue failed
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/StageFindingLoopTests.swift:127: error: -[LLMQuotaCoreTests.StageFindingLoopTests testAnswerPublicationRechecksHeadAfterHistoricalScan] : XCTAssertFalse failed
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testAnswerPublicationRechecksHeadAfterHistoricalScan]' failed (8.016 seconds).
+Test Suite 'StageFindingLoopTests' failed at 2026-09-07 13:44:43.260.
+	 Executed 1 test, with 4 failures (0 unexpected) in 8.016 (8.016) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' failed at 2026-09-07 13:44:43.260.
+	 Executed 1 test, with 4 failures (0 unexpected) in 8.016 (8.016) seconds
+Test Suite 'Selected tests' failed at 2026-09-07 13:44:43.260.
+	 Executed 1 test, with 4 failures (0 unexpected) in 8.016 (8.016) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

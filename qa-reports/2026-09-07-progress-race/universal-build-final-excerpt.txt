@@ -1,0 +1,10 @@
+Extracted from universal-build-final.log; terminal trailing whitespace removed. Full original log retained locally.
+
+88%: Link LLMQuotaBarApp (x86_64)
+93%: Create universal binary LLMQuotaBarApp
+93%: Generate LLMQuotaBarApp.dSYM for LLMQuotaBarApp
+100%: Register execution policy exception for LLMQuotaBarApp
+100%: Generate llmq.dSYM for llmq
+100%: Register execution policy exception for llmq
+100%: Build succeeded
+Build complete!

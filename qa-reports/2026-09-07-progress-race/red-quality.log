@@ -1,0 +1,37 @@
+Building for debugging...
+[0/8] Write sources
+[2/8] Write swift-version--58304C5D6DBC2206.txt
+[4/10] Compiling LLMQuotaCore StageFindingLoop.swift
+[5/10] Emitting module LLMQuotaCore
+[6/16] Compiling LLMQuotaCore StageObservationExecution.swift
+[7/16] Compiling LLMQuotaCore Milestone.swift
+[8/16] Compiling LLMQuotaCore TaskGraph.swift
+[9/16] Compiling LLMQuotaCore GoldenSampleGate.swift
+[10/16] Compiling LLMQuotaCore Collaboration.swift
+[11/16] Compiling LLMQuotaCore Review.swift
+[11/19] Write Objects.LinkFileList
+[13/21] Linking llmq
+[14/21] Applying llmq
+[15/21] Linking LLMQuotaBarApp
+[16/21] Applying LLMQuotaBarApp
+[18/21] Compiling LLMQuotaCoreTests StageFindingLoopTests.swift
+[19/21] Emitting module LLMQuotaCoreTests
+[19/21] Write Objects.LinkFileList
+[20/21] Linking LLMQuotaBarPackageTests
+Build complete! (5.05s)
+Test Suite 'Selected tests' started at 2026-09-07 13:28:27.435.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 13:28:27.435.
+Test Suite 'StageFindingLoopTests' started at 2026-09-07 13:28:27.435.
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testHistoricalObservationsReadEachBranchOncePerRoundAndRefreshNextRound]' started.
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/StageFindingLoopTests.swift:90: error: -[LLMQuotaCoreTests.StageFindingLoopTests testHistoricalObservationsReadEachBranchOncePerRoundAndRefreshNextRound] : XCTAssertEqual failed: ("22") is not equal to ("1") - 22 stale observations must not cause 22 Git launches each round
+Test Case '-[LLMQuotaCoreTests.StageFindingLoopTests testHistoricalObservationsReadEachBranchOncePerRoundAndRefreshNextRound]' failed (13.110 seconds).
+Test Suite 'StageFindingLoopTests' failed at 2026-09-07 13:28:40.546.
+	 Executed 1 test, with 1 failure (0 unexpected) in 13.110 (13.110) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' failed at 2026-09-07 13:28:40.546.
+	 Executed 1 test, with 1 failure (0 unexpected) in 13.110 (13.110) seconds
+Test Suite 'Selected tests' failed at 2026-09-07 13:28:40.546.
+	 Executed 1 test, with 1 failure (0 unexpected) in 13.110 (13.111) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
