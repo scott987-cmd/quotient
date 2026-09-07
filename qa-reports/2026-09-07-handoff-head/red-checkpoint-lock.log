@@ -1,0 +1,26 @@
+Building for debugging...
+[0/4] Write sources
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+[4/6] Compiling LLMQuotaCore WorkHandoff.swift
+[5/6] Emitting module LLMQuotaCore
+[6/8] Emitting module LLMQuotaCoreTests
+[7/8] Compiling LLMQuotaCoreTests WorkHandoffTests.swift
+[7/9] Write Objects.LinkFileList
+[8/9] Linking HandoffMutationPackageTests
+Build complete! (4.24s)
+Test Suite 'Selected tests' started at 2026-09-07 19:25:43.058.
+Test Suite 'HandoffMutationPackageTests.xctest' started at 2026-09-07 19:25:43.061.
+Test Suite 'WorkHandoffTests' started at 2026-09-07 19:25:43.061.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree]' started.
+/private/tmp/llmq-handoff-mutant-20260907/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:82: error: -[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree] : XCTAssertThrowsError failed: did not throw an error
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree]' failed (3.751 seconds).
+Test Suite 'WorkHandoffTests' failed at 2026-09-07 19:25:46.811.
+	 Executed 1 test, with 1 failure (0 unexpected) in 3.751 (3.751) seconds
+Test Suite 'HandoffMutationPackageTests.xctest' failed at 2026-09-07 19:25:46.812.
+	 Executed 1 test, with 1 failure (0 unexpected) in 3.751 (3.751) seconds
+Test Suite 'Selected tests' failed at 2026-09-07 19:25:46.812.
+	 Executed 1 test, with 1 failure (0 unexpected) in 3.751 (3.753) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

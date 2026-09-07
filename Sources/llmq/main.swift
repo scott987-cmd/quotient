@@ -1059,18 +1059,8 @@ func cmdWork(_ args: [String]) throws {
         }
         let baseCommit = resolved.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let targetBranch = "agent/\(target.rawValue)/\(t.id)"
-        let existingBranch = GitWorkspace.git(
-            ["rev-parse", "--verify", "\(targetBranch)^{commit}"], in: t.repo)
-        if existingBranch.exitCode != 0 {
-            let made = GitWorkspace.git(["branch", targetBranch, baseCommit], in: t.repo)
-            guard made.exitCode == 0 else {
-                print(Ansi.red("交接分支创建失败：" + (made.stderr.isEmpty
-                    ? made.stdout : made.stderr).prefix(200))); exit(1)
-            }
-        }
-        let targetHead = GitWorkspace.git(
-            ["rev-parse", "--verify", "\(targetBranch)^{commit}"], in: t.repo)
-            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetHead = try WorkHandoff.advanceBranch(
+            repo: t.repo, branch: targetBranch, base: baseCommit)
         let files = GitWorkspace.git(
             ["diff", "--name-only", "main...\(targetHead)"], in: t.repo)
             .stdout.split(separator: "\n").map(String.init)
@@ -3092,9 +3082,10 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         let technicalResume = task.recoveryIncident?.phase == "resuming"
         let findingResume = !(task.findingRequeueIDs ?? []).isEmpty
         let isResuming = handoff != nil || task.handoff != nil || resumedAnswer != nil || technicalResume || findingResume
-        let resumeBase = handoff?.wipCommit ?? task.handoff?.wipCommit
+        let resumeBase = handoff?.wipCommit
             ?? (technicalResume ? task.recoveryIncident?.head : nil)
-            ?? (findingResume ? task.branch : nil) ?? "main"
+            ?? (isResuming ? task.branch.map { "refs/heads/" + $0 } : nil)
+            ?? task.handoff?.wipCommit ?? "main"
         if let expectedBranch = task.branch,
            let existing = GitWorkspace.existingWorkspace(
                 repo: task.repo, platform: pick.platform, graphID: task.graphID,
@@ -3104,6 +3095,18 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             print(Ansi.cyan("  接手 ") + Ansi.dim(existing.branch + "（沿用已有工作区，不重建）"))
         } else {
             do {
+                if isResuming, StageObservationExecution.snapshot(task) == nil {
+                    // prepare may reuse a stable directory currently on another task's
+                    // branch; validate that actual directory before any reset/clean.
+                    if let reusable = GitWorkspace.existingWorkspace(
+                        repo: task.repo, platform: pick.platform, graphID: task.graphID,
+                        workspaceKey: StageObservationExecution.workspaceKey(task)) {
+                        try WorkHandoff.validateWorkspace(reusable.path)
+                    }
+                    let target = task.graphID.map { "agent/graph/" + $0 }
+                        ?? "agent/\(pick.platform.rawValue)/\(task.id)"
+                    _ = try WorkHandoff.advanceBranch(repo: task.repo, branch: target, base: resumeBase)
+                }
                 ws = try GitWorkspace.prepare(
                     repo: task.repo, taskID: task.id, platform: pick.platform,
                     graphID: task.graphID,
@@ -3493,6 +3496,18 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 sessionAction: .from(session), handoffReason: handoffReason))
         }
 
+        func saveContinuationCheckpoint(_ reason: String) -> String? {
+            do { return try WorkHandoff.checkpoint(in: ws.path, platform: pick.platform, reason: reason) }
+            catch {
+                task.state = .blocked
+                task.waitReason = .architectureReview
+                task.endedAt = Date()
+                task.note = error.localizedDescription
+                recordAttempt(.failed, failureKind: "checkpointUnavailable", handoffReason: task.note)
+                return nil
+            }
+        }
+
         // 无论成败都留完整日志。超时那次尤其需要 —— 不然根本不知道它卡在哪。
         if let logURL = RunLog.write(
             taskID: task.id, platform: pick.platform,
@@ -3516,10 +3531,9 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
             taskPrompt: task.prompt, repoName: URL(fileURLWithPath: task.repo).lastPathComponent)
         {
             let touched = GitWorkspace.touchedFiles(in: ws.path)
-            let wip = GitWorkspace.commitWIP(
-                in: ws.path, platform: pick.platform, reason: "等待答复")
+            guard let wip = saveContinuationCheckpoint("等待答复") else { break }
             var stored = ask
-            stored.wipCommit = ask.wipCommit ?? wip
+            stored.wipCommit = wip
 
             print(Ansi.cyan("  它提了 \(ask.questions.count) 个问题")
                 + Ansi.dim(String(format: " · %.0fs", elapsed)))
@@ -3618,12 +3632,11 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
 
             // 存进度再走。哪怕只做了一半，也比让下一个平台从零开始强。
             let touched = GitWorkspace.touchedFiles(in: ws.path)
-            let wip = GitWorkspace.commitWIP(
-                in: ws.path, platform: pick.platform, reason: failure.describe)
+            guard let wip = saveContinuationCheckpoint(failure.describe) else { break }
             if !touched.isEmpty {
                 print(Ansi.cyan("  已保存进度：")
                     + "\(touched.count) 个文件"
-                    + (wip.map { "，提交 " + $0 } ?? ""))
+                    + "，提交 " + wip)
             }
             let inheritedHandoff = task.handoff
             handoff = Handoff(
@@ -3631,7 +3644,7 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
                 reason: failure.describe,
                 touchedFiles: touched.isEmpty
                     ? (inheritedHandoff?.touchedFiles ?? []) : touched,
-                wipCommit: wip ?? inheritedHandoff?.wipCommit,
+                wipCommit: wip,
                 elapsedSeconds: Int(elapsed))
             publishCollaboration(CollaborationEvent(
                 project: task.repo, taskID: task.id, graphID: task.graphID,

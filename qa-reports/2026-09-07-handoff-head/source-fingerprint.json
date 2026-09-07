@@ -1,0 +1,8 @@
+{
+  "head": "610f9a244aff9d7ecbb2e64af9dde2123f26b73a",
+  "files": {
+    "Sources/llmq/main.swift": "a5813653bc1993aa1387542d7ef5ac21c75b861ab5ca3b2e492e4baa5a578341",
+    "Sources/LLMQuotaCore/WorkHandoff.swift": "108ee5c2717c4121803ce919b72e177b3f8cd678b634f70a751543f6109dab0b",
+    "Tests/LLMQuotaCoreTests/WorkHandoffTests.swift": "26dbb07c58d16cea2cf560d435f2d3088aee1ff90f234a4ebd2703c35fd2ff2c"
+  }
+}

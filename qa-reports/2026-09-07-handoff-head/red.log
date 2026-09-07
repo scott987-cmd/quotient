@@ -1,0 +1,471 @@
+[0/1] Planning build
+Building for debugging...
+[0/11] Write sources
+[2/11] Write swift-version--58304C5D6DBC2206.txt
+[4/13] Emitting module LLMQuotaCore
+[5/13] Compiling LLMQuotaCore WorkHandoff.swift
+[6/157] Emitting module LLMQuotaBarApp
+[7/157] Compiling LLMQuotaBarApp MirrorController.swift
+[8/157] Compiling LLMQuotaBarApp App.swift
+[8/157] Write Objects.LinkFileList
+[10/157] Compiling LLMQuotaCoreTests OutputExistsTests.swift
+[11/157] Compiling LLMQuotaCoreTests OverlapDeadlockTests.swift
+[12/157] Compiling LLMQuotaCoreTests PaperworkNotForHumanTests.swift
+[13/157] Compiling LLMQuotaCoreTests PhaseDTests.swift
+[14/157] Compiling LLMQuotaCoreTests PinnedPlatformTests.swift
+[15/157] Compiling LLMQuotaCoreTests PlanGoTests.swift
+[16/157] Compiling LLMQuotaCoreTests PlannedStoreTests.swift
+[17/157] Compiling LLMQuotaCoreTests PlatformHealthTests.swift
+[18/157] Compiling LLMQuotaCoreTests PostLandRepairTests.swift
+[19/157] Compiling LLMQuotaCoreTests PremiseCheckTests.swift
+[20/157] Compiling LLMQuotaCoreTests ProcFdLeakTests.swift
+[21/157] Compiling LLMQuotaCoreTests ProcOutputNotLostTests.swift
+[22/157] Compiling LLMQuotaCoreTests ProductionReviewRejectionTests.swift
+[23/157] Compiling LLMQuotaCoreTests ProjectContractTests.swift
+[24/157] Compiling LLMQuotaCoreTests ProjectorInstallationTests.swift
+[25/172] Compiling LLMQuotaCoreTests AdaptiveQuotaModelTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[26/172] Compiling LLMQuotaCoreTests ArchitectReviewTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[27/172] Compiling LLMQuotaCoreTests AskNudgeTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[28/172] Compiling LLMQuotaCoreTests AttributionTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[29/172] Compiling LLMQuotaCoreTests AutoLandTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[30/172] Compiling LLMQuotaCoreTests AutoLandVetoScopeTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[31/172] Compiling LLMQuotaCoreTests AutoRefillFocusTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[32/172] Compiling LLMQuotaCoreTests AutoRefillTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[33/172] Compiling LLMQuotaCoreTests BaselineFreshnessTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[34/172] Compiling LLMQuotaCoreTests BaselineOwnBranchTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[35/172] Compiling LLMQuotaCoreTests BinarySwapTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[36/172] Compiling LLMQuotaCoreTests BlockedPageTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[37/172] Compiling LLMQuotaCoreTests BossGateTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[38/172] Compiling LLMQuotaCoreTests BoundBranchTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[39/172] Compiling LLMQuotaCoreTests ClusterDispatchPlannerTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[40/172] Compiling LLMQuotaCoreTests CodeSigningTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[40/172] Linking LLMQuotaBarApp
+[41/172] Applying LLMQuotaBarApp
+[43/172] Compiling LLMQuotaCoreTests IdleFillerTests.swift
+[44/172] Compiling LLMQuotaCoreTests IdleReasonTests.swift
+[45/172] Compiling LLMQuotaCoreTests IndependentMobileRoutingTests.swift
+[46/172] Compiling LLMQuotaCoreTests InterruptedTaskTests.swift
+[47/172] Compiling LLMQuotaCoreTests InterruptionBlameTests.swift
+[48/172] Compiling LLMQuotaCoreTests InvocationIdentityTests.swift
+[49/172] Compiling LLMQuotaCoreTests KimiArtifactProgressTests.swift
+[50/172] Compiling LLMQuotaCoreTests KimiMonthlyWindowTests.swift
+[51/172] Compiling LLMQuotaCoreTests LANAddressTests.swift
+[52/172] Compiling LLMQuotaCoreTests LandingSelfDirtTests.swift
+[53/172] Compiling LLMQuotaCoreTests LifecycleIsolationTests.swift
+[54/172] Compiling LLMQuotaCoreTests LocalOnlySchedulingTests.swift
+[55/172] Compiling LLMQuotaCoreTests LocalWorkerPoolTests.swift
+[56/172] Compiling LLMQuotaCoreTests LowValueDelegationPolicyTests.swift
+[57/172] Compiling LLMQuotaCoreTests MachineDedupeTests.swift
+[58/172] Compiling LLMQuotaCoreTests TaskIntakeTests.swift
+[59/172] Compiling LLMQuotaCoreTests TaskKindRoutingTests.swift
+[60/172] Compiling LLMQuotaCoreTests TaskPauseTests.swift
+[61/172] Compiling LLMQuotaCoreTests TaskRevisionTests.swift
+[62/172] Compiling LLMQuotaCoreTests TaskStoreCheckpointTests.swift
+[63/172] Compiling LLMQuotaCoreTests TechnicalDispositionTests.swift
+[64/172] Compiling LLMQuotaCoreTests TechnicalRecoveryTests.swift
+[65/172] Compiling LLMQuotaCoreTests VerdictQualityTests.swift
+[66/172] Compiling LLMQuotaCoreTests VerdictScopeTests.swift
+[67/172] Compiling LLMQuotaCoreTests VerifyRepairTests.swift
+[68/172] Compiling LLMQuotaCoreTests VerifyTransientTests.swift
+[69/172] Compiling LLMQuotaCoreTests ViewFeedPublishTests.swift
+[70/172] Compiling LLMQuotaCoreTests VisionRoutingTests.swift
+[71/172] Compiling LLMQuotaCoreTests VisualGitFixture.swift
+[72/172] Compiling LLMQuotaCoreTests VisualQualityRemediationTests.swift
+[73/172] Emitting module LLMQuotaCoreTests
+[74/172] Compiling LLMQuotaCoreTests ReserveReviewIndependentTests.swift
+[75/172] Compiling LLMQuotaCoreTests RestartGuardTests.swift
+[76/172] Compiling LLMQuotaCoreTests ReviewPromptDescribesBranchTests.swift
+[77/172] Compiling LLMQuotaCoreTests RiskyPathSupersetTests.swift
+[78/172] Compiling LLMQuotaCoreTests RoadmapPageTests.swift
+[79/172] Compiling LLMQuotaCoreTests ShowcaseTests.swift
+[80/172] Compiling LLMQuotaCoreTests SmartConsultationPolicyTests.swift
+[81/172] Compiling LLMQuotaCoreTests StageFindingLoopTests.swift
+[82/172] Compiling LLMQuotaCoreTests StageObservationSchedulingTests.swift
+[83/172] Compiling LLMQuotaCoreTests StaleBranchTests.swift
+[84/172] Compiling LLMQuotaCoreTests StaleIdentityRootTests.swift
+[85/172] Compiling LLMQuotaCoreTests StaleIdentitySweepTests.swift
+[86/172] Compiling LLMQuotaCoreTests StrandedGraphTests.swift
+[87/172] Compiling LLMQuotaCoreTests TaskBoardStoreTests.swift
+[88/172] Compiling LLMQuotaCoreTests TaskBoardTests.swift
+[89/172] Compiling LLMQuotaCoreTests VisualReviewScopeTests.swift
+[90/172] Compiling LLMQuotaCoreTests WatchdogTests.swift
+[91/172] Compiling LLMQuotaCoreTests WorkAttemptSessionTests.swift
+[92/172] Compiling LLMQuotaCoreTests WorkHandoffTests.swift
+[93/172] Compiling LLMQuotaCoreTests WorkProgressConcurrencyTests.swift
+[94/172] Compiling LLMQuotaCoreTests WorkProgressTests.swift
+[95/172] Compiling LLMQuotaCoreTests WorkQueuePriorityTests.swift
+[96/172] Compiling LLMQuotaCoreTests WorkRunTargetTests.swift
+[97/172] Compiling LLMQuotaCoreTests WorkspaceBusyTests.swift
+[98/172] Compiling LLMQuotaCoreTests WorkspaceReuseTests.swift
+[99/172] Compiling LLMQuotaCoreTests WorktreeSchedulingTests.swift
+[100/172] Compiling LLMQuotaCoreTests ZcodeAdapterTests.swift
+[101/172] Compiling LLMQuotaCoreTests ZcodeRunnableTests.swift
+[102/172] Compiling LLMQuotaCoreTests ZcodeRunnerTests.swift
+[103/172] Compiling LLMQuotaCoreTests ZeroOutputBlockerTests.swift
+[104/172] Compiling llmq main.swift
+[105/172] Emitting module llmq
+[105/172] Write Objects.LinkFileList
+[107/172] Compiling LLMQuotaCoreTests DerivedDispatchPrecisionTests.swift
+[108/172] Compiling LLMQuotaCoreTests DiscardedUpstreamTests.swift
+[109/172] Compiling LLMQuotaCoreTests DispatcherFallbackTests.swift
+[110/172] Compiling LLMQuotaCoreTests DriverShellHygieneTests.swift
+[111/172] Compiling LLMQuotaCoreTests DuplicateGuardTests.swift
+[112/172] Compiling LLMQuotaCoreTests EvidenceGateTests.swift
+[113/172] Compiling LLMQuotaCoreTests EvidenceRetryCapTests.swift
+[114/172] Compiling LLMQuotaCoreTests ExitClassifyTests.swift
+[115/172] Compiling LLMQuotaCoreTests GameProjectBootstrapTests.swift
+[116/172] Compiling LLMQuotaCoreTests GoldenSampleGateTests.swift
+[117/172] Compiling LLMQuotaCoreTests GraphBranchLookupTests.swift
+[118/172] Compiling LLMQuotaCoreTests GraphBranchPreserveTests.swift
+[119/172] Compiling LLMQuotaCoreTests HousekeepingTests.swift
+[120/172] Compiling LLMQuotaCoreTests HumanBlockContractTests.swift
+[121/172] Compiling LLMQuotaCoreTests HumanQueueTests.swift
+[122/172] Compiling LLMQuotaCoreTests ICloudWriteGuardTests.swift
+[123/172] Compiling LLMQuotaCoreTests CodingMediaGuardTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[124/172] Compiling LLMQuotaCoreTests CollaborationTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[125/172] Compiling LLMQuotaCoreTests CollectCollapseTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[126/172] Compiling LLMQuotaCoreTests ConcurrencyFixTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[127/172] Compiling LLMQuotaCoreTests ConfigIntentTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[128/172] Compiling LLMQuotaCoreTests ContextAffinityTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[129/172] Compiling LLMQuotaCoreTests ContextPackRolloutTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[130/172] Compiling LLMQuotaCoreTests ContextPackTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[131/172] Compiling LLMQuotaCoreTests ContractReviewFixesTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[132/172] Compiling LLMQuotaCoreTests ControlPlaneRecoveryTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[133/172] Compiling LLMQuotaCoreTests CoreTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[134/172] Compiling LLMQuotaCoreTests CorruptTaskLineTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[135/172] Compiling LLMQuotaCoreTests CurrentOwnerReviewTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[136/172] Compiling LLMQuotaCoreTests DeadIdentityNoiseTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[137/172] Compiling LLMQuotaCoreTests DebrisTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[138/172] Compiling LLMQuotaCoreTests DecomposePolicyTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[139/172] Compiling LLMQuotaCoreTests MachineIdentityTests.swift
+[140/172] Compiling LLMQuotaCoreTests MachineStalenessTests.swift
+[141/172] Compiling LLMQuotaCoreTests MainlineInFlightTests.swift
+[142/172] Compiling LLMQuotaCoreTests MainlinePickTests.swift
+[143/172] Compiling LLMQuotaCoreTests MediaDriverQuotaTests.swift
+[144/172] Compiling LLMQuotaCoreTests MenuBarAliveTests.swift
+[145/172] Compiling LLMQuotaCoreTests MergeReviewTests.swift
+[146/172] Compiling LLMQuotaCoreTests MilestoneTests.swift
+[147/172] Compiling LLMQuotaCoreTests MirrorServiceTests.swift
+[148/172] Compiling LLMQuotaCoreTests MultiMachineDigestTests.swift
+[149/172] Compiling LLMQuotaCoreTests NotificationDetailTests.swift
+[150/172] Compiling LLMQuotaCoreTests NudgeRepeatTests.swift
+[151/172] Compiling LLMQuotaCoreTests NudgeTargetTests.swift
+[152/172] Compiling LLMQuotaCoreTests OfficeContractTests.swift
+[153/172] Compiling LLMQuotaCoreTests OneAgentOneTaskTests.swift
+[154/172] Compiling LLMQuotaCoreTests PushTopicTests.swift
+[155/172] Compiling LLMQuotaCoreTests QualityArchitectureReviewTests.swift
+[156/172] Compiling LLMQuotaCoreTests QualityGuardrailGateTests.swift
+[157/172] Compiling LLMQuotaCoreTests QuotaAccuracyTests.swift
+[158/172] Compiling LLMQuotaCoreTests QuotaCalibrationTests.swift
+[159/172] Compiling LLMQuotaCoreTests QuotaPoolTests.swift
+[160/172] Compiling LLMQuotaCoreTests QuotaSignalRecoveryTests.swift
+[161/172] Compiling LLMQuotaCoreTests QuotaWasteUnitTests.swift
+[162/172] Compiling LLMQuotaCoreTests QwenLaneTests.swift
+[163/172] Compiling LLMQuotaCoreTests RateGateRefundTests.swift
+[164/172] Compiling LLMQuotaCoreTests ReleaseFanoutTests.swift
+[165/172] Compiling LLMQuotaCoreTests RepoArgResolutionTests.swift
+[166/172] Compiling LLMQuotaCoreTests RepoLeaseTests.swift
+[167/172] Compiling LLMQuotaCoreTests RepoMapTests.swift
+[168/172] Compiling LLMQuotaCoreTests ReservePoolTests.swift
+[168/172] Write Objects.LinkFileList
+[169/172] Linking llmq
+[170/172] Applying llmq
+[171/172] Linking LLMQuotaBarPackageTests
+Build complete! (9.04s)
+Test Suite 'Selected tests' started at 2026-09-07 19:14:33.856.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 19:14:33.858.
+Test Suite 'WorkHandoffTests' started at 2026-09-07 19:14:33.858.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCleanCommittedWorkIsHandedOffAndOldDestinationAdvances]' started.
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/WorkHandoff.swift:13: error: -[LLMQuotaCoreTests.WorkHandoffTests testCleanCommittedWorkIsHandedOffAndOldDestinationAdvances] : failed: caught error: "Error Domain=WorkHandoff Code=1 "没有新的 WIP 提交" UserInfo={NSLocalizedDescription=没有新的 WIP 提交}"
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCleanCommittedWorkIsHandedOffAndOldDestinationAdvances]' failed (4.245 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testDivergedDestinationIsPreservedAndRefused]' started.
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:48: error: -[LLMQuotaCoreTests.WorkHandoffTests testDivergedDestinationIsPreservedAndRefused] : XCTAssertThrowsError failed: did not throw an error
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testDivergedDestinationIsPreservedAndRefused]' failed (3.789 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testOldDestinationCannotSilentlyIgnoreNewSource]' started.
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:41: error: -[LLMQuotaCoreTests.WorkHandoffTests testOldDestinationCannotSilentlyIgnoreNewSource] : XCTAssertEqual failed: ("d317f0995c4bce7904a62184ff2cdecd9175ebd9") is not equal to ("e4b3e066060f0c33f0eddbd98d6383d69154f8c8")
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testOldDestinationCannotSilentlyIgnoreNewSource]' failed (2.690 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testUncommittedChangesAreSavedAndInvalidBaseIsRejected]' started.
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:55: error: -[LLMQuotaCoreTests.WorkHandoffTests testUncommittedChangesAreSavedAndInvalidBaseIsRejected] : XCTAssertThrowsError failed: did not throw an error
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testUncommittedChangesAreSavedAndInvalidBaseIsRejected]' failed (3.250 seconds).
+Test Suite 'WorkHandoffTests' failed at 2026-09-07 19:14:47.831.
+	 Executed 4 tests, with 4 failures (1 unexpected) in 13.973 (13.973) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' failed at 2026-09-07 19:14:47.831.
+	 Executed 4 tests, with 4 failures (1 unexpected) in 13.973 (13.974) seconds
+Test Suite 'Selected tests' failed at 2026-09-07 19:14:47.831.
+	 Executed 4 tests, with 4 failures (1 unexpected) in 13.973 (13.976) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

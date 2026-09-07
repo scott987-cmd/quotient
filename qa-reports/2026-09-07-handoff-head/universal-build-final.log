@@ -1,0 +1,210 @@
+Another instance of SwiftPM (PID: 28102) is already running using '/Users/dushibing/dev/LLMQuotaBar/.build', waiting until that process has finished execution...0%: Compute target dependency graph
+Building targets in dependency order
+Target dependency graph (6 targets)
+0%: Gather provisioning inputs
+0%: Create build description
+0%: Build stat cache for /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk
+17%: Planning Swift module LLMQuotaCore (x86_64)
+17%: Planning Swift module LLMQuotaCore (arm64)
+33%: Compiling resource_bundle_accessor.swift, Adapters.swift, AdaptiveQuotaModel.swift, AgentRegistry.swift, AgentRole.swift, Approval.swift, ArchitectReview.swift, Archive.swift, Ask.swift, AutoRefill.swift, BaselineFreshness.swift, BinarySwap.swift, BossGate.swift, Brief.swift, ClusterCA.swift, ClusterDispatchPlanner.swift, ClusterNet.swift, ClusterPresence.swift, ClusterProtocol.swift, CodeSigning.swift, CodingMediaGuard.swift, Collaboration.swift, CollaborationMCPInstaller.swift, Collector.swift, ConfigIntent.swift, ConsultationLifecycle.swift, ContextAffinityPolicy.swift, ContextPack.swift, ContextPackRollout.swift, ContextProjection.swift, ContextTelemetry.swift, Cooldown.swift, DashboardHTML.swift, Debris.swift, DuplicateGuard.swift, EvidenceGate.swift, ExitClassify.swift, Format.swift, GameProjectBootstrap.swift, GoldenSampleGate.swift, GraphSession.swift, Housekeeping.swift, IdleFiller.swift, IdleReason.swift, Inbox.swift, KimiArtifactProgress.swift, LegacyContextPromptBuilder.swift, LifecycleIsolation.swift, LimitLearner.swift, LocalWorkerPool.swift, LowValueDelegationPolicy.swift, MergeReview.swift, Milestone.swift, MiniMaxAdapter.swift, MiniMaxProbe.swift, Mirror.swift, MobileAction.swift, Model.swift, NotificationDetail.swift, Nudge.swift, OfficeEvent.swift, OpenCodeAdapter.swift, OutputExists.swift, Plan.swift, Planned.swift, PlatformHealth.swift, Playbook.swift, PostLandRepair.swift, PremiseCheck.swift, ProductBrief.swift, ProgressLog.swift, ProjectContract.swift, ProjectExecutionScope.swift, ProjectorInstallation.swift, Push.swift, QualityArchitectureReview.swift, QualityGuardrailGate.swift, QuotaCalibration.swift, QuotaCeiling.swift, QuotaEngine.swift, QuotaSignal.swift, ReleaseChannel.swift, ReleaseFanout.swift, RepoExecutionPolicy.swift, RepoLease.swift, RepoMap.swift, ReservePool.swift, Review.swift, RoadmapPage.swift, RunnerConfig.swift, SafeDecode.swift, SchedulerSnapshot.swift, SecurityAudit.swift, SelfCheck.swift, SharedConfigJournal.swift, Showcase.swift, SmartConsultationPolicy.swift, StageFindingLoop.swift, StageObservationExecution.swift, StaleBranch.swift, StaleIdentitySweep.swift, Store.swift, TaskBoard.swift, TaskBoardStore.swift, TaskClassifier.swift, TaskDecomposer.swift, TaskGraph.swift, TaskIntake.swift, TaskKind.swift, TaskPause.swift, TaskProfile.swift, TaskResourcePolicy.swift, TechnicalDisposition.swift, TechnicalRecovery.swift, VerdictQuality.swift, VerifyRepair.swift, ViewFeed.swift, VisualQualityGate.swift, VisualReviewScope.swift, WasteMeter.swift, Watchdog.swift, Work.swift, WorkAttempt.swift, WorkHandoff.swift, WorkLoop.swift, WorkProgress.swift, ZcodeAdapter.swift
+33%: Compiling resource_bundle_accessor.swift, Adapters.swift, AdaptiveQuotaModel.swift, AgentRegistry.swift, AgentRole.swift, Approval.swift, ArchitectReview.swift, Archive.swift, Ask.swift, AutoRefill.swift, BaselineFreshness.swift, BinarySwap.swift, BossGate.swift, Brief.swift, ClusterCA.swift, ClusterDispatchPlanner.swift, ClusterNet.swift, ClusterPresence.swift, ClusterProtocol.swift, CodeSigning.swift, CodingMediaGuard.swift, Collaboration.swift, CollaborationMCPInstaller.swift, Collector.swift, ConfigIntent.swift, ConsultationLifecycle.swift, ContextAffinityPolicy.swift, ContextPack.swift, ContextPackRollout.swift, ContextProjection.swift, ContextTelemetry.swift, Cooldown.swift, DashboardHTML.swift, Debris.swift, DuplicateGuard.swift, EvidenceGate.swift, ExitClassify.swift, Format.swift, GameProjectBootstrap.swift, GoldenSampleGate.swift, GraphSession.swift, Housekeeping.swift, IdleFiller.swift, IdleReason.swift, Inbox.swift, KimiArtifactProgress.swift, LegacyContextPromptBuilder.swift, LifecycleIsolation.swift, LimitLearner.swift, LocalWorkerPool.swift, LowValueDelegationPolicy.swift, MergeReview.swift, Milestone.swift, MiniMaxAdapter.swift, MiniMaxProbe.swift, Mirror.swift, MobileAction.swift, Model.swift, NotificationDetail.swift, Nudge.swift, OfficeEvent.swift, OpenCodeAdapter.swift, OutputExists.swift, Plan.swift, Planned.swift, PlatformHealth.swift, Playbook.swift, PostLandRepair.swift, PremiseCheck.swift, ProductBrief.swift, ProgressLog.swift, ProjectContract.swift, ProjectExecutionScope.swift, ProjectorInstallation.swift, Push.swift, QualityArchitectureReview.swift, QualityGuardrailGate.swift, QuotaCalibration.swift, QuotaCeiling.swift, QuotaEngine.swift, QuotaSignal.swift, ReleaseChannel.swift, ReleaseFanout.swift, RepoExecutionPolicy.swift, RepoLease.swift, RepoMap.swift, ReservePool.swift, Review.swift, RoadmapPage.swift, RunnerConfig.swift, SafeDecode.swift, SchedulerSnapshot.swift, SecurityAudit.swift, SelfCheck.swift, SharedConfigJournal.swift, Showcase.swift, SmartConsultationPolicy.swift, StageFindingLoop.swift, StageObservationExecution.swift, StaleBranch.swift, StaleIdentitySweep.swift, Store.swift, TaskBoard.swift, TaskBoardStore.swift, TaskClassifier.swift, TaskDecomposer.swift, TaskGraph.swift, TaskIntake.swift, TaskKind.swift, TaskPause.swift, TaskProfile.swift, TaskResourcePolicy.swift, TechnicalDisposition.swift, TechnicalRecovery.swift, VerdictQuality.swift, VerifyRepair.swift, ViewFeed.swift, VisualQualityGate.swift, VisualReviewScope.swift, WasteMeter.swift, Watchdog.swift, Work.swift, WorkAttempt.swift, WorkHandoff.swift, WorkLoop.swift, WorkProgress.swift, ZcodeAdapter.swift
+33%: Compile 127 Swift source files (x86_64)
+33%: Compile 127 Swift source files (arm64)
+'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated
+immutable value 'kc' was never used; consider replacing with '_' or removing it
+'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated
+'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property
+'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated
+forced cast of 'SecCertificate' to same type has no effect
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated
+        guard SecKeychainCopySearchList(&list) == errSecSuccess,
+              ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated
+            if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+               ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated
+        _ = SecKeychainSetSearchList(kept as CFArray)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it
+                if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated
+        guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+              ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated
+        _ = SecKeychainDelete(kc)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated
+            guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated
+            guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+                  ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated
+                guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+                      ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated
+                _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+                    ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainSetUserInteractionAllowed(false)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property
+                kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+                                                   ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainSetUserInteractionAllowed(false)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+            name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+                                                     ^~~~~~~~~~~~~~~~~~
+                                                     
+
+'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated
+immutable value 'kc' was never used; consider replacing with '_' or removing it
+'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated
+'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated
+'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property
+'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated
+forced cast of 'SecCertificate' to same type has no effect
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated
+        guard SecKeychainCopySearchList(&list) == errSecSuccess,
+              ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated
+            if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+               ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated
+        _ = SecKeychainSetSearchList(kept as CFArray)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it
+                if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated
+        guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+              ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated
+        _ = SecKeychainDelete(kc)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated
+            guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated
+            guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+                  ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated
+                guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+                      ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated
+                _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+                    ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainSetUserInteractionAllowed(false)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property
+                kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+                                                   ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated
+            SecKeychainSetUserInteractionAllowed(false)
+            ^
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+            name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+                                                     ^~~~~~~~~~~~~~~~~~
+                                                     
+
+43%: Discovering Swift tasks after 'Compiling resource_bundle_accessor.swift, Adapters.swift, AdaptiveQuotaModel.swift, AgentRegistry.swift, AgentRole.swift, Approval.swift, ArchitectReview.swift, Archive.swift, Ask.swift, AutoRefill.swift, BaselineFreshness.swift, BinarySwap.swift, BossGate.swift, Brief.swift, ClusterCA.swift, ClusterDispatchPlanner.swift, ClusterNet.swift, ClusterPresence.swift, ClusterProtocol.swift, CodeSigning.swift, CodingMediaGuard.swift, Collaboration.swift, CollaborationMCPInstaller.swift, Collector.swift, ConfigIntent.swift, ConsultationLifecycle.swift, ContextAffinityPolicy.swift, ContextPack.swift, ContextPackRollout.swift, ContextProjection.swift, ContextTelemetry.swift, Cooldown.swift, DashboardHTML.swift, Debris.swift, DuplicateGuard.swift, EvidenceGate.swift, ExitClassify.swift, Format.swift, GameProjectBootstrap.swift, GoldenSampleGate.swift, GraphSession.swift, Housekeeping.swift, IdleFiller.swift, IdleReason.swift, Inbox.swift, KimiArtifactProgress.swift, LegacyContextPromptBuilder.swift, LifecycleIsolation.swift, LimitLearner.swift, LocalWorkerPool.swift, LowValueDelegationPolicy.swift, MergeReview.swift, Milestone.swift, MiniMaxAdapter.swift, MiniMaxProbe.swift, Mirror.swift, MobileAction.swift, Model.swift, NotificationDetail.swift, Nudge.swift, OfficeEvent.swift, OpenCodeAdapter.swift, OutputExists.swift, Plan.swift, Planned.swift, PlatformHealth.swift, Playbook.swift, PostLandRepair.swift, PremiseCheck.swift, ProductBrief.swift, ProgressLog.swift, ProjectContract.swift, ProjectExecutionScope.swift, ProjectorInstallation.swift, Push.swift, QualityArchitectureReview.swift, QualityGuardrailGate.swift, QuotaCalibration.swift, QuotaCeiling.swift, QuotaEngine.swift, QuotaSignal.swift, ReleaseChannel.swift, ReleaseFanout.swift, RepoExecutionPolicy.swift, RepoLease.swift, RepoMap.swift, ReservePool.swift, Review.swift, RoadmapPage.swift, RunnerConfig.swift, SafeDecode.swift, SchedulerSnapshot.swift, SecurityAudit.swift, SelfCheck.swift, SharedConfigJournal.swift, Showcase.swift, SmartConsultationPolicy.swift, StageFindingLoop.swift, StageObservationExecution.swift, StaleBranch.swift, StaleIdentitySweep.swift, Store.swift, TaskBoard.swift, TaskBoardStore.swift, TaskClassifier.swift, TaskDecomposer.swift, TaskGraph.swift, TaskIntake.swift, TaskKind.swift, TaskPause.swift, TaskProfile.swift, TaskResourcePolicy.swift, TechnicalDisposition.swift, TechnicalRecovery.swift, VerdictQuality.swift, VerifyRepair.swift, ViewFeed.swift, VisualQualityGate.swift, VisualReviewScope.swift, WasteMeter.swift, Watchdog.swift, Work.swift, WorkAttempt.swift, WorkHandoff.swift, WorkLoop.swift, WorkProgress.swift, ZcodeAdapter.swift'
+43%: Discovering Swift tasks after 'Compiling resource_bundle_accessor.swift, Adapters.swift, AdaptiveQuotaModel.swift, AgentRegistry.swift, AgentRole.swift, Approval.swift, ArchitectReview.swift, Archive.swift, Ask.swift, AutoRefill.swift, BaselineFreshness.swift, BinarySwap.swift, BossGate.swift, Brief.swift, ClusterCA.swift, ClusterDispatchPlanner.swift, ClusterNet.swift, ClusterPresence.swift, ClusterProtocol.swift, CodeSigning.swift, CodingMediaGuard.swift, Collaboration.swift, CollaborationMCPInstaller.swift, Collector.swift, ConfigIntent.swift, ConsultationLifecycle.swift, ContextAffinityPolicy.swift, ContextPack.swift, ContextPackRollout.swift, ContextProjection.swift, ContextTelemetry.swift, Cooldown.swift, DashboardHTML.swift, Debris.swift, DuplicateGuard.swift, EvidenceGate.swift, ExitClassify.swift, Format.swift, GameProjectBootstrap.swift, GoldenSampleGate.swift, GraphSession.swift, Housekeeping.swift, IdleFiller.swift, IdleReason.swift, Inbox.swift, KimiArtifactProgress.swift, LegacyContextPromptBuilder.swift, LifecycleIsolation.swift, LimitLearner.swift, LocalWorkerPool.swift, LowValueDelegationPolicy.swift, MergeReview.swift, Milestone.swift, MiniMaxAdapter.swift, MiniMaxProbe.swift, Mirror.swift, MobileAction.swift, Model.swift, NotificationDetail.swift, Nudge.swift, OfficeEvent.swift, OpenCodeAdapter.swift, OutputExists.swift, Plan.swift, Planned.swift, PlatformHealth.swift, Playbook.swift, PostLandRepair.swift, PremiseCheck.swift, ProductBrief.swift, ProgressLog.swift, ProjectContract.swift, ProjectExecutionScope.swift, ProjectorInstallation.swift, Push.swift, QualityArchitectureReview.swift, QualityGuardrailGate.swift, QuotaCalibration.swift, QuotaCeiling.swift, QuotaEngine.swift, QuotaSignal.swift, ReleaseChannel.swift, ReleaseFanout.swift, RepoExecutionPolicy.swift, RepoLease.swift, RepoMap.swift, ReservePool.swift, Review.swift, RoadmapPage.swift, RunnerConfig.swift, SafeDecode.swift, SchedulerSnapshot.swift, SecurityAudit.swift, SelfCheck.swift, SharedConfigJournal.swift, Showcase.swift, SmartConsultationPolicy.swift, StageFindingLoop.swift, StageObservationExecution.swift, StaleBranch.swift, StaleIdentitySweep.swift, Store.swift, TaskBoard.swift, TaskBoardStore.swift, TaskClassifier.swift, TaskDecomposer.swift, TaskGraph.swift, TaskIntake.swift, TaskKind.swift, TaskPause.swift, TaskProfile.swift, TaskResourcePolicy.swift, TechnicalDisposition.swift, TechnicalRecovery.swift, VerdictQuality.swift, VerifyRepair.swift, ViewFeed.swift, VisualQualityGate.swift, VisualReviewScope.swift, WasteMeter.swift, Watchdog.swift, Work.swift, WorkAttempt.swift, WorkHandoff.swift, WorkLoop.swift, WorkProgress.swift, ZcodeAdapter.swift'
+43%: Unblock downstream dependents of LLMQuotaCore_Module (x86_64)
+43%: Unblock downstream dependents of LLMQuotaCore_Module (arm64)
+43%: Compile LLMQuotaCore_Module (arm64)
+43%: Compile LLMQuotaCore_Module (x86_64)
+43%: Copy LLMQuotaCore.swiftmodule (x86_64)
+43%: Copy LLMQuotaCore.abi.json (x86_64)
+43%: Copy LLMQuotaCore.swiftmodule (arm64)
+43%: Copy LLMQuotaCore.abi.json (arm64)
+43%: Copy LLMQuotaCore.swiftsourceinfo (x86_64)
+43%: Copy LLMQuotaCore.swiftsourceinfo (arm64)
+43%: Link LLMQuotaCore_Module.o (arm64)
+43%: Link LLMQuotaCore_Module.o (x86_64)
+81%: Create universal binary LLMQuotaCore_Module.o
+86%: Extract app intents metadata
+2026-09-07 19:26:30.636 appintentsmetadataprocessor[34621:76992677] Starting appintentsmetadataprocessor export
+2026-09-07 19:26:30.653 appintentsmetadataprocessor[34621:76992677] Extracted no relevant App Intents symbols, skipping writing output
+
+86%: Planning Swift module LLMQuotaBarApp (arm64)
+86%: Register execution policy exception for LLMQuotaCore_Module.o
+76%: Planning Swift module LLMQuotaBarApp (x86_64)
+76%: Planning Swift module llmq (x86_64)
+71%: Compiling main.swift
+71%: Compile main.swift (x86_64)
+72%: Compiling App.swift, MirrorController.swift
+72%: Compiling App.swift, MirrorController.swift
+72%: Compile 2 Swift source files (x86_64)
+72%: Compile 2 Swift source files (arm64)
+73%: Discovering Swift tasks after 'Compiling App.swift, MirrorController.swift'
+73%: Unblock downstream dependents of LLMQuotaBarApp (x86_64)
+73%: Discovering Swift tasks after 'Compiling App.swift, MirrorController.swift'
+73%: Unblock downstream dependents of LLMQuotaBarApp (arm64)
+73%: Link LLMQuotaBarApp (arm64)
+73%: Copy LLMQuotaBarApp.abi.json (arm64)
+73%: Copy LLMQuotaBarApp.abi.json (x86_64)
+73%: Planning Swift module llmq (arm64)
+83%: Compiling main.swift
+83%: Compile main.swift (arm64)
+83%: Link LLMQuotaBarApp (x86_64)
+84%: Create universal binary LLMQuotaBarApp
+84%: Generate LLMQuotaBarApp.dSYM for LLMQuotaBarApp
+88%: Compile LLMQuotaBarApp (arm64)
+88%: Compile LLMQuotaBarApp (x86_64)
+88%: Register execution policy exception for LLMQuotaBarApp
+87%: Discovering Swift tasks after 'Compiling main.swift'
+87%: Unblock downstream dependents of llmq (x86_64)
+87%: Link llmq (x86_64)
+90%: Discovering Swift tasks after 'Compiling main.swift'
+90%: Unblock downstream dependents of llmq (arm64)
+90%: Link llmq (arm64)
+90%: Copy llmq.swiftsourceinfo (arm64)
+90%: Copy llmq.swiftsourceinfo (x86_64)
+90%: Copy llmq.abi.json (arm64)
+90%: Copy llmq.abi.json (x86_64)
+96%: Create universal binary llmq
+96%: Generate llmq.dSYM for llmq
+100%: Compile llmq (arm64)
+100%: Compile llmq (x86_64)
+100%: Register execution policy exception for llmq
+100%: Build succeeded
+Build complete!

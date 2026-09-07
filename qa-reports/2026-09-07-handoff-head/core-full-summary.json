@@ -1,0 +1,53 @@
+{
+  "noninteractivePassed": false,
+  "allPassed": false,
+  "total": 1563,
+  "passed": 1560,
+  "shards": [
+    {
+      "shard": 0,
+      "exitCode": 0,
+      "expected": 23,
+      "passed": 23,
+      "missing": [],
+      "skipped": [],
+      "failures": []
+    },
+    {
+      "shard": 1,
+      "exitCode": 1,
+      "expected": 514,
+      "passed": 513,
+      "missing": [
+        "LLMQuotaCoreTests.WorkHandoffTests/testFailedCheckpointDoesNotTransferOlderCommittedTree"
+      ],
+      "skipped": [],
+      "failures": [
+        "/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:82: error: -[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree] : XCTAssertThrowsError failed: did not throw an error",
+        "/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:83: error: -[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree] : XCTAssertEqual failed: (\"Optional(\"c985afb469bc60f33802d055eda2cd35afbc0500\")\") is not equal to (\"Optional(\"9bd6024a20507ec9cc1236d5398a697d87b40218\")\")",
+        "Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree]' failed (4.081 seconds)."
+      ]
+    },
+    {
+      "shard": 2,
+      "exitCode": 0,
+      "expected": 513,
+      "passed": 511,
+      "missing": [],
+      "skipped": [
+        "LLMQuotaCoreTests.ClusterNetTests/testPassphraseSurvivesRelaxedAccess",
+        "LLMQuotaCoreTests.ClusterNetTests/testScratchKeychainCreatesAndCleansUp"
+      ],
+      "failures": []
+    },
+    {
+      "shard": 3,
+      "exitCode": 0,
+      "expected": 513,
+      "passed": 513,
+      "missing": [],
+      "skipped": [],
+      "failures": []
+    }
+  ]
+}

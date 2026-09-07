@@ -1,0 +1,28 @@
+[0/1] Planning build
+Building for debugging...
+[0/4] Write sources
+[2/4] Write swift-version--58304C5D6DBC2206.txt
+[4/6] Compiling LLMQuotaCore WorkHandoff.swift
+[5/6] Emitting module LLMQuotaCore
+[6/8] Compiling LLMQuotaCoreTests WorkHandoffTests.swift
+[7/8] Emitting module LLMQuotaCoreTests
+[7/9] Write Objects.LinkFileList
+[8/9] Linking HandoffMutationPackageTests
+Build complete! (3.81s)
+Test Suite 'Selected tests' started at 2026-09-07 19:21:11.835.
+Test Suite 'HandoffMutationPackageTests.xctest' started at 2026-09-07 19:21:11.836.
+Test Suite 'WorkHandoffTests' started at 2026-09-07 19:21:11.836.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testAlreadyCurrentOrLeadingDestinationStillProtectsUnsavedWork]' started.
+/private/tmp/llmq-handoff-mutant-20260907/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:95: error: -[LLMQuotaCoreTests.WorkHandoffTests testAlreadyCurrentOrLeadingDestinationStillProtectsUnsavedWork] : XCTAssertThrowsError failed: did not throw an error
+/private/tmp/llmq-handoff-mutant-20260907/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:101: error: -[LLMQuotaCoreTests.WorkHandoffTests testAlreadyCurrentOrLeadingDestinationStillProtectsUnsavedWork] : XCTAssertThrowsError failed: did not throw an error
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testAlreadyCurrentOrLeadingDestinationStillProtectsUnsavedWork]' failed (4.836 seconds).
+Test Suite 'WorkHandoffTests' failed at 2026-09-07 19:21:16.672.
+	 Executed 1 test, with 2 failures (0 unexpected) in 4.836 (4.837) seconds
+Test Suite 'HandoffMutationPackageTests.xctest' failed at 2026-09-07 19:21:16.672.
+	 Executed 1 test, with 2 failures (0 unexpected) in 4.836 (4.837) seconds
+Test Suite 'Selected tests' failed at 2026-09-07 19:21:16.672.
+	 Executed 1 test, with 2 failures (0 unexpected) in 4.836 (4.837) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

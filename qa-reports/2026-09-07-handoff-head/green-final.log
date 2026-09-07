@@ -1,0 +1,98 @@
+Another instance of SwiftPM (PID: 22577) is already running using '/Users/dushibing/dev/LLMQuotaBar/.build', waiting until that process has finished execution...[0/1] Planning build
+Building for debugging...
+[0/9] Write sources
+[3/9] Write swift-version--58304C5D6DBC2206.txt
+[5/11] Emitting module LLMQuotaCore
+[6/11] Compiling LLMQuotaCore WorkHandoff.swift
+[6/15] Write Objects.LinkFileList
+[7/17] Linking LLMQuotaBarApp
+[8/17] Applying LLMQuotaBarApp
+[10/17] Emitting module LLMQuotaCoreTests
+[11/17] Compiling LLMQuotaCoreTests WorkHandoffTests.swift
+[11/18] Write Objects.LinkFileList
+[12/18] Linking LLMQuotaBarPackageTests
+[14/18] Compiling llmq main.swift
+[15/18] Emitting module llmq
+[15/18] Write Objects.LinkFileList
+[16/18] Linking llmq
+[17/18] Applying llmq
+Build complete! (9.10s)
+Test Suite 'Selected tests' started at 2026-09-07 19:23:36.600.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 19:23:36.600.
+Test Suite 'GraphBranchPreserveTests' started at 2026-09-07 19:23:36.600.
+Test Case '-[LLMQuotaCoreTests.GraphBranchPreserveTests testSecondStepDoesNotResetGraphBranch]' started.
+Test Case '-[LLMQuotaCoreTests.GraphBranchPreserveTests testSecondStepDoesNotResetGraphBranch]' passed (5.492 seconds).
+Test Suite 'GraphBranchPreserveTests' passed at 2026-09-07 19:23:42.093.
+	 Executed 1 test, with 0 failures (0 unexpected) in 5.492 (5.493) seconds
+Test Suite 'GraphWorktreeTests' started at 2026-09-07 19:23:42.093.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testCleanupRefusesToRemoveAnUnfinishedGraphWorktree]' started.
+保留 agent/graph/g8：图还没跑完，删了会带走前面几步的提交
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testCleanupRefusesToRemoveAnUnfinishedGraphWorktree]' passed (2.467 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testFailedTakeoverPreservesInheritedCommitsEvenWithoutNewFiles]' started.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testFailedTakeoverPreservesInheritedCommitsEvenWithoutNewFiles]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testPlainTaskKeepsPerTaskBranch]' started.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testPlainTaskKeepsPerTaskBranch]' passed (1.935 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testPlainTaskStartsFromTheExplicitHandoffBase]' started.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testPlainTaskStartsFromTheExplicitHandoffBase]' passed (3.598 seconds).
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testSecondNodeReusesTheWorktreeAndSeesTheFirstCommit]' started.
+Test Case '-[LLMQuotaCoreTests.GraphWorktreeTests testSecondNodeReusesTheWorktreeAndSeesTheFirstCommit]' passed (3.599 seconds).
+Test Suite 'GraphWorktreeTests' passed at 2026-09-07 19:23:53.693.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 11.599 (11.600) seconds
+Test Suite 'WorkAttemptSessionTests' started at 2026-09-07 19:23:53.693.
+Test Case '-[LLMQuotaCoreTests.WorkAttemptSessionTests testLaterSuccessSupersedesOlderSessionFailure]' started.
+Test Case '-[LLMQuotaCoreTests.WorkAttemptSessionTests testLaterSuccessSupersedesOlderSessionFailure]' passed (0.004 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkAttemptSessionTests testLatestSnapshotsDoesNotShowTerminalAttemptAsStillRunning]' started.
+Test Case '-[LLMQuotaCoreTests.WorkAttemptSessionTests testLatestSnapshotsDoesNotShowTerminalAttemptAsStillRunning]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkAttemptSessionTests testRunningEventDoesNotHideLatestTerminalAttempt]' started.
+Test Case '-[LLMQuotaCoreTests.WorkAttemptSessionTests testRunningEventDoesNotHideLatestTerminalAttempt]' passed (0.001 seconds).
+Test Suite 'WorkAttemptSessionTests' passed at 2026-09-07 19:23:53.702.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.008 (0.009) seconds
+Test Suite 'WorkHandoffTests' started at 2026-09-07 19:23:53.702.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testAlreadyCurrentOrLeadingDestinationStillProtectsUnsavedWork]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testAlreadyCurrentOrLeadingDestinationStillProtectsUnsavedWork]' passed (5.220 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCheckedOutDirtyOrBusyDestinationIsNotChanged]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCheckedOutDirtyOrBusyDestinationIsNotChanged]' passed (10.231 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCleanCommittedWorkIsHandedOffAndOldDestinationAdvances]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCleanCommittedWorkIsHandedOffAndOldDestinationAdvances]' passed (6.369 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testDivergedDestinationIsPreservedAndRefused]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testDivergedDestinationIsPreservedAndRefused]' passed (4.942 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree]' started.
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:82: error: -[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree] : XCTAssertThrowsError failed: did not throw an error
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/WorkHandoffTests.swift:83: error: -[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree] : XCTAssertEqual failed: ("Optional("20689a9cc51f49a33555d85cf1ab13ef00eee25c")") is not equal to ("Optional("2a38670574a2d94ec4d555773778013dc64c6495")")
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree]' failed (4.465 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testOldDestinationCannotSilentlyIgnoreNewSource]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testOldDestinationCannotSilentlyIgnoreNewSource]' passed (5.000 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testUncommittedChangesAreSavedAndInvalidBaseIsRejected]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testUncommittedChangesAreSavedAndInvalidBaseIsRejected]' passed (4.427 seconds).
+Test Suite 'WorkHandoffTests' failed at 2026-09-07 19:24:34.357.
+	 Executed 7 tests, with 2 failures (0 unexpected) in 40.654 (40.655) seconds
+Test Suite 'WorkspaceBusyTests' started at 2026-09-07 19:24:34.357.
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_Xcode后台服务不算Agent占用]' started.
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_Xcode后台服务不算Agent占用]' passed (0.003 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_切换复用工作区前_真实经过占用闸]' started.
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_切换复用工作区前_真实经过占用闸]' passed (2.490 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_探针可注入_并且排除自己]' started.
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_探针可注入_并且排除自己]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_有人占着时_错误里要点名进程]' started.
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_有人占着时_错误里要点名进程]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_没人占着时_探针返回空]' started.
+Test Case '-[LLMQuotaCoreTests.WorkspaceBusyTests test_没人占着时_探针返回空]' passed (0.002 seconds).
+Test Suite 'WorkspaceBusyTests' passed at 2026-09-07 19:24:36.854.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.497 (2.498) seconds
+Test Suite 'WorkspaceReuseTests' started at 2026-09-07 19:24:36.854.
+Test Case '-[LLMQuotaCoreTests.WorkspaceReuseTests testStableKeyIsFilesystemSafe]' started.
+Test Case '-[LLMQuotaCoreTests.WorkspaceReuseTests testStableKeyIsFilesystemSafe]' passed (1.646 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkspaceReuseTests testStableKeyIsPerRepoAndPlatform]' started.
+Test Case '-[LLMQuotaCoreTests.WorkspaceReuseTests testStableKeyIsPerRepoAndPlatform]' passed (6.667 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkspaceReuseTests testTwoTasksShareDirectoryButGetOwnBranches]' started.
+Test Case '-[LLMQuotaCoreTests.WorkspaceReuseTests testTwoTasksShareDirectoryButGetOwnBranches]' passed (9.283 seconds).
+Test Suite 'WorkspaceReuseTests' passed at 2026-09-07 19:24:54.451.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 17.596 (17.596) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' failed at 2026-09-07 19:24:54.451.
+	 Executed 24 tests, with 2 failures (0 unexpected) in 77.847 (77.850) seconds
+Test Suite 'Selected tests' failed at 2026-09-07 19:24:54.451.
+	 Executed 24 tests, with 2 failures (0 unexpected) in 77.847 (77.851) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

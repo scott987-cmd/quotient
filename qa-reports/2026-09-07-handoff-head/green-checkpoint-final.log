@@ -1,0 +1,35 @@
+Building for debugging...
+[0/3] Write sources
+[1/3] Write swift-version--58304C5D6DBC2206.txt
+[3/5] Compiling LLMQuotaCore WorkHandoff.swift
+[4/5] Emitting module LLMQuotaCore
+[4/6] Write Objects.LinkFileList
+[5/6] Linking HandoffMutationPackageTests
+Build complete! (4.28s)
+Test Suite 'Selected tests' started at 2026-09-07 19:26:07.033.
+Test Suite 'HandoffMutationPackageTests.xctest' started at 2026-09-07 19:26:07.035.
+Test Suite 'WorkHandoffTests' started at 2026-09-07 19:26:07.035.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testAlreadyCurrentOrLeadingDestinationStillProtectsUnsavedWork]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testAlreadyCurrentOrLeadingDestinationStillProtectsUnsavedWork]' passed (5.231 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCheckedOutDirtyOrBusyDestinationIsNotChanged]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCheckedOutDirtyOrBusyDestinationIsNotChanged]' passed (10.256 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCleanCommittedWorkIsHandedOffAndOldDestinationAdvances]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testCleanCommittedWorkIsHandedOffAndOldDestinationAdvances]' passed (7.047 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testDivergedDestinationIsPreservedAndRefused]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testDivergedDestinationIsPreservedAndRefused]' passed (4.974 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testFailedCheckpointDoesNotTransferOlderCommittedTree]' passed (3.025 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testOldDestinationCannotSilentlyIgnoreNewSource]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testOldDestinationCannotSilentlyIgnoreNewSource]' passed (5.000 seconds).
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testUncommittedChangesAreSavedAndInvalidBaseIsRejected]' started.
+Test Case '-[LLMQuotaCoreTests.WorkHandoffTests testUncommittedChangesAreSavedAndInvalidBaseIsRejected]' passed (4.433 seconds).
+Test Suite 'WorkHandoffTests' passed at 2026-09-07 19:26:47.003.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 39.967 (39.968) seconds
+Test Suite 'HandoffMutationPackageTests.xctest' passed at 2026-09-07 19:26:47.003.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 39.967 (39.968) seconds
+Test Suite 'Selected tests' passed at 2026-09-07 19:26:47.003.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 39.967 (39.970) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
