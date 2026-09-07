@@ -1,0 +1,8 @@
+{
+  "baseHEAD": "9f123c3e86ffac313a8d198b606fd498e9bbaa9e",
+  "files": {
+    "Sources/LLMQuotaCore/BaselineFreshness.swift": "00804d70eb8a3f8993676cf8612cd7d4d8fa41f3a7e79d6a76c3004fee4b2991",
+    "Sources/llmq/main.swift": "4345deef918335c135ea1a532a5be82ebfd17ab62beb4a787e2292d1d6ecf335",
+    "Tests/LLMQuotaCoreTests/BaselineFreshnessTests.swift": "5dc3d842acc8c6c62990adec21448d808225fa27019188b908f26772d184f84c"
+  }
+}

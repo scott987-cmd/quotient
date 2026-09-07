@@ -2567,7 +2567,8 @@ func runOneTask(dryRun: Bool, quiet: Bool = false,
         // 永远合不进去 → 基线永远旧。**解开基线的钥匙被基线锁在外面。**
         // 亲任务豁免见 BaselineFreshness.blocks：任务自己的分支不算
         // 挡它的理由 —— 它是去完成那条分支的（retry/接力），不是重造。
-        let verdict = BaselineFreshness.blocks(fresh, candidateBranch: cand.branch)
+        let verdict = BaselineFreshness.blocks(fresh, candidateBranch: cand.branch,
+                                               repo: cand.repo)
         if case .stale = verdict, TaskKind.needsFreshBaseline(cand.prompt) {
             if !quiet {
                 print(Ansi.dim("  等基线 " + cand.id + "："

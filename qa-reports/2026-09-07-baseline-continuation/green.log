@@ -1,0 +1,94 @@
+[0/1] Planning build
+Building for debugging...
+[0/7] Write sources
+[1/7] Write swift-version--58304C5D6DBC2206.txt
+[3/9] Compiling LLMQuotaCore BaselineFreshness.swift
+[4/9] Emitting module LLMQuotaCore
+[4/12] Write Objects.LinkFileList
+[7/12] Linking llmq
+[8/12] Applying llmq
+[9/12] Linking LLMQuotaBarApp
+[10/12] Applying LLMQuotaBarApp
+[11/12] Linking LLMQuotaBarPackageTests
+Build complete! (3.52s)
+Test Suite 'Selected tests' started at 2026-09-07 09:51:27.000.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 09:51:27.001.
+Test Suite 'BaselineFreshnessTests' started at 2026-09-07 09:51:27.001.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAliasBranchAtSameCommitDoesNotBlockContinuation]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAliasBranchAtSameCommitDoesNotBlockContinuation]' passed (7.080 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks]' passed (7.386 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testCleanRepoIsFresh]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testCleanRepoIsFresh]' passed (1.926 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testConflictingBranchDoesNotFreezeTheRepoForever]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testConflictingBranchDoesNotFreezeTheRepoForever]' passed (5.592 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testDescriptionExplainsTheRealCost]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testDescriptionExplainsTheRealCost]' passed (1.378 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testSubstantialUnmergedWorkMakesBaselineStale]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testSubstantialUnmergedWorkMakesBaselineStale]' passed (4.866 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testTinyBranchDoesNotBlockDispatch]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testTinyBranchDoesNotBlockDispatch]' passed (4.921 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testUnresolvableBranchesAndWrongRepositoryDoNotGainExemption]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testUnresolvableBranchesAndWrongRepositoryDoNotGainExemption]' passed (2.190 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testVisualQualityRejectedBranchDoesNotBlockRemediation]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testVisualQualityRejectedBranchDoesNotBlockRemediation]' passed (5.193 seconds).
+Test Suite 'BaselineFreshnessTests' passed at 2026-09-07 09:52:07.535.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 40.532 (40.534) seconds
+Test Suite 'BaselineOwnBranchTests' started at 2026-09-07 09:52:07.536.
+Test Case '-[LLMQuotaCoreTests.BaselineOwnBranchTests testExemptionRemovesOnlyOwnBranch]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineOwnBranchTests testExemptionRemovesOnlyOwnBranch]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineOwnBranchTests testFreshStaysFresh]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineOwnBranchTests testFreshStaysFresh]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineOwnBranchTests testOtherTasksAreStillBlocked]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineOwnBranchTests testOtherTasksAreStillBlocked]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineOwnBranchTests testOwnBranchDoesNotBlockItsTask]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineOwnBranchTests testOwnBranchDoesNotBlockItsTask]' passed (0.000 seconds).
+Test Suite 'BaselineOwnBranchTests' passed at 2026-09-07 09:52:07.537.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'RejectedBranchBaselineTests' started at 2026-09-07 09:52:07.537.
+Test Case '-[LLMQuotaCoreTests.RejectedBranchBaselineTests testRejectionIsHeadBoundSoFreshCommitsFreezeAgain]' started.
+Test Case '-[LLMQuotaCoreTests.RejectedBranchBaselineTests testRejectionIsHeadBoundSoFreshCommitsFreezeAgain]' passed (0.002 seconds).
+Test Suite 'RejectedBranchBaselineTests' passed at 2026-09-07 09:52:07.538.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'TaskKindRoutingTests' started at 2026-09-07 09:52:07.539.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testBothReviewSpellingsAreRecognised]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testBothReviewSpellingsAreRecognised]' passed (0.001 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testCodingWorkStillWaitsForBaseline]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testCodingWorkStillWaitsForBaseline]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testMediaIsPrefixOnly]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testMediaIsPrefixOnly]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testMiniMaxTestingFindsVerifyCommandFromWorktree]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testMiniMaxTestingFindsVerifyCommandFromWorktree]' passed (1.918 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewAndTestingRejectDevelopmentRunners]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewAndTestingRejectDevelopmentRunners]' passed (7.404 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewIntakePrefersMiniMaxByDefault]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewIntakePrefersMiniMaxByDefault]' passed (0.011 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewOnlyRunnerRejectsCodingTask]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testReviewOnlyRunnerRejectsCodingTask]' passed (7.074 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testTestingIntakePrefersMiniMaxAndStaysOneTask]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testTestingIntakePrefersMiniMaxAndStaysOneTask]' passed (0.007 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testTodaysNewPrefixesAreClassified]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testTodaysNewPrefixesAreClassified]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testUnblockingKindsDoNotWaitForBaseline]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testUnblockingKindsDoNotWaitForBaseline]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testUnprefixedPromptIsCoding]' started.
+Test Case '-[LLMQuotaCoreTests.TaskKindRoutingTests testUnprefixedPromptIsCoding]' passed (0.000 seconds).
+Test Suite 'TaskKindRoutingTests' passed at 2026-09-07 09:52:23.958.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 16.418 (16.419) seconds
+Test Suite 'TaskPauseTests' started at 2026-09-07 09:52:23.958.
+Test Case '-[LLMQuotaCoreTests.TaskPauseTests testArchitectureReviewPauseRequiresExplicitUserOverride]' started.
+Test Case '-[LLMQuotaCoreTests.TaskPauseTests testArchitectureReviewPauseRequiresExplicitUserOverride]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskPauseTests testPausePreservesContextAndLeavesDispatchQueue]' started.
+Test Case '-[LLMQuotaCoreTests.TaskPauseTests testPausePreservesContextAndLeavesDispatchQueue]' passed (0.000 seconds).
+Test Case '-[LLMQuotaCoreTests.TaskPauseTests testTwoQualityRejectionsPauseUntilExplicitResume]' started.
+Test Case '-[LLMQuotaCoreTests.TaskPauseTests testTwoQualityRejectionsPauseUntilExplicitResume]' passed (0.001 seconds).
+Test Suite 'TaskPauseTests' passed at 2026-09-07 09:52:23.960.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' passed at 2026-09-07 09:52:23.960.
+	 Executed 28 tests, with 0 failures (0 unexpected) in 56.954 (56.959) seconds
+Test Suite 'Selected tests' passed at 2026-09-07 09:52:23.960.
+	 Executed 28 tests, with 0 failures (0 unexpected) in 56.954 (56.960) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

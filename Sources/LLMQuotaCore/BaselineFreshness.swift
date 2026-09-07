@@ -98,9 +98,32 @@ public enum BaselineFreshness {
     /// 和「审查/刷新任务豁免」同一个道理：解锁钥匙不能被锁在门外。
     ///
     /// 别的分支造成的不新鲜照样挡（把亲分支摘掉后还有剩 → 仍算 stale）。
-    public static func blocks(_ r: Result, candidateBranch: String?) -> Result {
+    public static func blocks(_ r: Result, candidateBranch: String?,
+                              repo: String? = nil) -> Result {
         guard case .stale(let branches, let files) = r else { return r }
-        let others = branches.filter { $0 != candidateBranch }
+        // Cross-platform handoffs and review branches may have different names
+        // but contain the same commits. Compare the continuing branch's actual
+        // history, not main: it already has any blocker that is its ancestor.
+        let path = repo.map { NSString(string: $0).expandingTildeInPath }
+        func head(_ branch: String) -> String? {
+            guard let path else { return nil }
+            let result = GitWorkspace.git(
+                ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch + "^{commit}"],
+                in: path, timeout: 5)
+            let value = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            return result.exitCode == 0 && !value.isEmpty ? value : nil
+        }
+        let candidateHead = candidateBranch.flatMap(head)
+        let others = branches.filter { branch in
+            if branch == candidateBranch { return false }
+            guard let path, let candidateHead, let blockerHead = head(branch) else {
+                return true // Missing refs or failed Git reads never grant a new exemption.
+            }
+            if blockerHead == candidateHead { return false }
+            return GitWorkspace.git(
+                ["merge-base", "--is-ancestor", blockerHead, candidateHead],
+                in: path, timeout: 5).exitCode != 0
+        }
         return others.isEmpty ? .fresh : .stale(branches: others, files: files)
     }
 

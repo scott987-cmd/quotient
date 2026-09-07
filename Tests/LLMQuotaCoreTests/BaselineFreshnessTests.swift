@@ -127,6 +127,50 @@ final class BaselineFreshnessTests: XCTestCase {
             "视觉验收判退后必须允许整改任务启动，不能继续把仓库当成基线待合")
     }
 
+    /// Cross-platform retries may leave differently named branches at the same
+    /// commit. The continuing task already has those changes, even before main does.
+    func testAliasBranchAtSameCommitDoesNotBlockContinuation() {
+        let own = "agent/kimi/owner"
+        let alias = "agent/minimax/reviewer"
+        git(["checkout", "-q", "-b", own])
+        for i in 0..<4 { write("Feature/F\(i).swift", "let value = 1\n") }
+        git(["add", "-A"]); git(["commit", "-q", "-m", "feature"])
+        git(["branch", alias]); git(["checkout", "-q", "main"])
+        let stale = BaselineFreshness.check(repo: repo,
+            tasks: [doneTask("owner"), doneTask("reviewer")])
+        guard case .stale = stale else { return XCTFail("Fixture must have substantial unmerged work") }
+        XCTAssertEqual(BaselineFreshness.blocks(stale, candidateBranch: own, repo: repo), .fresh)
+    }
+
+    func testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks() {
+        let own = "agent/kimi/owner", ancestor = "agent/minimax/ancestor"
+        git(["checkout", "-q", "-b", own])
+        write("first.swift", "first"); git(["add", "-A"]); git(["commit", "-q", "-m", "first"])
+        git(["branch", ancestor])
+        write("second.swift", "second"); git(["add", "-A"]); git(["commit", "-q", "-m", "second"])
+        XCTAssertEqual(BaselineFreshness.blocks(.stale(branches: [ancestor], files: 4),
+            candidateBranch: own, repo: repo), .fresh)
+        let newer = "agent/minimax/newer"
+        git(["checkout", "-q", "-b", newer])
+        write("third.swift", "third"); git(["add", "-A"]); git(["commit", "-q", "-m", "third"])
+        let diverged = "agent/minimax/diverged"
+        git(["checkout", "-q", "-b", diverged, ancestor])
+        write("other.swift", "other"); git(["add", "-A"]); git(["commit", "-q", "-m", "other"])
+        let result = BaselineFreshness.blocks(
+            .stale(branches: [ancestor, newer, diverged], files: 12),
+            candidateBranch: own, repo: repo)
+        guard case .stale(let remaining, _) = result else { return XCTFail("Unseen work must still block") }
+        XCTAssertEqual(remaining, [newer, diverged])
+    }
+
+    func testUnresolvableBranchesAndWrongRepositoryDoNotGainExemption() {
+        let stale = BaselineFreshness.Result.stale(branches: ["agent/kimi/missing"], files: 4)
+        XCTAssertEqual(BaselineFreshness.blocks(stale, candidateBranch: "main", repo: repo), stale)
+        XCTAssertEqual(BaselineFreshness.blocks(stale, candidateBranch: nil, repo: repo), stale)
+        XCTAssertEqual(BaselineFreshness.blocks(stale, candidateBranch: "main", repo: repo + "/absent"), stale)
+        XCTAssertEqual(BaselineFreshness.blocks(stale, candidateBranch: "missing", repo: repo), stale)
+    }
+
     /// 说明必须写出「为什么不能先干」。
     ///
     /// 只说「基线不新鲜」，以后改这段代码的人会以为这是个可以放宽的

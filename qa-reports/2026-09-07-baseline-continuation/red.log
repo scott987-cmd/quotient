@@ -1,0 +1,2380 @@
+Building for debugging...
+[0/18] /Users/dushibing/dev/LLMQuotaBar/.build/arm64-apple-macosx/debug/LLMQuotaBarPackageTests.derived/runner.swift
+[1/18] Write sources
+[5/18] Write llmq-entitlement.plist
+[5/18] Write LLMQuotaBarApp-entitlement.plist
+[7/18] Write sources
+[7/18] Copying Resources
+[9/18] Write swift-version--58304C5D6DBC2206.txt
+[11/133] Compiling LLMQuotaCore Adapters.swift
+[12/133] Compiling LLMQuotaCore AdaptiveQuotaModel.swift
+[13/133] Compiling LLMQuotaCore AgentRegistry.swift
+[14/133] Compiling LLMQuotaCore AgentRole.swift
+[15/133] Compiling LLMQuotaCore Approval.swift
+[16/133] Compiling LLMQuotaCore ArchitectReview.swift
+[17/133] Compiling LLMQuotaCore Archive.swift
+[18/133] Compiling LLMQuotaCore Ask.swift
+[19/133] Compiling LLMQuotaCore AutoRefill.swift
+[20/133] Compiling LLMQuotaCore BaselineFreshness.swift
+[21/133] Compiling LLMQuotaCore BinarySwap.swift
+[22/133] Compiling LLMQuotaCore BossGate.swift
+[23/133] Compiling LLMQuotaCore Brief.swift
+[24/145] Compiling LLMQuotaCore TaskBoardStore.swift
+[25/145] Compiling LLMQuotaCore TaskClassifier.swift
+[26/145] Compiling LLMQuotaCore TaskDecomposer.swift
+[27/145] Compiling LLMQuotaCore TaskGraph.swift
+[28/145] Compiling LLMQuotaCore TaskIntake.swift
+[29/145] Compiling LLMQuotaCore TaskKind.swift
+[30/145] Compiling LLMQuotaCore TaskPause.swift
+[31/145] Compiling LLMQuotaCore TaskProfile.swift
+[32/145] Compiling LLMQuotaCore TaskResourcePolicy.swift
+[33/145] Compiling LLMQuotaCore TechnicalDisposition.swift
+[34/145] Compiling LLMQuotaCore TechnicalRecovery.swift
+[35/145] Compiling LLMQuotaCore VerdictQuality.swift
+[36/145] Emitting module LLMQuotaCore
+[37/145] Compiling LLMQuotaCore Playbook.swift
+[38/145] Compiling LLMQuotaCore PostLandRepair.swift
+[39/145] Compiling LLMQuotaCore PremiseCheck.swift
+[40/145] Compiling LLMQuotaCore ProductBrief.swift
+[41/145] Compiling LLMQuotaCore ProgressLog.swift
+[42/145] Compiling LLMQuotaCore ProjectContract.swift
+[43/145] Compiling LLMQuotaCore ProjectExecutionScope.swift
+[44/145] Compiling LLMQuotaCore ProjectorInstallation.swift
+[45/145] Compiling LLMQuotaCore Push.swift
+[46/145] Compiling LLMQuotaCore QualityArchitectureReview.swift
+[47/145] Compiling LLMQuotaCore QualityGuardrailGate.swift
+[48/145] Compiling LLMQuotaCore QuotaCalibration.swift
+[49/145] Compiling LLMQuotaCore QuotaCeiling.swift
+[50/145] Compiling LLMQuotaCore ContextPack.swift
+[51/145] Compiling LLMQuotaCore ContextPackRollout.swift
+[52/145] Compiling LLMQuotaCore ContextProjection.swift
+[53/145] Compiling LLMQuotaCore ContextTelemetry.swift
+[54/145] Compiling LLMQuotaCore Cooldown.swift
+[55/145] Compiling LLMQuotaCore DashboardHTML.swift
+[56/145] Compiling LLMQuotaCore Debris.swift
+[57/145] Compiling LLMQuotaCore DuplicateGuard.swift
+[58/145] Compiling LLMQuotaCore EvidenceGate.swift
+[59/145] Compiling LLMQuotaCore ExitClassify.swift
+[60/145] Compiling LLMQuotaCore Format.swift
+[61/145] Compiling LLMQuotaCore GameProjectBootstrap.swift
+[62/145] Compiling LLMQuotaCore GoldenSampleGate.swift
+[63/145] Compiling LLMQuotaCore MiniMaxAdapter.swift
+[64/145] Compiling LLMQuotaCore MiniMaxProbe.swift
+[65/145] Compiling LLMQuotaCore Mirror.swift
+[66/145] Compiling LLMQuotaCore MobileAction.swift
+[67/145] Compiling LLMQuotaCore Model.swift
+[68/145] Compiling LLMQuotaCore NotificationDetail.swift
+[69/145] Compiling LLMQuotaCore Nudge.swift
+[70/145] Compiling LLMQuotaCore OfficeEvent.swift
+[71/145] Compiling LLMQuotaCore OpenCodeAdapter.swift
+[72/145] Compiling LLMQuotaCore OutputExists.swift
+[73/145] Compiling LLMQuotaCore Plan.swift
+[74/145] Compiling LLMQuotaCore Planned.swift
+[75/145] Compiling LLMQuotaCore PlatformHealth.swift
+[76/145] Compiling LLMQuotaCore SchedulerSnapshot.swift
+[77/145] Compiling LLMQuotaCore SecurityAudit.swift
+[78/145] Compiling LLMQuotaCore SelfCheck.swift
+[79/145] Compiling LLMQuotaCore SharedConfigJournal.swift
+[80/145] Compiling LLMQuotaCore Showcase.swift
+[81/145] Compiling LLMQuotaCore SmartConsultationPolicy.swift
+[82/145] Compiling LLMQuotaCore StageFindingLoop.swift
+[83/145] Compiling LLMQuotaCore StageObservationExecution.swift
+[84/145] Compiling LLMQuotaCore StaleBranch.swift
+[85/145] Compiling LLMQuotaCore StaleIdentitySweep.swift
+[86/145] Compiling LLMQuotaCore Store.swift
+[87/145] Compiling LLMQuotaCore TaskBoard.swift
+[88/145] Compiling LLMQuotaCore ClusterCA.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[89/145] Compiling LLMQuotaCore ClusterDispatchPlanner.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[90/145] Compiling LLMQuotaCore ClusterNet.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[91/145] Compiling LLMQuotaCore ClusterPresence.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[92/145] Compiling LLMQuotaCore ClusterProtocol.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[93/145] Compiling LLMQuotaCore CodeSigning.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[94/145] Compiling LLMQuotaCore CodingMediaGuard.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[95/145] Compiling LLMQuotaCore Collaboration.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[96/145] Compiling LLMQuotaCore CollaborationMCPInstaller.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[97/145] Compiling LLMQuotaCore Collector.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[98/145] Compiling LLMQuotaCore ConfigIntent.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[99/145] Compiling LLMQuotaCore ConsultationLifecycle.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[100/145] Compiling LLMQuotaCore ContextAffinityPolicy.swift
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:141:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 139 |         var kc: SecKeychain?
+ 140 |         let st = pw.withCString { p in
+ 141 |             SecKeychainCreate(path, UInt32(strlen(p)), p, false, nil, &kc)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 142 |         }
+ 143 |         guard st == errSecSuccess, let kc else { return nil }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:152:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 150 |         scratchPassword = pw
+ 151 |         _ = pw.withCString { p in
+ 152 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 153 |         }
+ 154 |         // **到此为止，别再碰这个钥匙串的任何设置。**
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:203:15: warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 201 |     private static func setSearchList(adding kc: SecKeychain?) {
+ 202 |         var list: CFArray?
+ 203 |         guard SecKeychainCopySearchList(&list) == errSecSuccess,
+     |               `- warning: 'SecKeychainCopySearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 204 |               let arr = list as? [SecKeychain] else { return }
+ 205 |         let mine = scratchDir.appendingPathComponent("scratch-").path
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:211:16: warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 209 |             var buf = [CChar](repeating: 0, count: 4096)
+ 210 |             var len = UInt32(buf.count)
+ 211 |             if SecKeychainGetPath(k, &len, &buf) == errSecSuccess {
+     |                `- warning: 'SecKeychainGetPath' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 212 |                 let p = String(cString: buf)
+ 213 |                 // 本工具的、而且文件已经没了 —— 这条是死的，剔掉。
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:222:13: warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 220 |         }
+ 221 |         if let kc { kept.insert(kc, at: 0) }
+ 222 |         _ = SecKeychainSetSearchList(kept as CFArray)
+     |             `- warning: 'SecKeychainSetSearchList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 223 |     }
+ 224 | 
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:216:24: warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 214 |                 // 别的进程还活着的那条**必须留下**。
+ 215 |                 if p.hasPrefix(mine) && !fm.fileExists(atPath: p) { continue }
+ 216 |                 if let kc, p == currentScratchPath { continue }  // 自己那条稍后重新插到最前
+     |                        `- warning: immutable value 'kc' was never used; consider replacing with '_' or removing it [#no-usage]
+ 217 |                 _ = kc
+ 218 |             }
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:262:15: warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 260 |         guard let kc = scratch, let pw = scratchPassword else { return false }
+ 261 |         var st = SecKeychainStatus(0)
+ 262 |         guard SecKeychainGetStatus(kc, &st) == errSecSuccess else { return false }
+     |               `- warning: 'SecKeychainGetStatus' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:265:13: warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 263 |         if st & SecKeychainStatus(kSecUnlockStateStatus) != 0 { return true }
+ 264 |         let r = pw.withCString { p in
+ 265 |             SecKeychainUnlock(kc, UInt32(strlen(p)), p, true)
+     |             `- warning: 'SecKeychainUnlock' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 266 |         }
+ 267 |         return r == errSecSuccess
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:279:13: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 277 |         // 反过来的话，重算时自己那个文件还在、会被当成「活的」留下，
+ 278 |         // 于是留下一条指向马上就要消失的文件的死条目。
+ 279 |         _ = SecKeychainDelete(kc)
+     |             `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 280 |         scratch = nil
+ 281 |         scratchPassword = nil
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:387:19: warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 385 |         private static func anyAppAccess() -> SecAccess? {
+ 386 |             var access: SecAccess?
+ 387 |             guard SecAccessCreate("llmq 集群口令" as CFString, nil, &access) == errSecSuccess,
+     |                   `- warning: 'SecAccessCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:390:19: warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 388 |                   let access else { return nil }
+ 389 |             var list: CFArray?
+ 390 |             guard SecAccessCopyACLList(access, &list) == errSecSuccess,
+     |                   `- warning: 'SecAccessCopyACLList' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 391 |                   let acls = list as? [SecACL] else { return access }
+ 392 |             for acl in acls {
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:396:23: warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 394 |                 var desc: CFString?
+ 395 |                 var prompt = SecKeychainPromptSelector()
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+     |                       `- warning: 'SecACLCopyContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:398:21: warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 396 |                 guard SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess
+ 397 |                 else { continue }
+ 398 |                 _ = SecACLSetContents(acl, nil, desc ?? "" as CFString, prompt)
+     |                     `- warning: 'SecACLSetContents' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 399 |             }
+ 400 |             return access
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:432:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 430 |             //
+ 431 |             // 验证过：加上之后 0.017 秒返回 errSecAuthFailed，不再挂。
+ 432 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 433 |             let q: [String: Any] = [
+ 434 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:438:52: warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 436 |                 kSecAttrAccount as String: node,
+ 437 |                 kSecReturnData as String: true,
+ 438 |                 kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+     |                                                    `- warning: 'kSecUseAuthenticationUIFail' was deprecated in macOS 11.0: Instead of kSecUseAuthenticationUI, use kSecUseAuthenticationContext and set LAContext.interactionNotAllowed property [#DeprecatedDeclaration]
+ 439 |             ]
+ 440 |             var out: CFTypeRef?
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:487:13: warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 485 |         /// 我们要的是把**现有**口令原样搬过去。
+ 486 |         public static func rawLoad(node: String) -> String? {
+ 487 |             SecKeychainSetUserInteractionAllowed(false)
+     |             `- warning: 'SecKeychainSetUserInteractionAllowed' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+ 488 |             let q: [String: Any] = [
+ 489 |                 kSecClass as String: kSecClassGenericPassword,
+
+/Users/dushibing/dev/LLMQuotaBar/Sources/LLMQuotaCore/ClusterNet.swift:955:54: warning: forced cast of 'SecCertificate' to same type has no effect
+ 953 |             guard name == nil else { return }
+ 954 |             let ref = sec_certificate_copy_ref(cert).takeRetainedValue()
+ 955 |             name = TrustEvaluator.commonName(of: ref as! SecCertificate)
+     |                                                      `- warning: forced cast of 'SecCertificate' to same type has no effect
+ 956 |         }
+ 957 |         return name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[101/145] Compiling LLMQuotaCore VerifyRepair.swift
+[102/145] Compiling LLMQuotaCore ViewFeed.swift
+[103/145] Compiling LLMQuotaCore VisualQualityGate.swift
+[104/145] Compiling LLMQuotaCore VisualReviewScope.swift
+[105/145] Compiling LLMQuotaCore WasteMeter.swift
+[106/145] Compiling LLMQuotaCore Watchdog.swift
+[107/145] Compiling LLMQuotaCore Work.swift
+[108/145] Compiling LLMQuotaCore WorkAttempt.swift
+[109/145] Compiling LLMQuotaCore WorkLoop.swift
+[110/145] Compiling LLMQuotaCore WorkProgress.swift
+[111/145] Compiling LLMQuotaCore ZcodeAdapter.swift
+[112/145] Compiling LLMQuotaCore resource_bundle_accessor.swift
+[113/145] Compiling LLMQuotaCore GraphSession.swift
+[114/145] Compiling LLMQuotaCore Housekeeping.swift
+[115/145] Compiling LLMQuotaCore IdleFiller.swift
+[116/145] Compiling LLMQuotaCore IdleReason.swift
+[117/145] Compiling LLMQuotaCore Inbox.swift
+[118/145] Compiling LLMQuotaCore KimiArtifactProgress.swift
+[119/145] Compiling LLMQuotaCore LegacyContextPromptBuilder.swift
+[120/145] Compiling LLMQuotaCore LifecycleIsolation.swift
+[121/145] Compiling LLMQuotaCore LimitLearner.swift
+[122/145] Compiling LLMQuotaCore LocalWorkerPool.swift
+[123/145] Compiling LLMQuotaCore LowValueDelegationPolicy.swift
+[124/145] Compiling LLMQuotaCore MergeReview.swift
+[125/145] Compiling LLMQuotaCore Milestone.swift
+[126/145] Compiling LLMQuotaCore QuotaEngine.swift
+[127/145] Compiling LLMQuotaCore QuotaSignal.swift
+[128/145] Compiling LLMQuotaCore ReleaseChannel.swift
+[129/145] Compiling LLMQuotaCore ReleaseFanout.swift
+[130/145] Compiling LLMQuotaCore RepoExecutionPolicy.swift
+[131/145] Compiling LLMQuotaCore RepoLease.swift
+[132/145] Compiling LLMQuotaCore RepoMap.swift
+[133/145] Compiling LLMQuotaCore ReservePool.swift
+[134/145] Compiling LLMQuotaCore Review.swift
+[135/145] Compiling LLMQuotaCore RoadmapPage.swift
+[136/145] Compiling LLMQuotaCore RunnerConfig.swift
+[137/145] Compiling LLMQuotaCore SafeDecode.swift
+[138/287] Compiling LLMQuotaBarApp MirrorController.swift
+[139/287] Emitting module LLMQuotaBarApp
+[140/287] Compiling LLMQuotaBarApp App.swift
+[140/287] Write Objects.LinkFileList
+[141/287] Linking LLMQuotaBarApp
+[142/287] Applying LLMQuotaBarApp
+[144/287] Emitting module LLMQuotaCoreTests
+[145/302] Emitting module llmq
+[146/302] Compiling llmq main.swift
+[146/302] Write Objects.LinkFileList
+[147/302] Linking llmq
+[148/302] Applying llmq
+[150/302] Compiling LLMQuotaCoreTests DecomposePolicyTests.swift
+[151/302] Compiling LLMQuotaCoreTests DerivedDispatchPrecisionTests.swift
+[152/302] Compiling LLMQuotaCoreTests DiscardedUpstreamTests.swift
+[153/302] Compiling LLMQuotaCoreTests DispatcherFallbackTests.swift
+[154/302] Compiling LLMQuotaCoreTests DriverShellHygieneTests.swift
+[155/302] Compiling LLMQuotaCoreTests DuplicateGuardTests.swift
+[156/302] Compiling LLMQuotaCoreTests EvidenceGateTests.swift
+[157/302] Compiling LLMQuotaCoreTests EvidenceRetryCapTests.swift
+[158/302] Compiling LLMQuotaCoreTests ExitClassifyTests.swift
+[159/302] Compiling LLMQuotaCoreTests GameProjectBootstrapTests.swift
+[160/302] Compiling LLMQuotaCoreTests GoldenSampleGateTests.swift
+[161/302] Compiling LLMQuotaCoreTests GraphBranchLookupTests.swift
+[162/302] Compiling LLMQuotaCoreTests GraphBranchPreserveTests.swift
+[163/302] Compiling LLMQuotaCoreTests HousekeepingTests.swift
+[164/302] Compiling LLMQuotaCoreTests HumanBlockContractTests.swift
+[165/302] Compiling LLMQuotaCoreTests OfficeContractTests.swift
+[166/302] Compiling LLMQuotaCoreTests OneAgentOneTaskTests.swift
+[167/302] Compiling LLMQuotaCoreTests OutputExistsTests.swift
+[168/302] Compiling LLMQuotaCoreTests OverlapDeadlockTests.swift
+[169/302] Compiling LLMQuotaCoreTests PaperworkNotForHumanTests.swift
+[170/302] Compiling LLMQuotaCoreTests PhaseDTests.swift
+[171/302] Compiling LLMQuotaCoreTests PinnedPlatformTests.swift
+[172/302] Compiling LLMQuotaCoreTests PlanGoTests.swift
+[173/302] Compiling LLMQuotaCoreTests PlannedStoreTests.swift
+[174/302] Compiling LLMQuotaCoreTests PlatformHealthTests.swift
+[175/302] Compiling LLMQuotaCoreTests PostLandRepairTests.swift
+[176/302] Compiling LLMQuotaCoreTests PremiseCheckTests.swift
+[177/302] Compiling LLMQuotaCoreTests ProcFdLeakTests.swift
+[178/302] Compiling LLMQuotaCoreTests ProcOutputNotLostTests.swift
+[179/302] Compiling LLMQuotaCoreTests ProductionReviewRejectionTests.swift
+[180/302] Compiling LLMQuotaCoreTests AdaptiveQuotaModelTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[181/302] Compiling LLMQuotaCoreTests ArchitectReviewTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[182/302] Compiling LLMQuotaCoreTests AskNudgeTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[183/302] Compiling LLMQuotaCoreTests AttributionTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[184/302] Compiling LLMQuotaCoreTests AutoLandTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[185/302] Compiling LLMQuotaCoreTests AutoLandVetoScopeTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[186/302] Compiling LLMQuotaCoreTests AutoRefillFocusTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[187/302] Compiling LLMQuotaCoreTests AutoRefillTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[188/302] Compiling LLMQuotaCoreTests BaselineFreshnessTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[189/302] Compiling LLMQuotaCoreTests BaselineOwnBranchTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[190/302] Compiling LLMQuotaCoreTests BinarySwapTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[191/302] Compiling LLMQuotaCoreTests BlockedPageTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[192/302] Compiling LLMQuotaCoreTests BossGateTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[193/302] Compiling LLMQuotaCoreTests BoundBranchTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[194/302] Compiling LLMQuotaCoreTests ClusterDispatchPlannerTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[195/302] Compiling LLMQuotaCoreTests CodeSigningTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BlockedPageTests.swift:22:78: warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+20 |         let p = ViewFeed.blockedPage(tasks: [waiting])
+21 |         let resource = MobileAction.taskResource(waiting)
+22 |         let ids = p.sections.flatMap { $0.cards ?? [] }.flatMap { $0.actions ?? [] }.map(\.id)
+   |                                                                              `- warning: left side of nil coalescing operator '??' has non-optional type '[ViewFeed.Action]', so the right side is never used
+23 |         XCTAssertTrue(ids.contains("task:approve:" + resource),
+24 |                       "有提醒就必须有按钮 —— 否则人点了也没用")
+[196/302] Compiling LLMQuotaCoreTests HumanQueueTests.swift
+[197/302] Compiling LLMQuotaCoreTests ICloudWriteGuardTests.swift
+[198/302] Compiling LLMQuotaCoreTests IdleFillerTests.swift
+[199/302] Compiling LLMQuotaCoreTests IdleReasonTests.swift
+[200/302] Compiling LLMQuotaCoreTests IndependentMobileRoutingTests.swift
+[201/302] Compiling LLMQuotaCoreTests InterruptedTaskTests.swift
+[202/302] Compiling LLMQuotaCoreTests InterruptionBlameTests.swift
+[203/302] Compiling LLMQuotaCoreTests InvocationIdentityTests.swift
+[204/302] Compiling LLMQuotaCoreTests KimiArtifactProgressTests.swift
+[205/302] Compiling LLMQuotaCoreTests KimiMonthlyWindowTests.swift
+[206/302] Compiling LLMQuotaCoreTests LANAddressTests.swift
+[207/302] Compiling LLMQuotaCoreTests LandingSelfDirtTests.swift
+[208/302] Compiling LLMQuotaCoreTests LifecycleIsolationTests.swift
+[209/302] Compiling LLMQuotaCoreTests LocalOnlySchedulingTests.swift
+[210/302] Compiling LLMQuotaCoreTests LocalWorkerPoolTests.swift
+[211/302] Compiling LLMQuotaCoreTests RepoMapTests.swift
+[212/302] Compiling LLMQuotaCoreTests ReservePoolTests.swift
+[213/302] Compiling LLMQuotaCoreTests ReserveReviewIndependentTests.swift
+[214/302] Compiling LLMQuotaCoreTests RestartGuardTests.swift
+[215/302] Compiling LLMQuotaCoreTests ReviewPromptDescribesBranchTests.swift
+[216/302] Compiling LLMQuotaCoreTests RiskyPathSupersetTests.swift
+[217/302] Compiling LLMQuotaCoreTests RoadmapPageTests.swift
+[218/302] Compiling LLMQuotaCoreTests ShowcaseTests.swift
+[219/302] Compiling LLMQuotaCoreTests SmartConsultationPolicyTests.swift
+[220/302] Compiling LLMQuotaCoreTests StageFindingLoopTests.swift
+[221/302] Compiling LLMQuotaCoreTests StageObservationSchedulingTests.swift
+[222/302] Compiling LLMQuotaCoreTests StaleBranchTests.swift
+[223/302] Compiling LLMQuotaCoreTests StaleIdentityRootTests.swift
+[224/302] Compiling LLMQuotaCoreTests StaleIdentitySweepTests.swift
+[225/302] Compiling LLMQuotaCoreTests StrandedGraphTests.swift
+[226/302] Compiling LLMQuotaCoreTests LowValueDelegationPolicyTests.swift
+[227/302] Compiling LLMQuotaCoreTests MachineDedupeTests.swift
+[228/302] Compiling LLMQuotaCoreTests MachineIdentityTests.swift
+[229/302] Compiling LLMQuotaCoreTests MachineStalenessTests.swift
+[230/302] Compiling LLMQuotaCoreTests MainlineInFlightTests.swift
+[231/302] Compiling LLMQuotaCoreTests MainlinePickTests.swift
+[232/302] Compiling LLMQuotaCoreTests MediaDriverQuotaTests.swift
+[233/302] Compiling LLMQuotaCoreTests MenuBarAliveTests.swift
+[234/302] Compiling LLMQuotaCoreTests MergeReviewTests.swift
+[235/302] Compiling LLMQuotaCoreTests MilestoneTests.swift
+[236/302] Compiling LLMQuotaCoreTests MirrorServiceTests.swift
+[237/302] Compiling LLMQuotaCoreTests MultiMachineDigestTests.swift
+[238/302] Compiling LLMQuotaCoreTests NotificationDetailTests.swift
+[239/302] Compiling LLMQuotaCoreTests NudgeRepeatTests.swift
+[240/302] Compiling LLMQuotaCoreTests NudgeTargetTests.swift
+[241/302] Compiling LLMQuotaCoreTests ProjectContractTests.swift
+[242/302] Compiling LLMQuotaCoreTests ProjectorInstallationTests.swift
+[243/302] Compiling LLMQuotaCoreTests PushTopicTests.swift
+[244/302] Compiling LLMQuotaCoreTests QualityArchitectureReviewTests.swift
+[245/302] Compiling LLMQuotaCoreTests QualityGuardrailGateTests.swift
+[246/302] Compiling LLMQuotaCoreTests QuotaAccuracyTests.swift
+[247/302] Compiling LLMQuotaCoreTests QuotaCalibrationTests.swift
+[248/302] Compiling LLMQuotaCoreTests QuotaPoolTests.swift
+[249/302] Compiling LLMQuotaCoreTests QuotaSignalRecoveryTests.swift
+[250/302] Compiling LLMQuotaCoreTests QuotaWasteUnitTests.swift
+[251/302] Compiling LLMQuotaCoreTests QwenLaneTests.swift
+[252/302] Compiling LLMQuotaCoreTests RateGateRefundTests.swift
+[253/302] Compiling LLMQuotaCoreTests ReleaseFanoutTests.swift
+[254/302] Compiling LLMQuotaCoreTests RepoArgResolutionTests.swift
+[255/302] Compiling LLMQuotaCoreTests RepoLeaseTests.swift
+[256/302] Compiling LLMQuotaCoreTests TaskBoardStoreTests.swift
+[257/302] Compiling LLMQuotaCoreTests TaskBoardTests.swift
+[258/302] Compiling LLMQuotaCoreTests TaskIntakeTests.swift
+[259/302] Compiling LLMQuotaCoreTests TaskKindRoutingTests.swift
+[260/302] Compiling LLMQuotaCoreTests TaskPauseTests.swift
+[261/302] Compiling LLMQuotaCoreTests TaskRevisionTests.swift
+[262/302] Compiling LLMQuotaCoreTests TaskStoreCheckpointTests.swift
+[263/302] Compiling LLMQuotaCoreTests TechnicalDispositionTests.swift
+[264/302] Compiling LLMQuotaCoreTests TechnicalRecoveryTests.swift
+[265/302] Compiling LLMQuotaCoreTests VerdictQualityTests.swift
+[266/302] Compiling LLMQuotaCoreTests VerdictScopeTests.swift
+[267/302] Compiling LLMQuotaCoreTests VerifyRepairTests.swift
+[268/302] Compiling LLMQuotaCoreTests VerifyTransientTests.swift
+[269/302] Compiling LLMQuotaCoreTests ViewFeedPublishTests.swift
+[270/302] Compiling LLMQuotaCoreTests VisionRoutingTests.swift
+[271/302] Compiling LLMQuotaCoreTests VisualGitFixture.swift
+[272/302] Compiling LLMQuotaCoreTests VisualQualityRemediationTests.swift
+[273/302] Compiling LLMQuotaCoreTests VisualReviewScopeTests.swift
+[274/302] Compiling LLMQuotaCoreTests WatchdogTests.swift
+[275/302] Compiling LLMQuotaCoreTests WorkAttemptSessionTests.swift
+[276/302] Compiling LLMQuotaCoreTests WorkProgressTests.swift
+[277/302] Compiling LLMQuotaCoreTests WorkQueuePriorityTests.swift
+[278/302] Compiling LLMQuotaCoreTests WorkRunTargetTests.swift
+[279/302] Compiling LLMQuotaCoreTests WorkspaceBusyTests.swift
+[280/302] Compiling LLMQuotaCoreTests WorkspaceReuseTests.swift
+[281/302] Compiling LLMQuotaCoreTests WorktreeSchedulingTests.swift
+[282/302] Compiling LLMQuotaCoreTests ZcodeAdapterTests.swift
+[283/302] Compiling LLMQuotaCoreTests ZcodeRunnableTests.swift
+[284/302] Compiling LLMQuotaCoreTests ZcodeRunnerTests.swift
+[285/302] Compiling LLMQuotaCoreTests ZeroOutputBlockerTests.swift
+[286/302] Compiling LLMQuotaCoreTests CodingMediaGuardTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[287/302] Compiling LLMQuotaCoreTests CollaborationTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[288/302] Compiling LLMQuotaCoreTests CollectCollapseTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[289/302] Compiling LLMQuotaCoreTests ConcurrencyFixTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[290/302] Compiling LLMQuotaCoreTests ConfigIntentTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[291/302] Compiling LLMQuotaCoreTests ContextAffinityTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[292/302] Compiling LLMQuotaCoreTests ContextPackRolloutTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[293/302] Compiling LLMQuotaCoreTests ContextPackTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[294/302] Compiling LLMQuotaCoreTests ContractReviewFixesTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[295/302] Compiling LLMQuotaCoreTests ControlPlaneRecoveryTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[296/302] Compiling LLMQuotaCoreTests CoreTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[297/302] Compiling LLMQuotaCoreTests CorruptTaskLineTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[298/302] Compiling LLMQuotaCoreTests CurrentOwnerReviewTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[299/302] Compiling LLMQuotaCoreTests DeadIdentityNoiseTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[300/302] Compiling LLMQuotaCoreTests DebrisTests.swift
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/CoreTests.swift:3457:33: warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+3455 |         let a = node("a", state: .blocked)
+3456 |         let b = node("b", deps: ["a"]), c = node("c", deps: ["b"])
+3457 |         let touched = TaskGraph.propagateBlocked([a, b, c])
+     |                                 |- warning: 'propagateBlocked' is deprecated: renamed to 'reconcile' [#DeprecatedDeclaration]
+     |                                 `- note: use 'reconcile' instead
+3458 |         XCTAssertEqual(Set(touched.map { $0.id }), ["b", "c"])
+3459 |         XCTAssertTrue(touched.allSatisfy { $0.state == .blocked })
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[301/304] Compiling LLMQuotaBarPackageTests runner.swift
+[302/304] Emitting module LLMQuotaBarPackageTests
+[302/304] Write Objects.LinkFileList
+[303/304] Linking LLMQuotaBarPackageTests
+Build complete! (32.25s)
+Test Suite 'Selected tests' started at 2026-09-07 09:50:16.601.
+Test Suite 'LLMQuotaBarPackageTests.xctest' started at 2026-09-07 09:50:16.603.
+Test Suite 'BaselineFreshnessTests' started at 2026-09-07 09:50:16.603.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAliasBranchAtSameCommitDoesNotBlockContinuation]' started.
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BaselineFreshnessTests.swift:142: error: -[LLMQuotaCoreTests.BaselineFreshnessTests testAliasBranchAtSameCommitDoesNotBlockContinuation] : XCTAssertEqual failed: ("stale(branches: ["agent/minimax/reviewer"], files: 8)") is not equal to ("fresh")
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAliasBranchAtSameCommitDoesNotBlockContinuation]' failed (7.436 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks]' started.
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BaselineFreshnessTests.swift:151: error: -[LLMQuotaCoreTests.BaselineFreshnessTests testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks] : XCTAssertEqual failed: ("stale(branches: ["agent/minimax/ancestor"], files: 4)") is not equal to ("fresh")
+/Users/dushibing/dev/LLMQuotaBar/Tests/LLMQuotaCoreTests/BaselineFreshnessTests.swift:163: error: -[LLMQuotaCoreTests.BaselineFreshnessTests testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks] : XCTAssertEqual failed: ("["agent/minimax/ancestor", "agent/minimax/newer", "agent/minimax/diverged"]") is not equal to ("["agent/minimax/newer", "agent/minimax/diverged"]")
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testAncestorIsCoveredButNewerAndDivergedWorkStillBlocks]' failed (4.619 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testCleanRepoIsFresh]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testCleanRepoIsFresh]' passed (1.908 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testConflictingBranchDoesNotFreezeTheRepoForever]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testConflictingBranchDoesNotFreezeTheRepoForever]' passed (5.504 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testDescriptionExplainsTheRealCost]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testDescriptionExplainsTheRealCost]' passed (1.358 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testSubstantialUnmergedWorkMakesBaselineStale]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testSubstantialUnmergedWorkMakesBaselineStale]' passed (4.946 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testTinyBranchDoesNotBlockDispatch]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testTinyBranchDoesNotBlockDispatch]' passed (4.909 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testUnresolvableBranchesAndWrongRepositoryDoNotGainExemption]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testUnresolvableBranchesAndWrongRepositoryDoNotGainExemption]' passed (1.412 seconds).
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testVisualQualityRejectedBranchDoesNotBlockRemediation]' started.
+Test Case '-[LLMQuotaCoreTests.BaselineFreshnessTests testVisualQualityRejectedBranchDoesNotBlockRemediation]' passed (5.254 seconds).
+Test Suite 'BaselineFreshnessTests' failed at 2026-09-07 09:50:53.952.
+	 Executed 9 tests, with 3 failures (0 unexpected) in 37.346 (37.349) seconds
+Test Suite 'LLMQuotaBarPackageTests.xctest' failed at 2026-09-07 09:50:53.952.
+	 Executed 9 tests, with 3 failures (0 unexpected) in 37.346 (37.349) seconds
+Test Suite 'Selected tests' failed at 2026-09-07 09:50:53.952.
+	 Executed 9 tests, with 3 failures (0 unexpected) in 37.346 (37.351) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
