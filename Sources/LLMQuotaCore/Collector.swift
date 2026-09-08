@@ -421,6 +421,13 @@ public enum Paths {
     /// 测试用:模拟「另一台机器」。生产永远是 nil。
     public static var machineIDOverride: String?
 
+    // IOPlatformUUID is immutable for the lifetime of this process. Looking it up
+    // with ioreg on every machineID() call used to spawn hundreds of short-lived
+    // processes during one reconciliation/landing pass. Keep the hardware result
+    // in memory; machineID() still checks and repairs the on-disk cache every time,
+    // so deleting that file continues to be safe.
+    private static let processHardwareUUID: String? = queryHardwareUUID()
+
     public static func machineID() -> String {
         if let o = machineIDOverride { return o }
         if let hw = hardwareUUID() {
@@ -445,6 +452,10 @@ public enum Paths {
 
     /// 硬件 UUID。取不到就返回 nil,调用方自己兜底。
     static func hardwareUUID() -> String? {
+        processHardwareUUID
+    }
+
+    private static func queryHardwareUUID() -> String? {
         let r = Proc.run("/usr/sbin/ioreg",
                          ["-rd1", "-c", "IOPlatformExpertDevice"],
                          cwd: "/", env: [:], timeout: 10)

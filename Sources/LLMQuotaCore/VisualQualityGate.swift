@@ -426,15 +426,17 @@ public enum VisualQualityGate {
             let path = line[marker.upperBound...]
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !path.isEmpty {
-                let local = URL(fileURLWithPath: review.repo).appendingPathComponent(path)
-                if let text = try? String(contentsOf: local, encoding: .utf8),
-                   !text.isEmpty { return String(text.prefix(12_000)) }
-                if let branch = review.branch {
-                    let shown = GitWorkspace.git(["show", "\(branch):\(path)"], in: review.repo)
-                    if shown.exitCode == 0, !shown.stdout.isEmpty {
-                        return String(shown.stdout.prefix(12_000))
+                if let text = ReviewArtifactCache.load(task: review, path: path, loader: {
+                    let local = URL(fileURLWithPath: review.repo).appendingPathComponent(path)
+                    if let text = try? String(contentsOf: local, encoding: .utf8),
+                       !text.isEmpty { return text }
+                    if let branch = review.branch {
+                        let shown = GitWorkspace.git(
+                            ["show", "\(branch):\(path)"], in: review.repo)
+                        if shown.exitCode == 0, !shown.stdout.isEmpty { return shown.stdout }
                     }
-                }
+                    return nil
+                }) { return String(text.prefix(12_000)) }
             }
         }
         let joined = review.outputs.joined(separator: "\n")

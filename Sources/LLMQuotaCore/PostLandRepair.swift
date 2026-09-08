@@ -99,11 +99,13 @@ public enum PostLandRepair {
 
     private static func loadReport(_ review: WorkTask) -> String? {
         guard let path = reportPath(in: review.prompt) else { return nil }
-        if let branch = review.branch {
-            let shown = GitWorkspace.git(["show", "\(branch):\(path)"], in: review.repo)
-            if shown.exitCode == 0, !shown.stdout.isEmpty { return shown.stdout }
+        return ReviewArtifactCache.load(task: review, path: path) {
+            if let branch = review.branch {
+                let shown = GitWorkspace.git(["show", "\(branch):\(path)"], in: review.repo)
+                if shown.exitCode == 0, !shown.stdout.isEmpty { return shown.stdout }
+            }
+            return try? String(contentsOf: URL(fileURLWithPath: review.repo)
+                .appendingPathComponent(path), encoding: .utf8)
         }
-        return try? String(contentsOf: URL(fileURLWithPath: review.repo)
-            .appendingPathComponent(path), encoding: .utf8)
     }
 }

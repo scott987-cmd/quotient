@@ -4730,7 +4730,10 @@ func cmdWorkLoop(_ args: [String]) throws {
         // 的收尾路径。每轮统一对账：视觉否决重开原会话，样板通过才放行
         // fan-out，并立刻重发手机任务板。
         var qualityReconciliationError: Error?
-        phase("质量闭环", 10) {
+        // 当前账本已包含数百条历史评审。去重后冷启动实测约 9 秒，原来的
+        // 10 秒预算几乎没有磁盘抖动余量，会把一次正常对账误报成永久卡死。
+        // 20 秒仍能快速隔离真正的 I/O 挂起，同时给正常全量对账留出余量。
+        phase("质量闭环", 20) {
             do {
                 _ = try TaskGraph.persistReconciliation(
                     actor: "work-loop", reason: "每轮质量与任务图统一对账")
