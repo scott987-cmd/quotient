@@ -337,12 +337,21 @@ public enum PlansStore {
                                   uniquingKeysWith: { a, _ in a })
             var merged: [QuotaLimit] = template.limits.map { definition in
                 var limit = definition
-                // 只搬数值和锚点，其余（窗口长度、口径、说明）以模板为准。
-                limit.limit = byID[definition.id]?.limit
-                limit.anchor = byID[definition.id]?.anchor
+                // id 只表示窗口身份，不保证跨版本仍是同一种额度。Qwen 曾把
+                // weekly 从「请求次数 / 自然周期」改成「计费 token / 首次调用起算」；
+                // 若只按 id 搬值，会把 500 次伪装成 500 token 并算出假的剩余量。
+                // 只有计量口径、窗口类型和流量 lane 都一致时，旧校准值才仍有意义。
+                let savedDefinition = byID[definition.id]
+                let preservesCalibration = savedDefinition?.metric == definition.metric
+                    && savedDefinition?.kind == definition.kind
+                    && savedDefinition?.lane == definition.lane
+                if preservesCalibration {
+                    limit.limit = savedDefinition?.limit
+                    limit.anchor = savedDefinition?.anchor
+                }
                 // 人工校准会把依据写进 hint；不能被模板的通用提示覆盖。
-                if byID[definition.id]?.limit != nil,
-                   let savedHint = byID[definition.id]?.hint, !savedHint.isEmpty {
+                if preservesCalibration, savedDefinition?.limit != nil,
+                   let savedHint = savedDefinition?.hint, !savedHint.isEmpty {
                     limit.hint = savedHint
                 }
                 return limit

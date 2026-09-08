@@ -31,4 +31,41 @@ final class QwenTokenPlanTests: XCTestCase {
         XCTAssertEqual(plan.limits.map(\.id), ["weekly"])
         XCTAssertEqual(plan.limits[0].metric, .billableTokens)
     }
+
+    func testLegacyWeeklyRequestCalibrationCannotBecomeTokenRemaining() throws {
+        let anchor = Date(timeIntervalSince1970: 1_700_000_000)
+        let oldWeekly = QuotaLimit(
+            id: "weekly", label: "每周", windowMinutes: 7 * 24 * 60,
+            kind: .periodic, metric: .requests, limit: 500,
+            anchor: anchor, hint: "旧请求次数校准"
+        )
+        let saved = PlansConfig(
+            plans: [PlatformPlan(
+                platform: .qwen, planName: "Qwen Code", limits: [oldWeekly]
+            )],
+            quotaPools: [QuotaPoolBinding(
+                poolID: "qwen-owned", platform: .qwen,
+                machineID: "machine-owned", limits: [oldWeekly]
+            )]
+        )
+
+        let reconciled = PlansStore.reconcileWindows(saved)
+        let platformWeekly = try XCTUnwrap(
+            reconciled.plan(for: .qwen)?.limits.first { $0.id == "weekly" }
+        )
+        let poolWeekly = try XCTUnwrap(
+            reconciled.plan(for: .qwen, quotaPoolID: "qwen-owned")?
+                .limits.first { $0.id == "weekly" }
+        )
+
+        for weekly in [platformWeekly, poolWeekly] {
+            XCTAssertEqual(weekly.metric, .billableTokens)
+            XCTAssertEqual(weekly.kind, .session)
+            XCTAssertNil(weekly.limit,
+                         "旧请求次数不能成为 Token 上限并制造虚假剩余百分比")
+            XCTAssertNil(weekly.anchor,
+                         "自然周期锚点不能污染首次调用起算的 7 天窗口")
+            XCTAssertFalse((weekly.hint ?? "").contains("旧请求次数"))
+        }
+    }
 }
