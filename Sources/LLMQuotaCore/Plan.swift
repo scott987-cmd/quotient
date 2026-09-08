@@ -442,9 +442,14 @@ public struct PlansConfig: Codable, Sendable {
                                     kind: .periodic, metric: .requests, hint: h)]
             ),
             PlatformPlan(
-                platform: .qwen, planName: "Qwen", currency: "CNY",
-                limits: [QuotaLimit(id: "daily", label: "每日", windowMinutes: 1440,
-                                    kind: .periodic, metric: .requests, hint: h)]
+                platform: .qwen, planName: "Qwen Token Plan", currency: "CNY",
+                limits: [QuotaLimit(
+                    id: "weekly", label: "7 天", windowMinutes: 10080,
+                    kind: .session, metric: .billableTokens,
+                    hint: "Token Plan 个人版是首次调用起算的 7 天 Credits 窗口；"
+                        + "接口和本机日志不返回 Credits 消耗，本栏只展示可核验的 Token 活动，"
+                        + "不能据此换算官方剩余 Credits。官方余量以订阅控制台为准。"
+                )]
             ),
             // Kimi 官方**不公布**可换算的数字（2026-08 查过帮助中心
             // kimi.com/zh-cn/help/kimi-code/benefits）：只说存在「每 5 小时的

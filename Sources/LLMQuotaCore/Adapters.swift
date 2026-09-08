@@ -291,8 +291,8 @@ public struct CodexAdapter: UsageAdapter {
 ///
 /// 注意：这一家的 `logs.json` **只记录用户消息，不记录 token**。
 /// 所以这个适配器只能统计"请求次数"，token 恒为 0。
-/// 这不是缺陷 —— Gemini CLI 和 Qwen Code 的免费额度本来就是按每日请求次数限的，
-/// 次数正好是对口的计量单位。
+/// Gemini CLI 这类只按请求计量的套餐仍可用它；Qwen Code 已有下方专用的
+/// token-usage 适配器，不能再从这份日志重复统计。
 public struct GeminiFamilyAdapter: UsageAdapter {
     public let id: String
     public let displayName: String

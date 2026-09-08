@@ -172,13 +172,13 @@ final class QuotaPoolTests: XCTestCase {
         ]
 
         XCTAssertTrue(cfg.setQuotaLimit(
-            platform: .qwen, poolID: "qwen-b", limitID: "daily",
+            platform: .qwen, poolID: "qwen-b", limitID: "weekly",
             limit: 900, hint: "pool-b calibration"))
-        XCTAssertNil(cfg.plan(for: .qwen)?.limits.first { $0.id == "daily" }?.limit)
+        XCTAssertNil(cfg.plan(for: .qwen)?.limits.first { $0.id == "weekly" }?.limit)
         XCTAssertNil(cfg.plan(for: .qwen, quotaPoolID: "qwen-a")?
-            .limits.first { $0.id == "daily" }?.limit)
+            .limits.first { $0.id == "weekly" }?.limit)
         XCTAssertEqual(cfg.plan(for: .qwen, quotaPoolID: "qwen-b")?
-            .limits.first { $0.id == "daily" }?.limit, 900)
+            .limits.first { $0.id == "weekly" }?.limit, 900)
     }
 
     func testPoolOverridesReceiveNewWindowDefinitionsWithoutLosingValues() {

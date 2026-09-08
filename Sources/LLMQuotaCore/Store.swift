@@ -349,7 +349,11 @@ public enum PlansStore {
             }
             let templateIDs = Set(template.limits.map(\.id))
             merged += savedLimits.filter {
-                !templateIDs.contains($0.id) && ($0.limit != nil || $0.anchor != nil)
+                let isRetiredQwenDailyRequest = template.platform == .qwen
+                    && $0.id == "daily" && $0.metric == .requests
+                return !templateIDs.contains($0.id)
+                    && !isRetiredQwenDailyRequest
+                    && ($0.limit != nil || $0.anchor != nil)
             }
             return merged
         }
@@ -359,6 +363,10 @@ public enum PlansStore {
         for i in out.plans.indices {
             guard let t = tpl.plan(for: out.plans[i].platform) else { continue }
             out.plans[i].limits = reconcileLimits(out.plans[i].limits, against: t)
+            if out.plans[i].platform == .qwen,
+               ["Qwen", "Qwen Code"].contains(out.plans[i].planName) {
+                out.plans[i].planName = t.planName
+            }
             // 额度池 override 也是一份套餐窗口；只升级平台默认值却不升级它，
             // 会让老池永远缺少后来新增的周/月窗口。
             if out.quotaPools != nil {
