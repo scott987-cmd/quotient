@@ -10,6 +10,17 @@ import Foundation
 /// 与其继续去猜各家的确切上限，不如撞一次就记下来，在冷却期内跳过它。
 /// 这条路对「数值查不到」的平台同样有效，而查数值那条路对它们无效。
 public struct Cooldown: Codable, Sendable {
+    public enum DeadlineBasis: String, Codable, Sendable {
+        /// 平台报错给出的绝对 reset 或 retry-after。
+        case serviceReported
+        /// 由已配置的周期窗口边界确定。
+        case configuredWindow
+        /// 本地为了避免反复撞墙设置的重试退避，不代表额度窗口终点。
+        case retryBackoff
+        /// 永久故障的人工处理占位期限。
+        case manualIntervention
+    }
+
     public enum Cause: String, Codable, Sendable {
         case quotaExhausted
         case authFailed
@@ -51,13 +62,16 @@ public struct Cooldown: Codable, Sendable {
     public var cause: Cause
     public var since: Date
     public var until: Date
+    /// `until` 的依据。旧记录为 nil，读取时只能从原始错误和配置保守重建。
+    public var deadlineBasis: DeadlineBasis? = nil
     /// 连续失败次数。用来做指数退避 —— 一直失败的平台没必要每 15 分钟试一次。
     public var strikes: Int
     public var detail: String
 
     public init(platform: Platform, quotaPoolID: String? = nil, runnerID: String? = nil,
                 capability: String? = nil, cause: Cause,
-                since: Date, until: Date, strikes: Int, detail: String) {
+                since: Date, until: Date, deadlineBasis: DeadlineBasis? = nil,
+                strikes: Int, detail: String) {
         self.platform = platform
         self.quotaPoolID = quotaPoolID
         self.runnerID = runnerID
@@ -65,12 +79,14 @@ public struct Cooldown: Codable, Sendable {
         self.cause = cause
         self.since = since
         self.until = until
+        self.deadlineBasis = deadlineBasis
         self.strikes = strikes
         self.detail = detail
     }
 
     private enum CodingKeys: String, CodingKey {
-        case platform, quotaPoolID, runnerID, capability, cause, since, until, strikes, detail
+        case platform, quotaPoolID, runnerID, capability, cause, since, until, deadlineBasis
+        case strikes, detail
     }
 
     public init(from decoder: Decoder) throws {
@@ -82,6 +98,7 @@ public struct Cooldown: Codable, Sendable {
         cause = try c.decode(Cause.self, forKey: .cause)
         since = try c.decode(Date.self, forKey: .since)
         until = try c.decode(Date.self, forKey: .until)
+        deadlineBasis = try c.decodeIfPresent(DeadlineBasis.self, forKey: .deadlineBasis)
         strikes = try c.decodeIfPresent(Int.self, forKey: .strikes) ?? 1
         detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
     }
@@ -244,6 +261,67 @@ public enum CooldownLedger {
         return Array(byKey.values)
     }
 
+    /// 全部历史额度耗尽事实，包括后来已经恢复或被 clear 的记录。
+    ///
+    /// `loadEntries()` 是当前状态视图，恢复后会删除旧冷却；额度学习需要的是
+    /// 不可变事件账，否则每次真正撞顶的校准证据会在恢复时一起消失。
+    static func quotaExhaustionHistory(config: PlansConfig) -> [Cooldown] {
+        var candidates = loadEvents().compactMap { event -> Cooldown? in
+            guard event.action == .upsert,
+                  let cooldown = event.cooldown,
+                  cooldown.cause == .quotaExhausted else { return nil }
+            return cooldown
+        }
+        // 兼容事件账上线前留下的本地/共享当前视图。这里即使已经过期也要读取。
+        for url in [file, Paths.appSupport.appendingPathComponent("cooldowns.json")] {
+            guard let data = ICloudSafe.read(url),
+                  let decoded = try? SnapshotCoding.decoder().decode([Cooldown].self, from: data)
+            else { continue }
+            candidates.append(contentsOf: decoded.filter { $0.cause == .quotaExhausted })
+        }
+
+        var byEvent: [String: Cooldown] = [:]
+        for cooldown in candidates {
+            let poolIdentity = cooldown.quotaPoolID
+                ?? "\(cooldown.platform.rawValue):default"
+            let identity = [
+                cooldown.platform.rawValue, poolIdentity,
+                String(Int(cooldown.since.timeIntervalSince1970)),
+            ].joined(separator: "|")
+            guard let old = byEvent[identity] else {
+                byEvent[identity] = cooldown
+                continue
+            }
+            let oldReliable = hasReliableQuotaWindowEnd(old, config: config)
+            let newReliable = hasReliableQuotaWindowEnd(cooldown, config: config)
+            if newReliable && !oldReliable
+                || (newReliable == oldReliable && cooldown.detail.count > old.detail.count) {
+                byEvent[identity] = cooldown
+            }
+        }
+        return byEvent.values.sorted { $0.since < $1.since }
+    }
+
+    /// `until` 是否真的是额度窗口边界。旧数据没有来源字段，只在原始错误或
+    /// 套餐配置能重建出同一个时刻时才接受。
+    static func hasReliableQuotaWindowEnd(_ cooldown: Cooldown,
+                                          config: PlansConfig) -> Bool {
+        switch cooldown.deadlineBasis {
+        case .serviceReported, .configuredWindow:
+            return true
+        case .retryBackoff, .manualIntervention:
+            return false
+        case nil:
+            if let parsed = parseResetTime(cooldown.detail, now: cooldown.since),
+               abs(parsed.timeIntervalSince(cooldown.until)) < 2 { return true }
+            if let window = configuredQuotaWindow(
+                platform: cooldown.platform, detail: cooldown.detail,
+                config: config, now: cooldown.since),
+               abs(window.end.timeIntervalSince(cooldown.until)) < 2 { return true }
+            return false
+        }
+    }
+
     /// 旧消费端仍按平台看冷却时，选该平台当前最晚结束的一条；不再用
     /// `Dictionary(uniqueKeysWithValues:)`，否则同平台两个 Runner 会直接崩溃。
     public static func load() -> [Platform: Cooldown] {
@@ -393,17 +471,21 @@ public enum CooldownLedger {
 
         // 平台明确告诉我们什么时候恢复时，直接采信 —— 比退避猜得准。
         let until: Date
+        let deadlineBasis: Cooldown.DeadlineBasis
         if cause.needsHumanFix {
             // 这类要你去改账号或换工具才能好。退避重试只是每隔几小时白烧一次，
             // 所以直接冷却 30 天，等你处理完手动 `llmq work resume <平台>`。
             until = now.addingTimeInterval(30 * 86400)
+            deadlineBasis = .manualIntervention
         } else if let knownResetAt, knownResetAt > now {
             until = knownResetAt
+            deadlineBasis = .serviceReported
         } else if cause == .quotaExhausted,
                   let window = configuredQuotaWindow(
                     platform: platform, detail: detail,
                     config: PlansStore.load(), now: now) {
             until = window.end
+            deadlineBasis = .configuredWindow
         } else if cause == .quotaExhausted {
             // **额度用尽不做指数退避。**
             //
@@ -417,14 +499,17 @@ public enum CooldownLedger {
             // 一条（而且现在撞顶还会被 QuotaCeiling 采成上限样本，不算白撞），
             // 猜晚了才是纯浪费。宁可多撞几次，不要白冻一整天。
             until = now.addingTimeInterval(5 * 3600)
+            deadlineBasis = .retryBackoff
         } else {
             until = now.addingTimeInterval(backoff[min(strikes - 1, backoff.count - 1)])
+            deadlineBasis = .retryBackoff
         }
 
         let cd = Cooldown(
             platform: platform, quotaPoolID: resolvedPoolID,
             runnerID: runnerID, capability: capability,
             cause: cause, since: now, until: until,
+            deadlineBasis: deadlineBasis,
             strikes: strikes, detail: String(detail.prefix(200))
         )
         if let priorIndex { entries[priorIndex] = cd } else { entries.append(cd) }
@@ -622,8 +707,8 @@ extension CooldownLedger {
 
         // 形态一：ISO8601（带 T 或空格，带不带秒/时区都试）
         let isoLike = #"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)\s*(UTC|Z)?"#
-        // 形态二：无年份 MM-dd HH:mm:ss UTC（Qwen 的写法）
-        let short = #"(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s*UTC"#
+        // 形态二：无年份 MM-dd HH:mm[:ss] UTC（Qwen 两种写法都出现过）
+        let short = #"(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?\s*UTC"#
 
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "UTC")!
@@ -650,8 +735,10 @@ extension CooldownLedger {
             let parts = String(text[m])
                 .replacingOccurrences(of: "UTC", with: "")
                 .trimmingCharacters(in: .whitespaces)
+            let format = parts.split(separator: ":").count == 3
+                ? "MM-dd HH:mm:ss" : "MM-dd HH:mm"
             let df = DateFormatter()
-            df.dateFormat = "MM-dd HH:mm:ss"
+            df.dateFormat = format
             df.timeZone = TimeZone(identifier: "UTC")
             df.locale = Locale(identifier: "en_US_POSIX")
             if let partial = df.date(from: parts) {

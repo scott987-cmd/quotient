@@ -143,9 +143,13 @@ public enum AdaptiveQuotaModel {
                     quotaPoolID: quotaPoolIDs[ceiling.platform],
                     windowMinutes: ceiling.windowMinutes,
                     metric: metric, limit: ceiling.value, samples: ceiling.samples,
-                    confidence: 0.9, evidence: .ceiling, updatedAt: now)
+                    // 一次撞顶足以形成可用的经验容量，但日志可能漏掉网页端或
+                    // 其他机器用量，不能伪装成 90% 可信。完整周期重复出现后
+                    // 再逐级提高信心，最多仍低于官方百分比反解。
+                    confidence: ceilingConfidence(samples: ceiling.samples),
+                    evidence: .ceiling, updatedAt: now)
                 let fingerprintKey = key(candidate) + "|ceiling"
-                let fingerprint = "\(ceiling.samples)|\(ceiling.value)"
+                let fingerprint = "v2|\(ceiling.samples)|\(ceiling.value)|\(candidate.confidence)"
                 guard fingerprints[fingerprintKey] != fingerprint else { continue }
                 merge(candidate, into: &byKey)
                 fingerprints[fingerprintKey] = fingerprint
@@ -171,6 +175,7 @@ public enum AdaptiveQuotaModel {
             ($0, config.quotaPoolID(
                 for: $0, machineID: Paths.machineID()))
         })
+        _ = QuotaCeiling.captureHistorical(scan: scan, config: config, now: now)
         return update(estimates: LimitLearner.learn(from: scan, now: now),
                       ceilings: QuotaCeiling.estimates(quotaPoolIDs: quotaPoolIDs), now: now,
                       quotaPoolIDs: quotaPoolIDs)
@@ -235,7 +240,18 @@ public enum AdaptiveQuotaModel {
             guard let learned = matches.first else { continue }
             limits[li].limit = learned.limit
             limits[li].metric = learned.metric
-            limits[li].hint = "持续学习估算 · \(learned.samples) 个样本"
+            let confidence = Int((learned.confidence * 100).rounded())
+            limits[li].hint = "持续学习估算 · \(learned.samples) 个完整周期"
+                + " · 置信度 \(confidence)%"
+        }
+    }
+
+    private static func ceilingConfidence(samples: Int) -> Double {
+        switch samples {
+        case ..<2: return 0.55
+        case 2: return 0.70
+        case 3: return 0.80
+        default: return 0.88
         }
     }
 
@@ -254,7 +270,9 @@ public enum AdaptiveQuotaModel {
             next.samples = max(old.samples, candidate.samples)
             next.updatedAt = candidate.updatedAt
         } else if candidate.evidence == .ceiling {
-            next.limit = max(old.limit, candidate.limit)
+            // ceiling 列表是当前完整历史账的重算结果。旧版若把同一次耗尽
+            // 重复计入，修复去重后样本数和上限都必须允许回落。
+            next = candidate
         } else if old.evidence == .calibrated {
             // 新批次是覆盖当前历史窗的重新拟合，并非与旧批次完全独立；
             // 用温和 EMA 校准，不能把同一批样本权重加两遍。
@@ -266,7 +284,9 @@ public enum AdaptiveQuotaModel {
             // 官方百分比反解比撞顶下界信息更完整，但不能低于已经真实撞过的量。
             next.limit = max(old.limit, candidate.limit)
         }
-        next.samples = max(old.samples, candidate.samples)
+        if !(candidate.evidence == .ceiling && old.evidence == .ceiling) {
+            next.samples = max(old.samples, candidate.samples)
+        }
         records[k] = next
     }
 

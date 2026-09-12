@@ -623,11 +623,19 @@ public enum DashboardHTML {
           var cls = quota.health === "exhausted" || quota.health === "atRisk" ? "s-crit"
                   : quota.health === "wasting" ? "s-warn" : "s-good";
           var reset = until(quota.resetsAt, now);
+          var quotaSource = "";
+          if (quota.isOfficial) {
+            quotaSource = " · 平台直报";
+          } else if ((quota.sourceNote || "").indexOf("持续学习估算") === 0) {
+            var learnedConfidence = /置信度\\s*(\\d+%)/.exec(quota.sourceNote || "");
+            quotaSource = " · 经验估算"
+              + (learnedConfidence ? " · 置信度 " + learnedConfidence[1] : "");
+          }
           meter =
             '<div class="meter">' +
               '<div class="meter-track"><div class="meter-fill ' + cls + '" style="width:' + (f * 100) + '%"></div></div>' +
               '<div class="meter-cap"><span>' + quota.label + '额度 <span class="mono">' + pct(f) + '</span>' +
-              (quota.isOfficial ? " · 平台直报" : "") + '</span>' +
+              quotaSource + '</span>' +
               '<span class="mono">' + (reset ? reset + "后重置" : "") + '</span></div>' +
             '</div>';
         } else {

@@ -137,6 +137,129 @@ public enum QuotaCeiling {
         return fresh
     }
 
+    /// 把已经结束的额度耗尽事件补算成容量样本。
+    ///
+    /// 冷却只描述“现在能不能用”，过期后会从当前视图消失；共享事件账则保留了
+    /// 真正的撞顶时刻。用撞顶前同一额度窗口的日志回算用量，才能让运行数周后的
+    /// 历史形成经验上限，而不是每次恢复后从零开始。
+    @discardableResult
+    public static func captureHistorical(
+        scan: RawScan, config: PlansConfig, now: Date = Date(),
+        snapshots: [MachineSnapshot]? = nil
+    ) -> [Observation] {
+        let snapshots = snapshots ?? SnapshotStore.loadAll()
+        var existing: [String: Observation] = [:]
+        for observation in all() {
+            let observationKey = key(
+                observation.platform, observation.quotaPoolID,
+                observation.windowStart, observation.windowMinutes)
+            if let old = existing[observationKey] {
+                let oldPeak = old.usage.values.max() ?? 0
+                let newPeak = observation.usage.values.max() ?? 0
+                if newPeak > oldPeak { existing[observationKey] = observation }
+            } else {
+                existing[observationKey] = observation
+            }
+        }
+        var fresh: [Observation] = []
+
+        for cooldown in CooldownLedger.quotaExhaustionHistory(config: config) {
+            let events = scan.events[cooldown.platform] ?? []
+            let plan = cooldown.quotaPoolID.flatMap {
+                config.plan(for: cooldown.platform, quotaPoolID: $0)
+            } ?? config.plan(for: cooldown.platform)
+            guard cooldown.since <= now,
+                  let hinted = windowHint(cooldown.detail),
+                  let plan,
+                  let limit = plan.limits.min(by: {
+                    abs($0.windowMinutes - hinted) < abs($1.windowMinutes - hinted)
+                  }),
+                  abs(limit.windowMinutes - hinted) <= max(60, hinted / 10),
+                  limit.metric != .percent
+            else { continue }
+
+            let relevant = events.filter {
+                $0.timestamp <= cooldown.since
+                    && (limit.lane == nil || $0.lane == limit.lane)
+            }
+            let sharedBuckets = snapshots.flatMap { snapshot in
+                snapshot.platforms.filter { platformSnapshot in
+                    guard platformSnapshot.platform == cooldown.platform else { return false }
+                    if let pool = cooldown.quotaPoolID {
+                        return platformSnapshot.quotaPoolID == pool
+                            || (pool == "\(cooldown.platform.rawValue):default"
+                                && platformSnapshot.quotaPoolID == nil)
+                    }
+                    return platformSnapshot.quotaPoolID == nil
+                        || platformSnapshot.quotaPoolID
+                            == "\(cooldown.platform.rawValue):default"
+                }.flatMap(\.buckets)
+            }.filter {
+                $0.start <= cooldown.since
+                    && (limit.lane == nil || $0.lane == limit.lane)
+            }
+            guard !relevant.isEmpty || !sharedBuckets.isEmpty else { continue }
+
+            let start: Date
+            let resetSpan = cooldown.until.timeIntervalSince(cooldown.since)
+            if CooldownLedger.hasReliableQuotaWindowEnd(cooldown, config: config),
+               resetSpan > 0, resetSpan <= limit.windowSeconds {
+                // 服务端给出的恢复时刻同时确定了窗口边界。额度可能在网页端或
+                // 另一台机器先被启用，本机“第一次看到调用”不能覆盖这个真值。
+                start = cooldown.until.addingTimeInterval(-limit.windowSeconds)
+            } else if limit.kind == .session {
+                let timestamps = sharedBuckets.isEmpty
+                    ? relevant.filter { $0.requests > 0 }.map(\.timestamp)
+                    : sharedBuckets.filter { $0.requests > 0 }.map(\.start)
+                guard let sessionStart = historicalSessionStart(
+                    timestamps: timestamps, length: limit.windowSeconds, at: cooldown.since)
+                else { continue }
+                start = sessionStart
+            } else {
+                start = QuotaEngine(config: config)
+                    .window(for: limit, now: cooldown.since).start
+            }
+            let poolID = cooldown.quotaPoolID
+            let sampleKey = key(cooldown.platform, poolID, start, limit.windowMinutes)
+            let used: Double
+            if sharedBuckets.isEmpty {
+                used = LimitLearner.usage(
+                    relevant, from: start, to: cooldown.since, metric: limit.metric)
+            } else {
+                used = limit.metric.value(from: sharedBuckets.filter {
+                    $0.start >= start && $0.start < cooldown.since
+                }, pricing: plan.pricing)
+            }
+            guard used > 0 else { continue }
+            if let old = existing[sampleKey],
+               (old.usage[limit.metric.rawValue] ?? 0) >= used { continue }
+
+            let observation = Observation(
+                platform: cooldown.platform, quotaPoolID: poolID, at: cooldown.since,
+                windowMinutes: limit.windowMinutes, windowLabel: limit.label,
+                windowStart: start, usage: [limit.metric.rawValue: used],
+                detail: String(cooldown.detail.prefix(160)))
+            existing[sampleKey] = observation
+            fresh.append(observation)
+        }
+        guard !fresh.isEmpty else { return [] }
+        append(fresh)
+        return fresh
+    }
+
+    private static func historicalSessionStart(
+        timestamps: [Date], length: TimeInterval, at: Date
+    ) -> Date? {
+        let used = timestamps.filter { $0 <= at }.sorted()
+        guard var start = used.first else { return nil }
+        for timestamp in used.dropFirst()
+            where timestamp >= start.addingTimeInterval(length) {
+            start = timestamp
+        }
+        guard at < start.addingTimeInterval(length) else { return nil }
+        return start
+    }
+
     /// 从服务端的拒绝消息里认出「是哪个窗口满了」，单位分钟。
     ///
     /// 认不出就返回 nil，那一次撞顶就不采样 —— 宁可少一个样本，
@@ -146,7 +269,8 @@ public enum QuotaCeiling {
         // 顺序有讲究：先认更长的窗口。"1-week" 里也含 "week"，
         // 但 "5 小时" 和 "hour" 要在 "day" 之前判，否则 "5-hour" 会被漏掉。
         if d.contains("月") || d.contains("month") { return 30 * 24 * 60 }
-        if d.contains("周") || d.contains("week") { return 7 * 24 * 60 }
+        if d.contains("周") || d.contains("week")
+            || d.contains("7-day") || d.contains("7 day") { return 7 * 24 * 60 }
         for h in [5, 3, 1] {
             if d.contains("\(h) 小时") || d.contains("\(h)小时")
                 || d.contains("\(h)-hour") || d.contains("\(h) hour") { return h * 60 }
@@ -185,6 +309,8 @@ public enum QuotaCeiling {
             blob += s + "\n"
         }
         guard !blob.isEmpty, let data = blob.data(using: .utf8) else { return }
+        try? FileManager.default.createDirectory(
+            at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let h = try? FileHandle(forWritingTo: path) {
             defer { try? h.close() }
             _ = try? h.seekToEnd()
@@ -203,7 +329,24 @@ public enum QuotaCeiling {
                                         windowLabel: String, metric: String,
                                         value: Double, samples: Int)] {
         var best: [String: (Platform, Int, String, String, Double, Int)] = [:]
-        for o in all() {
+        // 同一周期可能先由单机日志生成下界，等其他机器快照同步回来后又得到
+        // 更完整的值。它们仍是一个周期，取较大值但不能虚增样本数。
+        var byWindow: [String: Observation] = [:]
+        for observation in all() {
+            let observationKey = key(
+                observation.platform, observation.quotaPoolID,
+                observation.windowStart, observation.windowMinutes)
+            if var old = byWindow[observationKey] {
+                for (metric, value) in observation.usage {
+                    old.usage[metric] = max(old.usage[metric] ?? 0, value)
+                }
+                if observation.at > old.at { old.at = observation.at }
+                byWindow[observationKey] = old
+            } else {
+                byWindow[observationKey] = observation
+            }
+        }
+        for o in byWindow.values {
             // 一旦配置了真实额度池，无法归属的 legacy 样本宁可不用，也不能
             // 猜给当前订阅；否则另一账号过去的撞顶值会把本池上限抬高几十倍。
             if let expectedPool = quotaPoolIDs[o.platform] {

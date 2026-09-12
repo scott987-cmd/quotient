@@ -412,12 +412,29 @@ func cmdDashboard(_ args: [String]) throws {
 /// 从真实用量反解各平台的额度上限。
 func cmdLearn(_ args: [String]) throws {
     let apply = args.contains("--apply")
+    let now = Date()
     let scan = try Collector().scanRaw()
-    let estimates = LimitLearner.learn(from: scan)
+    let config = PlansStore.load()
+    let backfilled = QuotaCeiling.captureHistorical(
+        scan: scan, config: config, now: now)
+    let estimates = LimitLearner.learn(from: scan, now: now)
+    let quotaPoolIDs = Dictionary(uniqueKeysWithValues: Platform.activeCases.map {
+        ($0, config.quotaPoolID(for: $0, machineID: Paths.machineID()))
+    })
+    let learned = AdaptiveQuotaModel.update(
+        estimates: estimates,
+        ceilings: QuotaCeiling.estimates(quotaPoolIDs: quotaPoolIDs),
+        now: now, quotaPoolIDs: quotaPoolIDs)
+    if !backfilled.isEmpty {
+        print(Ansi.green("已从历史额度耗尽事件补回 \(backfilled.count) 个完整周期样本"))
+    }
+    if !learned.isEmpty {
+        print(Ansi.dim("持续学习模型现有 \(learned.count) 条经验上限。"))
+    }
 
     // 先报矛盾。配错的上限比没配更有害 —— 配低了工具会一直喊"快满了"，
     // 你就不敢用，正好制造这个工具要防的浪费。
-    let conflicts = LimitLearner.contradictions(scan: scan, config: PlansStore.load())
+    let conflicts = LimitLearner.contradictions(scan: scan, config: config, now: now)
     if !conflicts.isEmpty {
         print(Ansi.red("配置的上限与实测矛盾") + Ansi.dim("（实际用出去过、且没被拒，说明真实上限更高）"))
         for c in conflicts {

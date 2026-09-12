@@ -577,7 +577,8 @@ public struct QuotaEngine: Sendable {
             isOfficial: false,
             sourceNote: limit.limit == nil
                 ? (limit.hint ?? "未配置上限，仅统计用量")
-                : "由本地日志推算",
+                : (limit.hint?.hasPrefix("持续学习估算") == true
+                    ? limit.hint! : "由本地日志推算"),
             byMachine: machineSplit,
             observedFloor: floor,
             sourceKind: .localEstimate,

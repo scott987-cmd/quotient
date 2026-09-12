@@ -115,6 +115,24 @@ final class AdaptiveQuotaModelTests: XCTestCase {
         XCTAssertEqual(learned.samples, 8)
     }
 
+    func testSingleExhaustionIsPublishedAsApproximationInsteadOfHighConfidenceFact() throws {
+        let records = AdaptiveQuotaModel.update(
+            estimates: [],
+            ceilings: [(.qwen, 10_080, "7 天", "billableTokens", 1_000_000, 1)],
+            now: Date(timeIntervalSince1970: 2_000))
+        let learned = try XCTUnwrap(records.first)
+        XCTAssertEqual(learned.confidence, 0.55, accuracy: 0.001)
+
+        let config = PlansConfig(plans: [PlatformPlan(
+            platform: .qwen, planName: "Qwen",
+            limits: [QuotaLimit(id: "weekly", label: "7 天",
+                                windowMinutes: 10_080, kind: .session,
+                                metric: .billableTokens)])])
+        let applied = AdaptiveQuotaModel.applying(
+            to: config, now: Date(timeIntervalSince1970: 2_100))
+        XCTAssertTrue(applied.plans[0].limits[0].hint?.contains("置信度 55%") == true)
+    }
+
     func testCeilingRaisesFloorWithoutDowngradingCalibratedEvidence() throws {
         _ = AdaptiveQuotaModel.update(estimates: [estimate(value: 120)], ceilings: [],
                                       now: Date(timeIntervalSince1970: 1_000))
@@ -129,6 +147,26 @@ final class AdaptiveQuotaModelTests: XCTestCase {
         XCTAssertEqual(learned.evidence, .calibrated,
                        "撞顶只能补充硬下界，不能把更完整的校准证据降级成 ceiling")
         XCTAssertEqual(learned.confidence, 0.95, accuracy: 0.001)
+    }
+
+    func testRecomputedCeilingCanRemoveAnInvalidHistoricalSample() throws {
+        _ = AdaptiveQuotaModel.update(
+            estimates: [],
+            ceilings: [(.qwen, 10_080, "7 天", "billableTokens", 6_100_000, 3)],
+            now: Date(timeIntervalSince1970: 1_000),
+            quotaPoolIDs: [.qwen: "qwen:default"])
+
+        let records = AdaptiveQuotaModel.update(
+            estimates: [],
+            ceilings: [(.qwen, 10_080, "7 天", "billableTokens", 6_013_031, 2)],
+            now: Date(timeIntervalSince1970: 2_000),
+            quotaPoolIDs: [.qwen: "qwen:default"])
+
+        let learned = try XCTUnwrap(records.first)
+        XCTAssertEqual(learned.limit, 6_013_031)
+        XCTAssertEqual(learned.samples, 2,
+                       "完整历史账重算后必须能撤销曾被重复计入的撞顶周期")
+        XCTAssertEqual(learned.confidence, 0.70, accuracy: 0.001)
     }
 
     func testLearningRecordsAndRuntimeLimitsStayInsideQuotaPool() throws {
