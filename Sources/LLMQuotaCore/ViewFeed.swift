@@ -432,6 +432,51 @@ public enum ViewFeed {
 // MARK: - 组装「现在」页
 
 extension ViewFeed {
+    static func reviewCard(_ d: Review.Digest, progressLabel: Bool = true) -> Card {
+        let ready = d.needsHumanConfirmation
+        let status = !ready && progressLabel ? "保留成果，无需你确认 · " : ""
+        return Card(id: d.repo + "|" + d.branch,
+                    title: d.subject,
+                    body: status + d.platform + " · " + "\(d.files.count) 个文件"
+                        + " · +\(d.insertions)/−\(d.deletions)"
+                        + (d.mergesCleanly ? "" : " · 有冲突，要去电脑上处理")
+                        + (d.landingBlockReason.map { " · " + $0 } ?? "")
+                        + (d.continuationBlockReason.map { " · " + $0 } ?? ""),
+                    detail: d.prompt,
+                    tone: ready ? .neutral : .warn,
+                    icon: ready ? "checkmark.seal" : "hourglass",
+                    trailing: Review.evidenceSummary(d.evidenceFiles),
+                    images: d.evidenceFiles,
+                    actions: (ready
+                        ? [Action(id: "review:merge:" + d.actionResource,
+                                  label: "合入", style: "primary"),
+                           Action(id: "review:discard:" + d.actionResource,
+                                  label: Review.rejectionLabel(branch: d.branch),
+                                  style: "destructive", needsNote: true)] : [])
+                        + (d.continuationBlockReason == nil ? (d.continuationActionID.map {
+                            [Action(id: $0, label: "保留成果，继续完善", style: "primary")]
+                        } ?? []) : []))
+    }
+
+    static func nowReviewSections(_ items: [Review.Digest]) -> [Section] {
+        let awaiting = items.filter(\.needsHumanConfirmation)
+        let retained = items.filter { !$0.needsHumanConfirmation }
+        var sections: [Section] = []
+        if !awaiting.isEmpty {
+            sections.append(Section(
+                kind: "cards", title: "等你验收",
+                note: "\(awaiting.count) 份产出跑完了在等你",
+                cards: awaiting.prefix(5).map { reviewCard($0, progressLabel: false) }))
+        }
+        if !retained.isEmpty {
+            sections.append(Section(
+                kind: "cards", title: "保留成果",
+                note: "\(retained.count) 份成果正在检查或等待电脑处理，无需你现在确认",
+                cards: retained.prefix(5).map { reviewCard($0) }))
+        }
+        return sections
+    }
+
     /// 「现在」页：按**在漏什么**排，不按平台罗列。
     ///
     /// 这些判断以前都在客户端：哪条算「在漏」、怎么排序、写什么提示语。
@@ -471,37 +516,7 @@ extension ViewFeed {
                 }))
         }
 
-        // 等验收的产出
-        let awaiting = Review.publishDigests()
-        if !awaiting.isEmpty {
-            sections.append(Section(
-                kind: "cards",
-                title: "等你验收",
-                note: "\(awaiting.count) 份产出跑完了在等你",
-                cards: awaiting.prefix(5).map { d in
-                    Card(id: d.repo + "|" + d.branch,
-                         title: d.subject,
-                         body: d.platform + " · " + "\(d.files.count) 个文件"
-                             + " · +\(d.insertions)/−\(d.deletions)"
-                             + (d.landingBlockReason.map { " · " + $0 } ?? "")
-                             + (d.continuationBlockReason.map { " · " + $0 } ?? ""),
-                         detail: d.prompt,
-                         tone: d.mergesCleanly && d.landingBlockReason == nil ? .neutral : .warn,
-                         icon: d.mergesCleanly && d.landingBlockReason == nil
-                             ? "checkmark.seal" : "exclamationmark.triangle",
-                         trailing: Review.evidenceSummary(d.evidenceFiles),
-                         images: d.evidenceFiles,
-                         actions: (d.mergesCleanly && d.landingBlockReason == nil
-                             ? [Action(id: "review:merge:" + d.actionResource,
-                                       label: "合入", style: "primary")] : [])
-                             + (d.continuationActionID.map {
-                                 [Action(id: $0, label: "保留成果，继续完善", style: "primary")]
-                             } ?? [])
-                             + [Action(id: "review:discard:" + d.actionResource,
-                                       label: Review.rejectionLabel(branch: d.branch),
-                                       style: "destructive", needsNote: true)])
-                }))
-        }
+        sections.append(contentsOf: nowReviewSections(Review.publishDigests()))
 
         if sections.isEmpty {
             sections.append(Section(
@@ -1227,27 +1242,9 @@ extension ViewFeed {
             return Section(
                 kind: "cards", title: name + "（\(group.count)）",
                 cards: group.map { d in
-                    Card(id: d.repo + "|" + d.branch,
-                         title: d.subject,
-                         body: d.platform + " · \(d.files.count) 个文件"
-                             + " · +\(d.insertions)/−\(d.deletions)"
-                             + (d.mergesCleanly ? "" : " · 有冲突，要去电脑上处理")
-                             + (d.landingBlockReason.map { " · " + $0 } ?? "")
-                             + (d.continuationBlockReason.map { " · " + $0 } ?? ""),
-                         detail: d.prompt,
-                         tone: d.mergesCleanly ? .neutral : .warn,
-                         icon: d.mergesCleanly ? "checkmark.seal" : "exclamationmark.triangle",
-                         trailing: Review.evidenceSummary(d.evidenceFiles) ?? "没交证据",
-                         images: d.evidenceFiles,
-                         actions: (d.mergesCleanly && d.landingBlockReason == nil
-                             ? [Action(id: "review:merge:" + d.actionResource,
-                                       label: "合入", style: "primary")] : [])
-                             + (d.continuationActionID.map {
-                                 [Action(id: $0, label: "保留成果，继续完善", style: "primary")]
-                             } ?? [])
-                             + [Action(id: "review:discard:" + d.actionResource,
-                                       label: Review.rejectionLabel(branch: d.branch),
-                                       style: "destructive", needsNote: true)])
+                    var card = reviewCard(d)
+                    if card.trailing == nil { card.trailing = "没交证据" }
+                    return card
                 })
         })
         return Page(page: "review", sections: sections, now: now)

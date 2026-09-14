@@ -240,7 +240,9 @@ public enum Nudge {
         // - **没交证据的** → 不推。它要么该由机器自己验收合入（autoland），
         //   要么该派回给 agent 去跑一遍交图（EvidenceGate）。
         //   让人替 agent 补跑截图，是把成本装反了。
-        let showable = awaiting.filter { !$0.evidence.isEmpty }
+        let showable = awaiting.filter {
+            $0.needsHumanConfirmation && !$0.evidence.isEmpty
+        }
         if !showable.isEmpty {
             out.append(("review-\(showable.count)", .needsYou,
                         showable.count == 1

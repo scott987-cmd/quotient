@@ -1746,6 +1746,15 @@ extension Review {
         public var continuationActionID: String? = nil
         public var continuationBlockReason: String? = nil
 
+        /// 只有合入条件已满足的成果才算人的待办；其余只是保留进展。
+        public var needsHumanConfirmation: Bool {
+            guard mergesCleanly, landingBlockReason == nil,
+                  let sourceMachineID, !sourceMachineID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let head, !head.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            return !repo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
         var actionResource: String {
             repo + "|" + branch + (head.flatMap { $0.isEmpty ? nil : "|" + $0 } ?? "")
         }
