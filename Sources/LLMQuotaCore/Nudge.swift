@@ -24,19 +24,6 @@ public enum Nudge {
         var body: String?
     }
 
-    /// 内容没变化时，最久多久提一次。
-    ///
-    /// `quietFor`（2 小时）管的是「同类别别刷屏」，但它有个前提假设：
-    /// 过了 2 小时情况就变了。**在一个人还没处理的待办上，这个假设是错的**
-    /// —— 内容一模一样的提醒每 2 小时来一次，就是骚扰。
-    ///
-    /// 老板的原话（2026-08-17）：「出问题了，一直发消息，而且是重复发」。
-    /// 实测 stranded-graph 一条消息发了 8 次，最近 4 次内容完全相同。
-    ///
-    /// 所以规则改成**变了才响**：正文和上次一字不差就不发，
-    /// 只留这条兜底 —— 一天一次，保证一个持续存在的问题不会被彻底忘掉。
-    public static let repeatSameAfter: TimeInterval = 24 * 3600
-
     static var path: URL {
         Paths.appSupport.appendingPathComponent("nudges.json")
     }
@@ -55,8 +42,8 @@ public enum Nudge {
     /// 值得再响」。但在一个数字持续增长的场景里，每变一次就是一个新 key ——
     /// 限流形同虚设，实测连着推了 review-92 / 93 / 94。
     /// 数量变化写在正文里就够了，不该成为再响一次的理由。
-    /// - Parameter body: 这次要发的正文。传了就做**内容比对** ——
-    ///   和上次一字不差的，24 小时内一律不发（见 `repeatSameAfter`）。
+    /// - Parameter body: 这次要发的正文。传了就做**内容比对**：内容不变
+    ///   持续静默；内容变化且已经过 `quietFor` 才允许重新提醒。
     public static func recentlySent(_ key: String, body: String? = nil,
                                     now: Date = Date()) -> Bool {
         let cat = category(of: key)
@@ -65,12 +52,13 @@ public enum Nudge {
         if mine.contains(where: { now.timeIntervalSince($0.at) < quietFor }) {
             return true
         }
-        // ② 内容没变闸：正文一字不差 → 24 小时内不再响。
+        // ② 内容没变闸：正文一字不差就不再响。
+        //
+        // 待办仍在 App 里并计入角标，不需要靠每天凌晨重放同一条横幅维持
+        // 可见性。只有正文变化（数量、版本、问题或处理状态变化）才重新提醒。
         //    没有 body（老调用方）或历史里没记正文 → 退回只用 ①，
         //    行为和以前一致，不会因为缺数据而变得更吵。
-        if let body, mine.contains(where: {
-            $0.body == body && now.timeIntervalSince($0.at) < repeatSameAfter
-        }) {
+        if let body, mine.contains(where: { $0.body == body }) {
             return true
         }
         return false
@@ -83,9 +71,12 @@ public enum Nudge {
 
     static func remember(_ key: String, body: String? = nil,
                          now: Date = Date()) {
-        // 留 48 小时：内容比对窗口是 24 小时，只留 24 小时的话，
-        // 边界上那条刚好被清掉，于是「没变化」判不出来又响一次。
-        var h = history().filter { now.timeIntervalSince($0.at) < 48 * 3600 }
+        // 去重事实不能按 48 小时过期。旧实现恰好在记录过期后重发，造成同一
+        // 成果在凌晨 00:15 左右周期性响。相同类别和正文只留最新一条，控制
+        // 文件大小，同时永久记住这件没有变化的事项已经提醒过。
+        var h = history().filter {
+            !(category(of: $0.key) == category(of: key) && $0.body == body)
+        }
         h.append(Sent(key: key, at: now, body: body))
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
         try? enc.encode(h).write(to: path)

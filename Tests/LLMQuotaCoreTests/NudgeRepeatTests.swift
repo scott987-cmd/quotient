@@ -69,16 +69,13 @@ final class NudgeRepeatTests: XCTestCase {
                       "2 小时内不管内容变没变都不该刷屏")
     }
 
-    /// **一天之后同样的内容可以再提一次。**
-    ///
-    /// 「变了才响」不能变成「永远不响」：一个持续存在的问题，
-    /// 一天提一次是提醒，不是骚扰。
-    func testSameBodyFiresAgainAfterADay() {
+    /// 同一个待办没有变化，隔几天也不能在凌晨重新打扰一次。
+    func testSameBodyDoesNotRepeatOnLaterDays() {
         let t0 = Date(timeIntervalSince1970: 1_000_000)
         Nudge.remember(key, body: body, now: t0)
-        let t1 = t0.addingTimeInterval(Nudge.repeatSameAfter + 60)
-        XCTAssertFalse(Nudge.recentlySent(key, body: body, now: t1),
-                       "一天之后该再提一次 —— 别让持续存在的问题被彻底忘掉")
+        let t1 = t0.addingTimeInterval(14 * 24 * 3600)
+        XCTAssertTrue(Nudge.recentlySent(key, body: body, now: t1),
+                      "未变化的事项不能按日重复推送")
     }
 
     /// 历史里没记正文（老记录）时，行为退回只用刷屏闸。
@@ -92,13 +89,14 @@ final class NudgeRepeatTests: XCTestCase {
                        "历史里没正文可比 → 只走刷屏闸，行为和以前一致")
     }
 
-    /// 保留窗口要比内容比对窗口长。
-    ///
-    /// 只留 24 小时的话，边界上那条刚好被清掉 ——
-    /// 于是「没变化」判不出来，又响一次。这种差一点的错最难查。
-    func testHistoryIsKeptLongerThanTheComparisonWindow() {
-        XCTAssertGreaterThan(48 * 3600.0, Nudge.repeatSameAfter,
-                             "保留期必须严格长于比对窗口，否则边界上会漏判")
+    /// 写入别的提醒时，旧事项的去重记录也不能在 48 小时后被清掉。
+    func testRememberKeepsOldUnchangedReminderIdentity() {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        Nudge.remember(key, body: body, now: t0)
+        Nudge.remember("review-new", body: "另一件新成果", now: t0.addingTimeInterval(7 * 86400))
+        XCTAssertTrue(Nudge.recentlySent(key, body: body,
+                                        now: t0.addingTimeInterval(8 * 86400)),
+                      "写入新提醒不能遗忘仍未变化的旧事项")
     }
 
     /// 发送端没配置、所有 token 都失败时，不能把提醒永久吃掉。

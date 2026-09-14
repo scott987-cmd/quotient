@@ -8406,7 +8406,7 @@ func cmdPush(_ args: [String]) throws {
                            + "任务被拦下、空窗没活可填。"))
         } else {
             for i in items {
-                let muted = Nudge.recentlySent(i.key)
+                let muted = Nudge.recentlySent(i.key, body: i.body)
                 print((muted ? Ansi.dim("（静默中）") : Ansi.yellow("会推 "))
                       + i.body + Ansi.dim("  角标 \(i.badge)"))
             }
