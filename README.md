@@ -1,3 +1,5 @@
+> **源码已迁移：**[Quotient Core](https://github.com/scott987-cmd/quotient-core) 和 [Quotient Mobile](https://github.com/scott987-cmd/quotient-mobile) 是 2026-10-08 起的公开源码入口。本仓库继续承载 [官网](https://scott987-cmd.github.io/quotient/) 与历史资料；以下旧版本说明仅作历史参考。
+
 # Quotient
 
 把九个 LLM 编码平台、多台 Mac 和 iPhone/iPad 变成一间可调度、可追踪、可验收的数字员工办公室。
