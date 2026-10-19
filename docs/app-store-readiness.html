@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/png" href="favicon.png">
 <title>App Store 审核状态 · Quotient</title>
-<meta name="description" content="Quotient 数字员工 iOS 1.0 的 TestFlight、真机验证和 App Store 审核进展。">
+<meta name="description" content="Quotient 多机编程台 iOS 1.0 的 TestFlight、双设备验收和 App Store 审核进展。">
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#07110d;color:#edf7ef;font:16px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
 .wrap{max-width:940px;margin:auto;padding:56px 24px 96px}a{color:#a7ee94}.back{text-decoration:none;font-weight:700}
@@ -23,30 +23,31 @@ footer{margin-top:34px;color:#93a898;font-size:14px}footer a{margin-right:18px}
 <main class="wrap">
 <a class="back" href="index.html">← 返回 Quotient</a>
 <h1>App Store 审核状态</h1>
-<span class="badge">iOS 1.0 已被拒绝 · 已回复 Apple</span>
-<p class="lede">构建 <strong>202610092221</strong> 已提交审核。Apple 于 2026 年 10 月 13 日提出 4.3 Spam / 4.2.6 App Generation Services 疑问；我们已在原审核消息中逐项回答九个问题，目前等待 Apple 后续处理。回复成功不等于审核通过，App 尚未上架。</p>
-<p class="date">状态核对：2026 年 10 月 13 日；提交 ID：fdb40638-87b2-4246-9886-517d27d2e43e</p>
+<span class="badge">iOS 1.0 已重新送审 · 等待 Apple 审核</span>
+<p class="lede">Apple 于 10 月 13 日以 4.3 Spam / 4.2.6 App Generation Services 提出疑问。我们已回复九项问题，并将名称、演示安全边界、商店说明与真实截图更新；新构建 <strong>202610192053</strong> 于 10 月 19 日重新提交审核。当前状态为 <strong>WAITING_FOR_REVIEW</strong>，App 尚未获批上架。</p>
+<p class="date">状态核对：2026 年 10 月 19 日；提交 ID：fdb40638-87b2-4246-9886-517d27d2e43e</p>
 <div class="timeline" aria-label="审核时间线">
 <div class="event"><strong>10 月 8 日 · Core 与 Mobile 开源快照</strong><p>公开仓库可独立构建和测试。Mobile 快照早于后来送审的 10 月 9 日构建，不能把两者当作同一版本。</p></div>
 <div class="event"><strong>10 月 9 日 · TestFlight 构建 202610092221</strong><p>iPhone 完整模拟器回归 141 通过、0 失败、3 条条件跳过；iPad 142 通过、0 失败、2 条条件跳过。该构建已安装到物理 iPad 并成功启动。</p></div>
 <div class="event"><strong>10 月 10 日 · 正式提交 App Review</strong><p>商店资料、隐私声明、支持网址及 iPhone/iPad 截图已提交；中国大陆未开放销售。</p></div>
 <div class="event"><strong>10 月 13 日 · 收到拒绝并提交答复</strong><p>Apple 没有指明具体相似 App 或代码。我们说明了多机工作流、目标用户、内部测试反馈、其他 App 区别及代码来源；未原样重新提交构建。</p></div>
+<div class="event"><strong>10 月 19 日 · Quotient 多机编程台重新送审</strong><p>新构建 202610192053 已通过 Apple 校验并进入内部 TestFlight；版本 1.0 已关联新构建，原审核提交回读 WAITING_FOR_REVIEW。商店图替换为最终版模拟器实图，旧图库已移除。</p></div>
 </div>
 <div class="grid">
 <section class="card"><h2 class="ok">已验证的范围</h2><ul>
-<li>送审构建已处理、进入内部 TestFlight，并在物理 iPad 上安装和启动。</li>
+<li>当前送审构建 202610192053 已处理为 VALID、进入内部 TestFlight；已核对实际 IPA 的 Quotient 名称、Apple Distribution 签名及生产 APNs 权限。</li>
 <li>更早的 TestFlight 构建曾在同一 iCloud 账号的 iPad 读取三台 Mac 的真实快照；这不自动证明送审构建的每个跨机操作。</li>
-<li>送审源码对应的 iPhone 与 iPad 完整模拟器回归无失败；条件跳过项没有算作通过。</li>
-<li>演示模式可在没有 Mac 或账号的情况下浏览主要页面，并明确标注示例数据。</li>
+<li>当前送审源码的独立 iPhone 全量回归 142 通过、0 失败、5 条件跳过；iPad 143 通过、0 失败、4 条件跳过。跳过项没有算作通过。</li>
+<li>演示模式可在没有 Mac 或账号的情况下浏览多机任务与 Agent 协作，并明确标注示例数据；演示操作已由隔离测试确认不会写入真实任务目录。</li>
 </ul></section>
 <section class="card"><h2 class="pending">仍待验证或处理</h2><ul>
-<li>Apple 对审核回复的判断以及正式上架。</li>
-<li>送审构建的完整物理设备操作闭环、生产 APNs、长期 iCloud 同步新鲜度与可靠横屏画面。</li>
+<li>Apple 对重新提交的构建与资料的审核结论，以及正式上架。</li>
+<li>新构建在物理设备上的安装与完整操作、真实 APNs、长期 iCloud 跨机同步新鲜度及可靠横屏画面尚未验证；旧构建曾在物理 iPad 安装启动。</li>
 <li>当前开发者的 Mac 配套服务已停用，实时演示数据暂不会更新；需要自行安装和运行 Mac companion 才能使用真实跨机功能。</li>
 </ul></section>
 </div>
 <p class="note">Quotient 是本地优先的 Mac+iOS 开发工作工具。App 不提供模型订阅或云端计算额度。想核对实现，请看 <a href="https://github.com/scott987-cmd/quotient-core">Core 源码</a>与 <a href="https://github.com/scott987-cmd/quotient-mobile">Mobile 源码</a>；公开 Mobile 快照与送审二进制存在版本差异。</p>
-<footer><a href="support.html">联系支持</a><a href="privacy.html">隐私政策</a><span>最后更新：2026 年 10 月 13 日</span></footer>
+<footer><a href="support.html">联系支持</a><a href="privacy.html">隐私政策</a><span>最后更新：2026 年 10 月 19 日</span></footer>
 </main>
 </body>
 </html>
